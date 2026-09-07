@@ -39,6 +39,8 @@ var _allocations: Array[int] = []
 var _exert_state := EXERT_IDLE
 var _exert_bonuses: Array[int] = []
 var _exert_log: PackedStringArray = []
+var _special: Dictionary = {}
+var _special_row: Dictionary = {}
 var _pool_label: Label
 var _rolling := false
 var _rng := RandomNumberGenerator.new()
@@ -54,6 +56,7 @@ func setup(check: Dictionary) -> void:
 	_check = check
 	_selections = check["selections"]
 	_rolled = []
+	_special = {}
 	_allocations.clear()
 	for _i in _selections.size():
 		_allocations.append(0)
@@ -72,6 +75,10 @@ func _reset_exertion() -> void:
 	_exert_bonuses.clear()
 	for _i in _selections.size():
 		_exert_bonuses.append(0)
+
+
+func _archetype() -> int:
+	return _check.get("archetype", Dice.DEFAULT_ARCHETYPE)
 
 
 func _has_skill() -> bool:
@@ -121,6 +128,11 @@ func _build_summary() -> void:
 			Dice.faces_text(rank),
 		]
 		_summary.add_child(line)
+
+	var special_line := Label.new()
+	special_line.add_theme_font_size_override("font_size", 20)
+	special_line.text = "Special die · %s" % Dice.archetype_name(_archetype())
+	_summary.add_child(special_line)
 
 	if _has_skill():
 		var skill_line := Label.new()
@@ -224,8 +236,56 @@ func _build_result_rows() -> void:
 			"exert": exert_button,
 		})
 
+	_results.add_child(HSeparator.new())
+	_results.add_child(_build_special_row())
+
 	_render_allocation()
 	_render_exert_bar()
+
+
+## The special die sits apart from the abilities: no target, no tally, and the
+## exertion reroll does not reach it.
+func _build_special_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+
+	var title := Label.new()
+	title.text = "Special · %s" % Dice.archetype_name(_archetype())
+	title.custom_minimum_size.x = 252
+	title.add_theme_font_size_override("font_size", 18)
+	title.modulate = MUTED_COLOR
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(title)
+
+	var face := Label.new()
+	face.text = "—"
+	face.custom_minimum_size.x = 240
+	face.add_theme_font_size_override("font_size", 22)
+	face.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(face)
+
+	# Effects run long — wrap rather than pushing the results panel into scrolling.
+	var effect := Label.new()
+	effect.add_theme_font_size_override("font_size", 17)
+	effect.modulate = MUTED_COLOR
+	effect.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	effect.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	effect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(effect)
+
+	_special_row = {"face": face, "effect": effect}
+	return row
+
+
+func _render_special() -> void:
+	if _special_row.is_empty():
+		return
+	if _special.is_empty():
+		_special_row["face"].text = "—"
+		_special_row["effect"].text = ""
+		return
+	_special_row["face"].text = _special["name"]
+	_special_row["effect"].text = _special["effect"]
 
 
 func _build_stepper(index: int) -> Dictionary:
@@ -275,12 +335,15 @@ func _on_roll_pressed() -> void:
 		_allocations[i] = 0
 	_reset_exertion()
 	_rolled = []
+	_special = {}
 	_render_allocation()
 	_render_exert_bar()
 
 	var results := Dice.roll(_selections, _rng)
+	var special := Dice.roll_special(_archetype(), _rng)
 	await _shuffle_animation()
 	_rolled = results
+	_special = special
 	_render_results()
 
 	_rolling = false
@@ -297,6 +360,8 @@ func _shuffle_animation() -> void:
 				die.text = _die_text(Dice.roll_die(rank, _rng))
 			row["total"].text = "= …"
 			row["outcome"].text = ""
+		_special = Dice.roll_special(_archetype(), _rng)
+		_render_special()
 		await get_tree().create_timer(SHUFFLE_STEP_TIME).timeout
 
 
@@ -326,6 +391,7 @@ func _on_allocate(index: int, delta: int) -> void:
 
 
 func _render_results() -> void:
+	_render_special()
 	if _rolled.is_empty():
 		_render_allocation()
 		_render_exert_bar()

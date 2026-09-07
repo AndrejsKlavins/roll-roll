@@ -24,6 +24,10 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
 2. **Wizard, step 2 — rank and skill.** Set each slotted ability's rank
    (1 Very weak … 5 Very strong), Average by default.
 
+   The check's **special die archetype** is chosen here too — Exquisite,
+   Unbreakable or Limitless, Exquisite by default. Each has its own face table
+   (below).
+
    A single optional **skill** can be added here — one of Athletics, Acrobatics,
    Stealth, Manipulation, Melee combat or Ranged combat — with a score of 1-5.
    At most one skill applies to a check; adding one defaults to Athletics at 1,
@@ -61,6 +65,44 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
 
 A check passes when the ability's tally reaches its target. Each result shows
 `PASSED` or `FAILED` plus the margin, `rolled - required`.
+
+## The special die
+
+One special die is thrown with every roll and reported on its own row under the
+ability results. It has no rank and no target, **the exertion never touches it**
+— neither a reroll nor a +1 reaches it, and it only changes when the whole roll
+is thrown again. Nothing acts on its effects yet; the face is only named.
+
+Each archetype has its own face table.
+
+### Exquisite
+
+| Pips | Face            | Effect                                                               |
+|------|-----------------|----------------------------------------------------------------------|
+| 1    | Blank           | —                                                                     |
+| 2    | Tweak           | Lower one die, increase another                                       |
+| 3-4  | Perfect balance | Rise the lowest die of your lowest ability roll to match the other one |
+| 5-6  | Perfect choice  | discard 1 dice one ability, double of 1 dice of another               |
+
+### Unbreakable
+
+| Pips | Face                           | Effect                     |
+|------|--------------------------------|----------------------------|
+| 1    | Blank                          | —                          |
+| 2    | Unshakable                     | ignore bad                 |
+| 3-4  | Recall your source of strength | advance 2 dice by one side |
+| 5-6  | Squash weakness                | set 2 dice to 3rd face     |
+
+### Limitless
+
+| Pips | Face               | Effect             |
+|------|--------------------|--------------------|
+| 1    | Blunder            | lose dice          |
+| 2    | Blank              | —                  |
+| 3    | Emotional Outburst | Reroll → Hindrance |
+| 4    | Wreck it           | +R → Break         |
+| 5    | Push too far       | +R → -1Res         |
+| 6    | Lose your Head     | +2R → injury       |
 
 ## Stakes: boons and complications
 

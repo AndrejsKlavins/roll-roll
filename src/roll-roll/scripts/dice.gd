@@ -72,6 +72,61 @@ const MAX_SKILL_SCORE := 5
 const DEFAULT_SKILL_SCORE := 1
 const NO_SKILL := -1
 
+## The special die's archetype, chosen once for the whole check. The three
+## archetypes share one face table for now.
+const ARCHETYPE_NAMES: Array[String] = ["Exquisite", "Unbreakable", "Limitless"]
+const DEFAULT_ARCHETYPE := 0
+
+## The special die's faces, by pips — one table per archetype. The effects are
+## shown to the player but nothing acts on them yet.
+const EXQUISITE_FACES: Array = [
+	{"name": "Blank", "effect": ""},
+	{"name": "Tweak", "effect": "Lower one die, increase another"},
+	{
+		"name": "Perfect balance",
+		"effect": "Rise the lowest die of your lowest ability roll to match the other one",
+	},
+	{
+		"name": "Perfect balance",
+		"effect": "Rise the lowest die of your lowest ability roll to match the other one",
+	},
+	{
+		"name": "Perfect choice",
+		"effect": "discard 1 dice one ability, double of 1 dice of another",
+	},
+	{
+		"name": "Perfect choice",
+		"effect": "discard 1 dice one ability, double of 1 dice of another",
+	},
+]
+
+const UNBREAKABLE_FACES: Array = [
+	{"name": "Blank", "effect": ""},
+	{"name": "Unshakable", "effect": "ignore bad"},
+	{"name": "Recall your source of strength", "effect": "advance 2 dice by one side"},
+	{"name": "Recall your source of strength", "effect": "advance 2 dice by one side"},
+	{"name": "Squash weakness", "effect": "set 2 dice to 3rd face"},
+	{"name": "Squash weakness", "effect": "set 2 dice to 3rd face"},
+]
+
+## This table arrived before the archetypes were split apart and is the one
+## archetype still without a table of its own.
+const LIMITLESS_FACES: Array = [
+	{"name": "Blunder", "effect": "lose dice"},
+	{"name": "Blank", "effect": ""},
+	{"name": "Emotional Outburst", "effect": "Reroll → Hindrance"},
+	{"name": "Wreck it", "effect": "+R → Break"},
+	{"name": "Push too far", "effect": "+R → -1Res"},
+	{"name": "Lose your Head", "effect": "+2R → injury"},
+]
+
+## In ARCHETYPE_NAMES order.
+const SPECIAL_FACES: Array = [
+	EXQUISITE_FACES,
+	UNBREAKABLE_FACES,
+	LIMITLESS_FACES,
+]
+
 const ROLE_MAIN := 0
 const ROLE_SUPPORTING := 1
 const ROLE_NAMES: Array[String] = ["Main", "Supporting"]
@@ -114,6 +169,30 @@ static func role_name(role: int) -> String:
 
 static func skill_name(skill: int) -> String:
 	return SKILL_NAMES[skill]
+
+
+static func archetype_name(archetype: int) -> String:
+	return ARCHETYPE_NAMES[archetype]
+
+
+static func special_face(archetype: int, pips: int) -> Dictionary:
+	return SPECIAL_FACES[archetype][clampi(pips, 1, DIE_SIDES) - 1]
+
+
+static func special_face_name(archetype: int, pips: int) -> String:
+	return special_face(archetype, pips)["name"]
+
+
+static func special_face_effect(archetype: int, pips: int) -> String:
+	return special_face(archetype, pips)["effect"]
+
+
+## { "pips": int, "name": String, "effect": String } — one throw of the special
+## die. It has no rank and no target; it only reports what came up.
+static func roll_special(archetype: int, rng: RandomNumberGenerator) -> Dictionary:
+	var pips := rng.randi_range(1, DIE_SIDES)
+	var face := special_face(archetype, pips)
+	return {"pips": pips, "name": face["name"], "effect": face["effect"]}
 
 
 ## A rolled result with one of its dice thrown again, re-tallied and re-scored.

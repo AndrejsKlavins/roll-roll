@@ -25,6 +25,7 @@ var _stakes := Dice.DEFAULT_STAKES
 var _slot_abilities := ["", ""]
 var _slot_difficulties := [Dice.DEFAULT_DIFFICULTY, Dice.DEFAULT_DIFFICULTY]
 var _ranks: Dictionary = {}
+var _archetype := Dice.DEFAULT_ARCHETYPE
 var _skill := Dice.NO_SKILL
 var _skill_score := Dice.DEFAULT_SKILL_SCORE
 var _slots: Array[AbilitySlot] = []
@@ -41,6 +42,7 @@ func reset() -> void:
 	_stakes = Dice.DEFAULT_STAKES
 	_slot_abilities = ["", ""]
 	_slot_difficulties = [Dice.DEFAULT_DIFFICULTY, Dice.DEFAULT_DIFFICULTY]
+	_archetype = Dice.DEFAULT_ARCHETYPE
 	_skill = Dice.NO_SKILL
 	_skill_score = Dice.DEFAULT_SKILL_SCORE
 	_ranks.clear()
@@ -154,7 +156,25 @@ func _build_rank_step() -> void:
 		_content.add_child(row)
 
 	_content.add_child(HSeparator.new())
+	_content.add_child(_build_archetype_row())
 	_build_skill_section()
+
+
+func _build_archetype_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+
+	var label := Label.new()
+	label.text = "Special die"
+	label.custom_minimum_size.x = 130
+	label.add_theme_font_size_override("font_size", 20)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(label)
+
+	var options := OptionRow.create(Dice.ARCHETYPE_NAMES, _archetype, 16)
+	options.option_pressed.connect(func(index: int) -> void: _archetype = index)
+	row.add_child(options)
+	return row
 
 
 func _rank_labels() -> Array:
@@ -176,7 +196,7 @@ func _build_skill_section() -> void:
 
 	var label := Label.new()
 	label.text = "Skill"
-	label.custom_minimum_size.x = 90
+	label.custom_minimum_size.x = 130
 	label.add_theme_font_size_override("font_size", 20)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	header.add_child(label)
@@ -205,7 +225,7 @@ func _build_skill_section() -> void:
 
 		# Keeps the skill buttons aligned with the score buttons below them.
 		var spacer := Control.new()
-		spacer.custom_minimum_size.x = 90
+		spacer.custom_minimum_size.x = 130
 		skill_row.add_child(spacer)
 
 		var skills := OptionRow.create(Dice.SKILL_NAMES, _skill, 14)
@@ -219,7 +239,7 @@ func _build_skill_section() -> void:
 
 		var score_label := Label.new()
 		score_label.text = "Score"
-		score_label.custom_minimum_size.x = 90
+		score_label.custom_minimum_size.x = 130
 		score_label.add_theme_font_size_override("font_size", 18)
 		score_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		score_row.add_child(score_label)
@@ -314,6 +334,7 @@ func _on_next_pressed() -> void:
 	wizard_completed.emit({
 		"selections": selections,
 		"stakes": _stakes,
+		"archetype": _archetype,
 		"skill": _skill,
 		"skill_score": _skill_score,
 	})

@@ -124,6 +124,121 @@ func _initialize() -> void:
 	# Very weak dice top out at 4 each, so 16 is out of reach.
 	_check(not results[1]["passed"], "a very weak ability cannot pass Very hard")
 
+	print("the special die")
+
+	_check(Dice.ARCHETYPE_NAMES.size() == 3, "three archetypes are on offer")
+	_check(
+		", ".join(Dice.ARCHETYPE_NAMES) == "Exquisite, Unbreakable, Limitless",
+		"the archetypes are Exquisite, Unbreakable and Limitless"
+	)
+	_check(
+		Dice.archetype_name(Dice.DEFAULT_ARCHETYPE) == "Exquisite",
+		"Exquisite is the default archetype"
+	)
+
+	# Each archetype now has its own table.
+	var exquisite := 0
+	var unbreakable := 1
+	var limitless := 2
+	_check(Dice.archetype_name(exquisite) == "Exquisite", "archetype 0 is Exquisite")
+	_check(Dice.archetype_name(unbreakable) == "Unbreakable", "archetype 1 is Unbreakable")
+	_check(Dice.archetype_name(limitless) == "Limitless", "archetype 2 is Limitless")
+
+	_check(Dice.special_face_name(exquisite, 1) == "Blank", "Exquisite: one pip is Blank")
+	_check(Dice.special_face_effect(exquisite, 1) == "", "Exquisite: Blank carries no effect")
+	_check(Dice.special_face_name(exquisite, 2) == "Tweak", "Exquisite: two pips is a Tweak")
+	_check(
+		Dice.special_face_effect(exquisite, 2) == "Lower one die, increase another",
+		"Exquisite: a Tweak trades one die against another"
+	)
+	for pips in [3, 4]:
+		_check(
+			Dice.special_face_name(exquisite, pips) == "Perfect balance",
+			"Exquisite: %d pips is Perfect balance" % pips
+		)
+	for pips in [5, 6]:
+		_check(
+			Dice.special_face_name(exquisite, pips) == "Perfect choice",
+			"Exquisite: %d pips is Perfect choice" % pips
+		)
+
+	_check(Dice.special_face_name(unbreakable, 1) == "Blank", "Unbreakable: one pip is Blank")
+	_check(
+		Dice.special_face_name(unbreakable, 2) == "Unshakable",
+		"Unbreakable: two pips is Unshakable"
+	)
+	_check(
+		Dice.special_face_effect(unbreakable, 2) == "ignore bad",
+		"Unbreakable: Unshakable ignores bad"
+	)
+	for pips in [3, 4]:
+		_check(
+			Dice.special_face_name(unbreakable, pips) == "Recall your source of strength",
+			"Unbreakable: %d pips recalls your source of strength" % pips
+		)
+		_check(
+			Dice.special_face_effect(unbreakable, pips) == "advance 2 dice by one side",
+			"Unbreakable: %d pips advances 2 dice by one side" % pips
+		)
+	for pips in [5, 6]:
+		_check(
+			Dice.special_face_name(unbreakable, pips) == "Squash weakness",
+			"Unbreakable: %d pips squashes weakness" % pips
+		)
+		_check(
+			Dice.special_face_effect(unbreakable, pips) == "set 2 dice to 3rd face",
+			"Unbreakable: %d pips sets 2 dice to the 3rd face" % pips
+		)
+
+	_check(Dice.special_face_name(limitless, 1) == "Blunder", "Limitless: one pip is a Blunder")
+	_check(Dice.special_face_effect(limitless, 1) == "lose dice", "Limitless: a Blunder loses dice")
+	_check(Dice.special_face_name(limitless, 2) == "Blank", "Limitless: two pips is Blank")
+	_check(
+		Dice.special_face_name(limitless, 6) == "Lose your Head",
+		"Limitless: six pips is Lose your Head"
+	)
+	_check(
+		Dice.special_face_effect(limitless, 6) == "+2R → injury",
+		"Limitless: Lose your Head costs an injury"
+	)
+
+	var tables_differ := true
+	for pips in range(1, Dice.DIE_SIDES + 1):
+		if Dice.special_face_name(exquisite, pips) == Dice.special_face_name(limitless, pips):
+			if pips != 2:  # both call the second face Blank
+				tables_differ = false
+	_check(tables_differ, "no two archetypes share a table any more")
+
+	var every_face_filled := true
+	for archetype in Dice.ARCHETYPE_NAMES.size():
+		_check(
+			Dice.SPECIAL_FACES[archetype].size() == Dice.DIE_SIDES,
+			"%s has six faces" % Dice.archetype_name(archetype)
+		)
+		for pips in range(1, Dice.DIE_SIDES + 1):
+			if Dice.special_face_name(archetype, pips) == "":
+				every_face_filled = false
+	_check(every_face_filled, "every face of every archetype is named")
+
+	var special_rng := RandomNumberGenerator.new()
+	special_rng.seed = 4242
+	var faces_match := true
+	for archetype in Dice.ARCHETYPE_NAMES.size():
+		var special_seen := {}
+		for _i in 2000:
+			var special := Dice.roll_special(archetype, special_rng)
+			var pips: int = special["pips"]
+			special_seen[pips] = true
+			if special["name"] != Dice.special_face_name(archetype, pips):
+				faces_match = false
+			if special["effect"] != Dice.special_face_effect(archetype, pips):
+				faces_match = false
+		_check(
+			special_seen.size() == Dice.DIE_SIDES,
+			"%s can show all six faces" % Dice.archetype_name(archetype)
+		)
+	_check(faces_match, "a special roll names its own archetype's face")
+
 	print("exertion: rerolling a die")
 
 	var reroll_rng := RandomNumberGenerator.new()
