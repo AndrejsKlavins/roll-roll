@@ -19,8 +19,8 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
    **Stakes** (Low / Normal / High, Normal by default) are chosen once for the
    whole check.
 
-   Stakes and the skill are carried through and shown on the roll screen, but
-   nothing keys off them yet — they have no effect on the dice.
+   Stakes decide the boons and complications after the roll (below); the skill
+   score becomes a pool of points to spend on the results (step 3).
 2. **Wizard, step 2 — rank and skill.** Set each slotted ability's rank
    (1 Very weak … 5 Very strong), Average by default.
 
@@ -31,6 +31,12 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
 3. **Roll screen.** Your selections are listed, with a big **ROLL** button
    underneath. Pressing it rolls, then scores each ability against its own
    difficulty.
+
+   If the check carries a skill, its score becomes a pool of points to spread
+   across the results *after* the dice land. Each row gets a `-`/`+` stepper and
+   the pool line says how many points are left. Every point added or taken back
+   re-scores that ability — its total, its pass or fail, and the boons and
+   complications for the whole check. Rolling again hands the whole pool back.
 
 ## Difficulties
 
@@ -43,6 +49,20 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
 
 A check passes when the ability's tally reaches its target. Each result shows
 `PASSED` or `FAILED` plus the margin, `rolled - required`.
+
+## Stakes: boons and complications
+
+After the roll, each ability's margin (`rolled - required`) is read again for
+boons and complications:
+
+| Stakes | Effect |
+|--------|--------|
+| Low    | Neither, whatever the margins |
+| Normal | At most one of each: a margin of +3 or better anywhere is one boon, a margin of -3 or worse anywhere is one complication |
+| High   | Every whole step of 3, on every check, added up — +6 is two boons, -6 is two complications |
+
+Boons need a clean sweep: if any check fell short of its target, every boon is
+cancelled (the roll screen says so). Complications are never cancelled.
 
 ## Dice rules
 

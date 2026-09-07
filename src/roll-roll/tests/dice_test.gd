@@ -14,6 +14,19 @@ func _check(condition: bool, description: String) -> void:
 		printerr("  FAIL %s" % description)
 
 
+## Fake results, so the outcome rules can be checked at exact margins.
+func _margins(values: Array) -> Array:
+	var results: Array = []
+	for margin in values:
+		results.append({"margin": margin, "passed": margin >= 0})
+	return results
+
+
+func _outcome(values: Array, stakes: int) -> String:
+	var result := Dice.outcome(_margins(values), stakes)
+	return "%d/%d" % [result["boons"], result["complications"]]
+
+
 func _initialize() -> void:
 	print("dice rules")
 
@@ -110,6 +123,59 @@ func _initialize() -> void:
 	_check(results[1]["target"] == 16, "Agility was scored against Very hard")
 	# Very weak dice top out at 4 each, so 16 is out of reach.
 	_check(not results[1]["passed"], "a very weak ability cannot pass Very hard")
+
+	print("skill points")
+
+	var short_check := {"total": 7, "target": 8, "margin": -1, "passed": false}
+	var unspent := Dice.boosted(short_check, 0)
+	_check(unspent["total"] == 7 and not unspent["passed"], "no points leaves the result alone")
+	var rescued := Dice.boosted(short_check, 1)
+	_check(rescued["total"] == 8, "a point is added to the total")
+	_check(rescued["margin"] == 0, "the margin is re-scored against the same target")
+	_check(rescued["passed"], "a point can turn a near miss into a pass")
+	var pushed := Dice.boosted(short_check, 4)
+	_check(pushed["margin"] == 3, "points carry a result past its target")
+	_check(short_check["total"] == 7, "boosting does not modify the rolled result")
+
+	# Boosting is what makes a boon appear, so the two have to agree.
+	var boosted_pair := [Dice.boosted(short_check, 1), Dice.boosted(short_check, 4)]
+	_check(
+		Dice.outcome(boosted_pair, Dice.STAKES_NORMAL)["boons"] == 1,
+		"boons are re-counted from the boosted results"
+	)
+
+	print("stakes outcomes (boons/complications)")
+
+	# Low stakes carry neither, however extreme the margins.
+	_check(_outcome([9, -9], Dice.STAKES_LOW) == "0/0", "low stakes have no boons or complications")
+
+	# Normal: one of each at most, at a margin of +/-3 inclusive.
+	_check(_outcome([3], Dice.STAKES_NORMAL) == "1/0", "normal: +3 is a boon")
+	_check(_outcome([2], Dice.STAKES_NORMAL) == "0/0", "normal: +2 is nothing")
+	_check(_outcome([-3], Dice.STAKES_NORMAL) == "0/1", "normal: -3 is a complication")
+	_check(_outcome([-2], Dice.STAKES_NORMAL) == "0/0", "normal: -2 is nothing")
+	_check(_outcome([9], Dice.STAKES_NORMAL) == "1/0", "normal: a huge margin is still one boon")
+	_check(_outcome([5, 4], Dice.STAKES_NORMAL) == "1/0", "normal: two good checks are still one boon")
+	_check(_outcome([-5, -4], Dice.STAKES_NORMAL) == "0/1", "normal: two bad checks are still one complication")
+
+	# High: every whole step of three, on every check, added up.
+	_check(_outcome([3], Dice.STAKES_HIGH) == "1/0", "high: +3 is one boon")
+	_check(_outcome([5], Dice.STAKES_HIGH) == "1/0", "high: +5 is still one boon")
+	_check(_outcome([6], Dice.STAKES_HIGH) == "2/0", "high: +6 is two boons")
+	_check(_outcome([9], Dice.STAKES_HIGH) == "3/0", "high: +9 is three boons")
+	_check(_outcome([-6], Dice.STAKES_HIGH) == "0/2", "high: -6 is two complications")
+	_check(_outcome([4, 3], Dice.STAKES_HIGH) == "2/0", "high: boons add up across checks")
+
+	# A check that fell short cancels every boon, but never a complication.
+	_check(_outcome([4, -4], Dice.STAKES_NORMAL) == "0/1", "normal: a failed check cancels the boon")
+	_check(_outcome([9, -1], Dice.STAKES_HIGH) == "0/0", "high: a near miss still cancels every boon")
+	_check(_outcome([9, -6], Dice.STAKES_HIGH) == "0/2", "high: complications survive a failed check")
+	_check(_outcome([3, 0], Dice.STAKES_NORMAL) == "1/0", "a check that exactly meets its target is a pass")
+
+	var lost := Dice.outcome(_margins([4, -1]), Dice.STAKES_NORMAL)
+	_check(lost["boons_lost"], "a cancelled boon is reported as lost")
+	var clean := Dice.outcome(_margins([1, 1]), Dice.STAKES_NORMAL)
+	_check(not clean["boons_lost"], "nothing is reported lost when none was earned")
 
 	if _failures == 0:
 		print("all checks passed")

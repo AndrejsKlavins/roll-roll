@@ -53,6 +53,26 @@ static func apply_chip(button: Button) -> void:
 	button.add_theme_stylebox_override("focus", flat(Color(0, 0, 0, 0)))
 
 
+## A small square +/- button.
+static func apply_stepper(button: Button) -> void:
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var color := SURFACE
+		if state == "hover":
+			color = SURFACE_HOVER
+		elif state == "pressed":
+			color = ACCENT
+		elif state == "disabled":
+			color = Color(SURFACE, 0.4)
+		var box := flat(color, 6)
+		box.content_margin_left = 4
+		box.content_margin_right = 4
+		box.content_margin_top = 2
+		box.content_margin_bottom = 2
+		button.add_theme_stylebox_override(state, box)
+	button.add_theme_stylebox_override("focus", flat(Color(0, 0, 0, 0), 6))
+	button.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.25))
+
+
 static func apply_slot(panel: PanelContainer, filled: bool) -> void:
 	panel.add_theme_stylebox_override("panel", outlined(
 		SLOT_FILLED if filled else SLOT_EMPTY,

@@ -49,7 +49,14 @@ const SUPPORTING_DIFFICULTY_STEPS := 2
 
 ## What is riding on the check. Chosen once, for the whole check.
 const STAKES_NAMES: Array[String] = ["Low", "Normal", "High"]
-const DEFAULT_STAKES := 1
+const STAKES_LOW := 0
+const STAKES_NORMAL := 1
+const STAKES_HIGH := 2
+const DEFAULT_STAKES := STAKES_NORMAL
+
+## How far past its target a check has to land to be worth a boon, and how far
+## short to cost a complication.
+const OUTCOME_STEP := 3
 
 ## An optional skill, chosen once for the whole check. At most one applies.
 const SKILL_NAMES: Array[String] = [
@@ -107,6 +114,58 @@ static func role_name(role: int) -> String:
 
 static func skill_name(skill: int) -> String:
 	return SKILL_NAMES[skill]
+
+
+## A rolled result with skill points added to its total, re-scored against the
+## same target.
+static func boosted(result: Dictionary, points: int) -> Dictionary:
+	var scored := result.duplicate()
+	var target: int = result["target"]
+	var total: int = int(result["total"]) + points
+	scored["total"] = total
+	scored["margin"] = total - target
+	scored["passed"] = total >= target
+	return scored
+
+
+## Boons and complications earned by a set of rolled results.
+##
+## Low stakes carry neither. Normal stakes give at most one of each: a margin of
+## +3 or better anywhere is a boon, a margin of -3 or worse anywhere is a
+## complication. High stakes count every whole step of 3 on every check.
+##
+## Boons need a clean sweep — a single check that fell short of its target
+## cancels all of them. Complications are never cancelled.
+static func outcome(results: Array, stakes: int) -> Dictionary:
+	var boons := 0
+	var complications := 0
+	var earned_boons := false
+	var all_passed := true
+
+	for result in results:
+		if not result["passed"]:
+			all_passed = false
+		if stakes == STAKES_LOW:
+			continue
+
+		var margin: int = result["margin"]
+		if margin >= OUTCOME_STEP:
+			earned_boons = true
+			boons += 1 if stakes == STAKES_NORMAL else margin / OUTCOME_STEP
+		elif margin <= -OUTCOME_STEP:
+			complications += 1 if stakes == STAKES_NORMAL else -margin / OUTCOME_STEP
+
+	if stakes == STAKES_NORMAL:
+		boons = mini(boons, 1)
+		complications = mini(complications, 1)
+	if not all_passed:
+		boons = 0
+
+	return {
+		"boons": boons,
+		"complications": complications,
+		"boons_lost": earned_boons and not all_passed,
+	}
 
 
 static func icon_path(ability: String) -> String:
