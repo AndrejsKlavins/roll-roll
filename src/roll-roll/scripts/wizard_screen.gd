@@ -6,7 +6,7 @@ extends Control
 ## the supporting one, give each a difficulty, and set the stakes.
 ## Step 2 sets the rank of whichever abilities ended up in the slots.
 
-signal wizard_completed(selections: Array, stakes: int)
+signal wizard_completed(check: Dictionary)
 
 const STEP_CHECK := 0
 const STEP_RANKS := 1
@@ -25,6 +25,8 @@ var _stakes := Dice.DEFAULT_STAKES
 var _slot_abilities := ["", ""]
 var _slot_difficulties := [Dice.DEFAULT_DIFFICULTY, Dice.DEFAULT_DIFFICULTY]
 var _ranks: Dictionary = {}
+var _skill := Dice.NO_SKILL
+var _skill_score := Dice.DEFAULT_SKILL_SCORE
 var _slots: Array[AbilitySlot] = []
 
 
@@ -39,6 +41,8 @@ func reset() -> void:
 	_stakes = Dice.DEFAULT_STAKES
 	_slot_abilities = ["", ""]
 	_slot_difficulties = [Dice.DEFAULT_DIFFICULTY, Dice.DEFAULT_DIFFICULTY]
+	_skill = Dice.NO_SKILL
+	_skill_score = Dice.DEFAULT_SKILL_SCORE
 	_ranks.clear()
 	for ability in Dice.ABILITY_NAMES:
 		_ranks[ability] = Dice.AVERAGE_RANK
@@ -137,32 +141,109 @@ func _build_rank_step() -> void:
 
 		var label := Label.new()
 		label.text = "%s  (%s)" % [ability, Dice.role_name(role).to_lower()]
-		label.custom_minimum_size.x = 230
+		label.custom_minimum_size.x = 210
 		label.add_theme_font_size_override("font_size", 20)
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		row.add_child(label)
 
-		var picker := OptionButton.new()
-		picker.custom_minimum_size.x = 220
-		for rank in range(Dice.MIN_RANK, Dice.MAX_RANK + 1):
-			picker.add_item("%d — %s" % [rank, Dice.rank_name(rank)], rank)
-		picker.select(picker.get_item_index(_ranks[ability]))
-		picker.item_selected.connect(_on_rank_selected.bind(ability, picker))
-		row.add_child(picker)
-
-		var preview := Label.new()
-		preview.name = "Preview"
-		preview.add_theme_font_size_override("font_size", 16)
-		preview.modulate = Color(1, 1, 1, 0.6)
-		preview.text = _faces_preview(_ranks[ability])
-		preview.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		row.add_child(preview)
+		var ranks := OptionRow.create(_rank_labels(), _ranks[ability] - Dice.MIN_RANK, 14)
+		ranks.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ranks.option_pressed.connect(_on_rank_pressed.bind(ability))
+		row.add_child(ranks)
 
 		_content.add_child(row)
 
+	_content.add_child(HSeparator.new())
+	_build_skill_section()
 
-func _faces_preview(rank: int) -> String:
-	return "dice faces: %s" % Dice.faces_text(rank)
+
+func _rank_labels() -> Array:
+	var labels: Array = []
+	for rank in range(Dice.MIN_RANK, Dice.MAX_RANK + 1):
+		labels.append("%s
+%d" % [Dice.rank_name(rank), rank])
+	return labels
+
+
+## At most one skill applies to a check, so this is an add/remove pair rather
+## than a list.
+func _build_skill_section() -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 16)
+
+	var label := Label.new()
+	label.text = "Skill"
+	label.custom_minimum_size.x = 90
+	label.add_theme_font_size_override("font_size", 20)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	header.add_child(label)
+
+	var toggle := Button.new()
+	toggle.text = "Remove skill" if _has_skill() else "+ Add skill"
+	toggle.custom_minimum_size = Vector2(160, 40)
+	toggle.add_theme_font_size_override("font_size", 16)
+	UiStyles.apply_chip(toggle)
+	toggle.pressed.connect(_on_skill_toggled)
+	header.add_child(toggle)
+
+	if not _has_skill():
+		var hint := Label.new()
+		hint.text = "optional — one per check"
+		hint.modulate = Color(1, 1, 1, 0.5)
+		hint.add_theme_font_size_override("font_size", 16)
+		hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		header.add_child(hint)
+
+	box.add_child(header)
+
+	if _has_skill():
+		var skill_row := HBoxContainer.new()
+		skill_row.add_theme_constant_override("separation", 16)
+
+		# Keeps the skill buttons aligned with the score buttons below them.
+		var spacer := Control.new()
+		spacer.custom_minimum_size.x = 90
+		skill_row.add_child(spacer)
+
+		var skills := OptionRow.create(Dice.SKILL_NAMES, _skill, 14)
+		skills.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		skills.option_pressed.connect(func(index: int) -> void: _skill = index)
+		skill_row.add_child(skills)
+		box.add_child(skill_row)
+
+		var score_row := HBoxContainer.new()
+		score_row.add_theme_constant_override("separation", 16)
+
+		var score_label := Label.new()
+		score_label.text = "Score"
+		score_label.custom_minimum_size.x = 90
+		score_label.add_theme_font_size_override("font_size", 18)
+		score_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		score_row.add_child(score_label)
+
+		var scores := OptionRow.create(
+			_score_labels(), _skill_score - Dice.MIN_SKILL_SCORE, 16
+		)
+		scores.option_pressed.connect(func(index: int) -> void:
+			_skill_score = index + Dice.MIN_SKILL_SCORE)
+		score_row.add_child(scores)
+		box.add_child(score_row)
+
+	_content.add_child(box)
+
+
+func _score_labels() -> Array:
+	var labels: Array = []
+	for score in range(Dice.MIN_SKILL_SCORE, Dice.MAX_SKILL_SCORE + 1):
+		labels.append(str(score))
+	return labels
+
+
+func _has_skill() -> bool:
+	return _skill != Dice.NO_SKILL
 
 
 func _update_next_enabled() -> void:
@@ -196,12 +277,17 @@ func _on_difficulty_pressed(difficulty: int, role: int) -> void:
 		_slots[Dice.ROLE_SUPPORTING].set_difficulty(supporting)
 
 
-func _on_rank_selected(index: int, ability: String, picker: OptionButton) -> void:
-	var rank := picker.get_item_id(index)
-	_ranks[ability] = rank
-	var preview := picker.get_parent().get_node_or_null("Preview") as Label
-	if preview:
-		preview.text = _faces_preview(rank)
+func _on_rank_pressed(index: int, ability: String) -> void:
+	_ranks[ability] = index + Dice.MIN_RANK
+
+
+func _on_skill_toggled() -> void:
+	if _has_skill():
+		_skill = Dice.NO_SKILL
+	else:
+		_skill = 0
+		_skill_score = Dice.DEFAULT_SKILL_SCORE
+	_refresh()
 
 
 func _on_back_pressed() -> void:
@@ -225,4 +311,9 @@ func _on_next_pressed() -> void:
 			"difficulty": _slot_difficulties[role],
 			"role": role,
 		})
-	wizard_completed.emit(selections, _stakes)
+	wizard_completed.emit({
+		"selections": selections,
+		"stakes": _stakes,
+		"skill": _skill,
+		"skill_score": _skill_score,
+	})

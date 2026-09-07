@@ -17,8 +17,8 @@ func _show_wizard() -> void:
 	_roll_screen.visible = false
 
 
-func _on_wizard_completed(selections: Array, stakes: int) -> void:
-	_roll_screen.setup(selections, stakes)
+func _on_wizard_completed(check: Dictionary) -> void:
+	_roll_screen.setup(check)
 	_wizard.visible = false
 	_roll_screen.visible = true
 

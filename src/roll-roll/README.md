@@ -18,8 +18,16 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
 
    **Stakes** (Low / Normal / High, Normal by default) are chosen once for the
    whole check.
-2. **Wizard, step 2 — rank.** Set each slotted ability's rank (1 Very weak …
-   5 Very strong). The faces of that ability's dice are previewed as you choose.
+
+   Stakes and the skill are carried through and shown on the roll screen, but
+   nothing keys off them yet — they have no effect on the dice.
+2. **Wizard, step 2 — rank and skill.** Set each slotted ability's rank
+   (1 Very weak … 5 Very strong), Average by default.
+
+   A single optional **skill** can be added here — one of Athletics, Acrobatics,
+   Stealth, Manipulation, Melee combat or Ranged combat — with a score of 1-5.
+   At most one skill applies to a check; adding one defaults to Athletics at 1,
+   and it can be removed again.
 3. **Roll screen.** Your selections are listed, with a big **ROLL** button
    underneath. Pressing it rolls, then scores each ability against its own
    difficulty.

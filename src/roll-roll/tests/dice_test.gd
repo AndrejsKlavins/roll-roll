@@ -48,6 +48,12 @@ func _initialize() -> void:
 	_check(Dice.role_name(Dice.ROLE_MAIN) == "Main", "role 0 is the main ability")
 	_check(Dice.role_name(Dice.ROLE_SUPPORTING) == "Supporting", "role 1 is the supporting ability")
 
+	_check(Dice.SKILL_NAMES.size() == 6, "six skills are on offer")
+	_check(Dice.skill_name(0) == "Athletics", "the first skill is Athletics")
+	_check(Dice.skill_name(5) == "Ranged combat", "the last skill is Ranged combat")
+	_check(Dice.NO_SKILL not in range(Dice.SKILL_NAMES.size()), "NO_SKILL is not a skill index")
+	_check(Dice.DEFAULT_SKILL_SCORE == 1, "a newly added skill scores 1")
+
 	var icons_present := true
 	for ability in Dice.ABILITY_NAMES:
 		if not ResourceLoader.exists(Dice.icon_path(ability)):

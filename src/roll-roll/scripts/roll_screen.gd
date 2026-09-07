@@ -15,8 +15,8 @@ const FAIL_COLOR := Color(0.91, 0.44, 0.42)
 @onready var _roll_button: Button = %RollButton
 @onready var _back_button: Button = %BackButton
 
+var _check: Dictionary = {}
 var _selections: Array = []
-var _stakes := Dice.DEFAULT_STAKES
 var _rows: Array[Dictionary] = []
 var _rolling := false
 var _rng := RandomNumberGenerator.new()
@@ -28,9 +28,9 @@ func _ready() -> void:
 	_back_button.pressed.connect(func() -> void: restart_requested.emit())
 
 
-func setup(selections: Array, stakes: int) -> void:
-	_selections = selections
-	_stakes = stakes
+func setup(check: Dictionary) -> void:
+	_check = check
+	_selections = check["selections"]
 	_rolling = false
 	_roll_button.disabled = false
 	_roll_button.text = "ROLL"
@@ -49,7 +49,7 @@ func _build_summary() -> void:
 		_selections.size(),
 		"y" if _selections.size() == 1 else "ies",
 		total_dice,
-		Dice.stakes_name(_stakes),
+		Dice.stakes_name(_check["stakes"]),
 	]
 	heading.modulate = Color(1, 1, 1, 0.7)
 	_summary.add_child(heading)
@@ -70,6 +70,14 @@ func _build_summary() -> void:
 			Dice.faces_text(rank),
 		]
 		_summary.add_child(line)
+
+	if _check["skill"] != Dice.NO_SKILL:
+		var skill_line := Label.new()
+		skill_line.add_theme_font_size_override("font_size", 20)
+		skill_line.text = "Skill · %s %d" % [
+			Dice.skill_name(_check["skill"]), _check["skill_score"]
+		]
+		_summary.add_child(skill_line)
 
 
 func _build_result_rows() -> void:

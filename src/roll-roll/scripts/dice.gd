@@ -51,6 +51,20 @@ const SUPPORTING_DIFFICULTY_STEPS := 2
 const STAKES_NAMES: Array[String] = ["Low", "Normal", "High"]
 const DEFAULT_STAKES := 1
 
+## An optional skill, chosen once for the whole check. At most one applies.
+const SKILL_NAMES: Array[String] = [
+	"Athletics",
+	"Acrobatics",
+	"Stealth",
+	"Manipulation",
+	"Melee combat",
+	"Ranged combat",
+]
+const MIN_SKILL_SCORE := 1
+const MAX_SKILL_SCORE := 5
+const DEFAULT_SKILL_SCORE := 1
+const NO_SKILL := -1
+
 const ROLE_MAIN := 0
 const ROLE_SUPPORTING := 1
 const ROLE_NAMES: Array[String] = ["Main", "Supporting"]
@@ -89,6 +103,10 @@ static func stakes_name(stakes: int) -> String:
 
 static func role_name(role: int) -> String:
 	return ROLE_NAMES[role]
+
+
+static func skill_name(skill: int) -> String:
+	return SKILL_NAMES[skill]
 
 
 static func icon_path(ability: String) -> String:
