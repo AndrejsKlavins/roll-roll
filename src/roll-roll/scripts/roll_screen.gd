@@ -1,15 +1,17 @@
 extends Control
 
-## Shows the wizard's picks, rolls them, and tallies each stat separately.
+## Shows the wizard's picks, rolls them, and scores each ability against its
+## own difficulty. Abilities are tallied separately — there is no combined total.
 
 signal restart_requested
 
 const SHUFFLE_STEPS := 12
 const SHUFFLE_STEP_TIME := 0.045
+const PASS_COLOR := Color(0.45, 0.82, 0.5)
+const FAIL_COLOR := Color(0.91, 0.44, 0.42)
 
 @onready var _summary: VBoxContainer = %Summary
 @onready var _results: VBoxContainer = %Results
-@onready var _grand_total: Label = %GrandTotal
 @onready var _roll_button: Button = %RollButton
 @onready var _back_button: Button = %BackButton
 
@@ -30,7 +32,6 @@ func setup(selections: Array) -> void:
 	_rolling = false
 	_roll_button.disabled = false
 	_roll_button.text = "ROLL"
-	_grand_total.text = ""
 	_build_summary()
 	_build_result_rows()
 
@@ -39,25 +40,28 @@ func _build_summary() -> void:
 	for child in _summary.get_children():
 		child.queue_free()
 
-	var total_dice := _selections.size() * Dice.DICE_PER_STAT
+	var total_dice := _selections.size() * Dice.DICE_PER_ABILITY
 	var heading := Label.new()
 	heading.add_theme_font_size_override("font_size", 18)
-	heading.text = "%d stat%s — %d dice total" % [
-		_selections.size(), "" if _selections.size() == 1 else "s", total_dice
+	heading.text = "%d abilit%s — %d dice total" % [
+		_selections.size(), "y" if _selections.size() == 1 else "ies", total_dice
 	]
 	heading.modulate = Color(1, 1, 1, 0.7)
 	_summary.add_child(heading)
 
 	for selection in _selections:
-		var level: int = selection["strength"]
+		var rank: int = selection["rank"]
+		var difficulty: int = selection["difficulty"]
 		var line := Label.new()
 		line.add_theme_font_size_override("font_size", 20)
-		line.text = "%s — %s (%+d)   %dd6: %s" % [
-			selection["stat"],
-			Dice.strength_name(level),
-			Dice.modifier(level),
-			Dice.DICE_PER_STAT,
-			Dice.faces_text(level),
+		line.text = "%s — %s (%+d)  vs  %s %d   %dd6: %s" % [
+			selection["ability"],
+			Dice.rank_name(rank),
+			Dice.modifier(rank),
+			Dice.difficulty_name(difficulty),
+			Dice.difficulty_target(difficulty),
+			Dice.DICE_PER_ABILITY,
+			Dice.faces_text(rank),
 		]
 		_summary.add_child(line)
 
@@ -72,32 +76,45 @@ func _build_result_rows() -> void:
 		row.add_theme_constant_override("separation", 12)
 
 		var name_label := Label.new()
-		name_label.text = selection["stat"]
-		name_label.custom_minimum_size.x = 160
+		name_label.text = selection["ability"]
+		name_label.custom_minimum_size.x = 145
 		name_label.add_theme_font_size_override("font_size", 22)
 		row.add_child(name_label)
 
 		var dice_labels: Array[Label] = []
-		for _i in Dice.DICE_PER_STAT:
+		for _i in Dice.DICE_PER_ABILITY:
 			var die := Label.new()
-			die.text = "?"
-			die.custom_minimum_size.x = 52
-			die.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			die.add_theme_font_size_override("font_size", 26)
+			die.text = "—"
+			die.custom_minimum_size.x = 150
+			die.add_theme_font_size_override("font_size", 22)
 			row.add_child(die)
 			dice_labels.append(die)
 
 		var total_label := Label.new()
 		total_label.text = "= —"
-		total_label.custom_minimum_size.x = 90
-		total_label.add_theme_font_size_override("font_size", 26)
+		total_label.custom_minimum_size.x = 70
+		total_label.add_theme_font_size_override("font_size", 24)
 		row.add_child(total_label)
+
+		var target_label := Label.new()
+		target_label.text = "needs %d" % Dice.difficulty_target(selection["difficulty"])
+		target_label.custom_minimum_size.x = 100
+		target_label.add_theme_font_size_override("font_size", 18)
+		target_label.modulate = Color(1, 1, 1, 0.6)
+		row.add_child(target_label)
+
+		var outcome_label := Label.new()
+		outcome_label.text = ""
+		outcome_label.custom_minimum_size.x = 160
+		outcome_label.add_theme_font_size_override("font_size", 22)
+		row.add_child(outcome_label)
 
 		_results.add_child(row)
 		_rows.append({
 			"selection": selection,
 			"dice": dice_labels,
 			"total": total_label,
+			"outcome": outcome_label,
 		})
 
 
@@ -107,7 +124,6 @@ func _on_roll_pressed() -> void:
 	_rolling = true
 	_roll_button.disabled = true
 	_roll_button.text = "ROLLING…"
-	_grand_total.text = ""
 
 	var results := Dice.roll(_selections, _rng)
 	await _shuffle_animation()
@@ -122,22 +138,27 @@ func _on_roll_pressed() -> void:
 func _shuffle_animation() -> void:
 	for _step in SHUFFLE_STEPS:
 		for row in _rows:
-			var level: int = row["selection"]["strength"]
+			var rank: int = row["selection"]["rank"]
 			for die in row["dice"]:
-				die.text = str(Dice.roll_die(level, _rng))
+				die.text = _die_text(Dice.roll_die(rank, _rng))
 			row["total"].text = "= …"
+			row["outcome"].text = ""
 		await get_tree().create_timer(SHUFFLE_STEP_TIME).timeout
 
 
+func _die_text(die: Dictionary) -> String:
+	return "%s %d" % [die["face"], die["value"]]
+
+
 func _show_results(results: Array) -> void:
-	var grand := 0
 	for i in results.size():
 		var result: Dictionary = results[i]
 		var row: Dictionary = _rows[i]
 		var dice_labels: Array = row["dice"]
 		for d in dice_labels.size():
-			dice_labels[d].text = str(result["dice"][d])
+			dice_labels[d].text = _die_text(result["dice"][d])
 		row["total"].text = "= %d" % result["total"]
-		grand += result["total"]
 
-	_grand_total.text = "Grand total: %d" % grand
+		var outcome: Label = row["outcome"]
+		outcome.text = "%s  %+d" % ["PASSED" if result["passed"] else "FAILED", result["margin"]]
+		outcome.modulate = PASS_COLOR if result["passed"] else FAIL_COLOR

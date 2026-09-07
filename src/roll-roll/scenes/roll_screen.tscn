@@ -111,13 +111,6 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 10
 
-[node name="GrandTotal" type="Label" parent="Margin/Layout"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 44)
-layout_mode = 2
-theme_override_font_sizes/font_size = 30
-horizontal_alignment = 1
-
 [node name="BackButton" type="Button" parent="Margin/Layout"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(200, 44)
