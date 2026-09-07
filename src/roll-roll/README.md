@@ -4,13 +4,25 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
 
 ## Flow
 
-1. **Wizard, step 1 — difficulty.** Every ability (Strength, Endurance, Agility,
-   Perception, Knowledge, Intuition, Resolve) gets a difficulty, or stays
-   *not rolled*. Choosing a difficulty is what puts an ability into the roll.
-2. **Wizard, step 2 — rank.** Set each rolled ability's rank (1 Very weak …
+1. **Wizard, step 1 — the check.** All seven abilities sit in a row as icon
+   buttons. Drag one onto the **main ability** slot and, if the check has one,
+   another onto the **supporting ability** slot. Dropping onto a filled slot
+   replaces what was there; dropping an ability that already sits in the other
+   slot swaps the two rather than duplicating it.
+
+   A filled slot shows its four difficulty buttons, defaulting to Challenging.
+   Choosing the main difficulty pulls the supporting one to two steps below it
+   (never below Easy) — and if the supporting slot is still empty at that point,
+   the derived value is applied when an ability is later dropped in. Either way
+   the supporting difficulty can still be set by hand afterwards.
+
+   **Stakes** (Low / Normal / High, Normal by default) are chosen once for the
+   whole check.
+2. **Wizard, step 2 — rank.** Set each slotted ability's rank (1 Very weak …
    5 Very strong). The faces of that ability's dice are previewed as you choose.
-3. **Roll screen.** Your selections are listed, with a big **ROLL** button underneath.
-   Pressing it rolls, then scores each ability against its own difficulty.
+3. **Roll screen.** Your selections are listed, with a big **ROLL** button
+   underneath. Pressing it rolls, then scores each ability against its own
+   difficulty.
 
 ## Difficulties
 
@@ -56,7 +68,13 @@ there is no combined total.
 - `scenes/main.tscn` - screen switcher (wizard <-> roll screen)
 - `scenes/wizard_screen.tscn`, `scripts/wizard_screen.gd` - the two-step wizard
 - `scenes/roll_screen.tscn`, `scripts/roll_screen.gd` - summary, roll button, results
+- `scenes/ability_slot.tscn`, `scripts/ability_slot.gd` - a drop target plus its
+  difficulty buttons
+- `scripts/ability_button.gd` - a draggable ability chip
+- `scripts/option_row.gd` - the horizontal exclusive-button rows
+- `scripts/ui_styles.gd` - colours for the widgets built in code
 - `scripts/dice.gd` - the rules, with no UI dependencies
+- `icons/` - one SVG per ability
 - `tests/dice_test.gd` - headless checks for those rules
 
 ## Running the tests

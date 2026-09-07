@@ -42,6 +42,18 @@ const DIFFICULTY_NAMES: Array[String] = [
 ]
 const DIFFICULTY_TARGETS: Array[int] = [4, 8, 12, 16]
 const NO_DIFFICULTY := -1
+const DEFAULT_DIFFICULTY := 1
+
+## A supporting ability is checked against an easier target than the main one.
+const SUPPORTING_DIFFICULTY_STEPS := 2
+
+## What is riding on the check. Chosen once, for the whole check.
+const STAKES_NAMES: Array[String] = ["Low", "Normal", "High"]
+const DEFAULT_STAKES := 1
+
+const ROLE_MAIN := 0
+const ROLE_SUPPORTING := 1
+const ROLE_NAMES: Array[String] = ["Main", "Supporting"]
 
 const MIN_RANK := 1
 const MAX_RANK := 5
@@ -64,6 +76,23 @@ static func difficulty_name(difficulty: int) -> String:
 
 static func difficulty_target(difficulty: int) -> int:
 	return DIFFICULTY_TARGETS[difficulty]
+
+
+## Two steps below the main ability's difficulty, never below the easiest one.
+static func supporting_difficulty(main_difficulty: int) -> int:
+	return maxi(0, main_difficulty - SUPPORTING_DIFFICULTY_STEPS)
+
+
+static func stakes_name(stakes: int) -> String:
+	return STAKES_NAMES[stakes]
+
+
+static func role_name(role: int) -> String:
+	return ROLE_NAMES[role]
+
+
+static func icon_path(ability: String) -> String:
+	return "res://icons/%s.svg" % ability.to_lower()
 
 
 ## Average is unmodified; every step away from it shifts all six faces by one.

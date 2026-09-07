@@ -36,6 +36,25 @@ func _initialize() -> void:
 	_check(Dice.difficulty_target(2) == 12, "Hard needs 12")
 	_check(Dice.difficulty_target(3) == 16, "Very hard needs 16")
 
+	_check(Dice.difficulty_name(Dice.DEFAULT_DIFFICULTY) == "Challenging", "Challenging is the default difficulty")
+	_check(Dice.stakes_name(Dice.DEFAULT_STAKES) == "Normal", "Normal is the default stakes")
+
+	# A supporting ability sits two steps below the main one, floored at Easy.
+	_check(Dice.supporting_difficulty(3) == 1, "Very hard supports at Challenging")
+	_check(Dice.supporting_difficulty(2) == 0, "Hard supports at Easy")
+	_check(Dice.supporting_difficulty(1) == 0, "Challenging supports at Easy, not below it")
+	_check(Dice.supporting_difficulty(0) == 0, "Easy supports at Easy")
+
+	_check(Dice.role_name(Dice.ROLE_MAIN) == "Main", "role 0 is the main ability")
+	_check(Dice.role_name(Dice.ROLE_SUPPORTING) == "Supporting", "role 1 is the supporting ability")
+
+	var icons_present := true
+	for ability in Dice.ABILITY_NAMES:
+		if not ResourceLoader.exists(Dice.icon_path(ability)):
+			icons_present = false
+			printerr("  missing icon: %s" % Dice.icon_path(ability))
+	_check(icons_present, "every ability has an icon")
+
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 12345
 
