@@ -1,0 +1,119 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/wizard_screen.gd" id="1_wizard"]
+
+[sub_resource type="StyleBoxFlat" id="btn_normal"]
+bg_color = Color(0.607843, 0.203922, 0.219608, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="btn_hover"]
+bg_color = Color(0.729412, 0.262745, 0.278431, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="btn_pressed"]
+bg_color = Color(0.470588, 0.145098, 0.160784, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="btn_disabled"]
+bg_color = Color(0.223529, 0.207843, 0.211765, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="WizardScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_wizard")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 48
+theme_override_constants/margin_top = 40
+theme_override_constants/margin_right = 48
+theme_override_constants/margin_bottom = 40
+
+[node name="Layout" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+text = "Which stats are you rolling?"
+
+[node name="Subtitle" type="Label" parent="Margin/Layout"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0.65)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Step 1 of 2"
+
+[node name="Panel" type="PanelContainer" parent="Margin/Layout"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="PanelMargin" type="MarginContainer" parent="Margin/Layout/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="Scroll" type="ScrollContainer" parent="Margin/Layout/Panel/PanelMargin"]
+layout_mode = 2
+
+[node name="Content" type="VBoxContainer" parent="Margin/Layout/Panel/PanelMargin/Scroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="Nav" type="HBoxContainer" parent="Margin/Layout"]
+layout_mode = 2
+
+[node name="BackButton" type="Button" parent="Margin/Layout/Nav"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(140, 48)
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Back"
+
+[node name="Spacer" type="Control" parent="Margin/Layout/Nav"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="NextButton" type="Button" parent="Margin/Layout/Nav"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 48)
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Next"
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_hover_color = Color(1, 1, 1, 1)
+theme_override_colors/font_pressed_color = Color(1, 1, 1, 1)
+theme_override_colors/font_disabled_color = Color(1, 1, 1, 0.4)
+theme_override_styles/normal = SubResource("btn_normal")
+theme_override_styles/hover = SubResource("btn_hover")
+theme_override_styles/pressed = SubResource("btn_pressed")
+theme_override_styles/disabled = SubResource("btn_disabled")
+theme_override_styles/focus = SubResource("btn_hover")
