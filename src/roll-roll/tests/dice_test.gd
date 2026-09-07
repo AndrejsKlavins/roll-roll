@@ -45,9 +45,20 @@ func _initialize() -> void:
 	_check(Dice.face_name(6) == "Amazing", "six pips is Amazing")
 
 	_check(Dice.difficulty_target(0) == 4, "Easy needs 4")
-	_check(Dice.difficulty_target(1) == 8, "Challenging needs 8")
-	_check(Dice.difficulty_target(2) == 12, "Hard needs 12")
-	_check(Dice.difficulty_target(3) == 16, "Very hard needs 16")
+	_check(Dice.difficulty_target(1) == 7, "Challenging needs 7")
+	_check(Dice.difficulty_target(2) == 10, "Hard needs 10")
+	_check(Dice.difficulty_target(3) == 13, "Very hard needs 13")
+
+	# The targets start at 4 and go up in threes.
+	var targets_step := true
+	for difficulty in range(1, Dice.DIFFICULTY_NAMES.size()):
+		if Dice.difficulty_target(difficulty) - Dice.difficulty_target(difficulty - 1) != 3:
+			targets_step = false
+	_check(targets_step, "each difficulty is 3 above the one below it")
+	_check(
+		Dice.DIFFICULTY_TARGETS.size() == Dice.DIFFICULTY_NAMES.size(),
+		"every difficulty has a target"
+	)
 
 	_check(Dice.difficulty_name(Dice.DEFAULT_DIFFICULTY) == "Challenging", "Challenging is the default difficulty")
 	_check(Dice.stakes_name(Dice.DEFAULT_STAKES) == "Normal", "Normal is the default stakes")
@@ -120,7 +131,7 @@ func _initialize() -> void:
 	_check(passes_match, "a check passes when it reaches its target")
 
 	_check(results[0]["target"] == 4, "Strength was scored against Easy")
-	_check(results[1]["target"] == 16, "Agility was scored against Very hard")
+	_check(results[1]["target"] == 13, "Agility was scored against Very hard")
 	# Very weak dice top out at 4 each, so 16 is out of reach.
 	_check(not results[1]["passed"], "a very weak ability cannot pass Very hard")
 

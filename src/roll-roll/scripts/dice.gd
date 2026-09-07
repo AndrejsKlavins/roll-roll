@@ -40,7 +40,7 @@ const DIFFICULTY_NAMES: Array[String] = [
 	"Hard",
 	"Very hard",
 ]
-const DIFFICULTY_TARGETS: Array[int] = [4, 8, 12, 16]
+const DIFFICULTY_TARGETS: Array[int] = [4, 7, 10, 13]
 const NO_DIFFICULTY := -1
 const DEFAULT_DIFFICULTY := 1
 

@@ -59,9 +59,11 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
 | Name        | Target |
 |-------------|--------|
 | Easy        | 4      |
-| Challenging | 8      |
-| Hard        | 12     |
-| Very hard   | 16     |
+| Challenging | 7      |
+| Hard        | 10     |
+| Very hard   | 13     |
+
+The targets start at 4 and go up in threes.
 
 A check passes when the ability's tally reaches its target. Each result shows
 `PASSED` or `FAILED` plus the margin, `rolled - required`.
