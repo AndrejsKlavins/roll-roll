@@ -116,6 +116,22 @@ static func skill_name(skill: int) -> String:
 	return SKILL_NAMES[skill]
 
 
+## A rolled result with one of its dice thrown again, re-tallied and re-scored.
+static func reroll_die(result: Dictionary, die_index: int, rng: RandomNumberGenerator) -> Dictionary:
+	var rerolled := result.duplicate(true)
+	var dice: Array = rerolled["dice"]
+	dice[die_index] = roll_die(result["rank"], rng)
+
+	var total := 0
+	for die in dice:
+		total += int(die["value"])
+	var target: int = result["target"]
+	rerolled["total"] = total
+	rerolled["margin"] = total - target
+	rerolled["passed"] = total >= target
+	return rerolled
+
+
 ## A rolled result with skill points added to its total, re-scored against the
 ## same target.
 static func boosted(result: Dictionary, points: int) -> Dictionary:

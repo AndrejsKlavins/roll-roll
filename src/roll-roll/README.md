@@ -32,11 +32,23 @@ A dice-rolling app for a 7-ability check system, built in Godot 4.7.
    underneath. Pressing it rolls, then scores each ability against its own
    difficulty.
 
+   The player can **exert themselves** as often as they like: the button under
+   the results offers either rerolling a single die — the four dice become
+   selectable — or +1 to one result, chosen with the outlined `+1` button on
+   each row (distinct from the grey skill stepper). Either choice can be
+   cancelled up until it is made, and both re-score the check.
+
+   Each exertion is logged as a chip on one scrolling row beside the button,
+   which reads `Exert again` from the second one on. `+1`s stack, on the same
+   ability or spread around. Rolling again clears the log and every bonus.
+
    If the check carries a skill, its score becomes a pool of points to spread
    across the results *after* the dice land. Each row gets a `-`/`+` stepper and
    the pool line says how many points are left. Every point added or taken back
    re-scores that ability — its total, its pass or fail, and the boons and
    complications for the whole check. Rolling again hands the whole pool back.
+   Skill points and the exertion bonus stack; a total shows their sum, as
+   `= 9 (+2)`.
 
 ## Difficulties
 

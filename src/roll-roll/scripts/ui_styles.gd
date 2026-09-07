@@ -73,6 +73,32 @@ static func apply_stepper(button: Button) -> void:
 	button.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.25))
 
 
+## The exertion controls, told apart from the grey skill stepper by their outline.
+static func apply_exert(button: Button) -> void:
+	button.add_theme_stylebox_override("normal", outlined(Color(0, 0, 0, 0), ACCENT_HOVER, 8))
+	button.add_theme_stylebox_override("hover", outlined(ACCENT, ACCENT_HOVER, 8))
+	button.add_theme_stylebox_override("pressed", flat(ACCENT_HOVER, 8))
+	button.add_theme_stylebox_override("focus", flat(Color(0, 0, 0, 0), 8))
+
+
+## A die reading. Plain text until the player is picking one to reroll.
+static func apply_die(button: Button, selectable: bool) -> void:
+	var blank := flat(Color(0, 0, 0, 0), 8)
+	blank.content_margin_left = 4
+	blank.content_margin_right = 4
+	if selectable:
+		button.add_theme_stylebox_override("normal", outlined(Color(0, 0, 0, 0), ACCENT_HOVER, 8))
+		button.add_theme_stylebox_override("hover", outlined(ACCENT, ACCENT_HOVER, 8))
+		button.add_theme_stylebox_override("pressed", flat(ACCENT_HOVER, 8))
+	else:
+		button.add_theme_stylebox_override("normal", blank)
+		button.add_theme_stylebox_override("hover", blank)
+		button.add_theme_stylebox_override("pressed", blank)
+	button.add_theme_stylebox_override("disabled", blank)
+	button.add_theme_stylebox_override("focus", flat(Color(0, 0, 0, 0), 8))
+	button.add_theme_color_override("font_disabled_color", Color(1, 1, 1))
+
+
 static func apply_slot(panel: PanelContainer, filled: bool) -> void:
 	panel.add_theme_stylebox_override("panel", outlined(
 		SLOT_FILLED if filled else SLOT_EMPTY,

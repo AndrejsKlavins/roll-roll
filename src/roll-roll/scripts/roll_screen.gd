@@ -3,10 +3,12 @@ extends Control
 ## Shows the wizard's picks, rolls them, and scores each ability against its
 ## own difficulty. Abilities are tallied separately — there is no combined total.
 ##
-## When the check carries a skill, its score becomes a pool of points that can
-## be spread across the results afterwards to push totals over their targets.
-## Every allocation re-scores the checks, and the boons and complications with
-## them.
+## Two things can change a result after the dice land, and both re-score the
+## checks and the boons and complications with them:
+##
+##  - the skill's score, a pool of points spread across the results
+##  - exertions, as many as the player wants: each one either throws a single
+##    die again or adds +1 to one result, and they are logged as they happen
 
 signal restart_requested
 
@@ -16,8 +18,15 @@ const PASS_COLOR := Color(0.45, 0.82, 0.5)
 const FAIL_COLOR := Color(0.91, 0.44, 0.42)
 const MUTED_COLOR := Color(1, 1, 1, 0.65)
 
+## What the exertion controls are asking for right now.
+const EXERT_IDLE := "idle"
+const EXERT_CHOOSING := "choosing"
+const EXERT_PICK_RESULT := "pick_result"
+const EXERT_PICK_DIE := "pick_die"
+
 @onready var _summary: VBoxContainer = %Summary
 @onready var _results: VBoxContainer = %Results
+@onready var _exert_bar: HBoxContainer = %ExertBar
 @onready var _outcome: Label = %Outcome
 @onready var _roll_button: Button = %RollButton
 @onready var _back_button: Button = %BackButton
@@ -27,6 +36,9 @@ var _selections: Array = []
 var _rows: Array[Dictionary] = []
 var _rolled: Array = []
 var _allocations: Array[int] = []
+var _exert_state := EXERT_IDLE
+var _exert_bonuses: Array[int] = []
+var _exert_log: PackedStringArray = []
 var _pool_label: Label
 var _rolling := false
 var _rng := RandomNumberGenerator.new()
@@ -45,12 +57,21 @@ func setup(check: Dictionary) -> void:
 	_allocations.clear()
 	for _i in _selections.size():
 		_allocations.append(0)
+	_reset_exertion()
 	_rolling = false
 	_roll_button.disabled = false
 	_roll_button.text = "ROLL"
 	_set_outcome("", Color(1, 1, 1))
 	_build_summary()
 	_build_result_rows()
+
+
+func _reset_exertion() -> void:
+	_exert_state = EXERT_IDLE
+	_exert_log = PackedStringArray()
+	_exert_bonuses.clear()
+	for _i in _selections.size():
+		_exert_bonuses.append(0)
 
 
 func _has_skill() -> bool:
@@ -140,15 +161,21 @@ func _build_result_rows() -> void:
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		row.add_child(name_label)
 
-		var dice_labels: Array[Label] = []
-		for _d in Dice.DICE_PER_ABILITY:
-			var die := Label.new()
+		# Dice are buttons so one can be picked for a reroll; they read as plain
+		# text until the player is choosing.
+		var dice_buttons: Array[Button] = []
+		for d in Dice.DICE_PER_ABILITY:
+			var die := Button.new()
 			die.text = "—"
-			die.custom_minimum_size.x = 115
+			die.custom_minimum_size = Vector2(126, 36)
+			die.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			die.focus_mode = Control.FOCUS_NONE
+			die.disabled = true
 			die.add_theme_font_size_override("font_size", 20)
-			die.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			UiStyles.apply_die(die, false)
+			die.pressed.connect(_on_die_picked.bind(i, d))
 			row.add_child(die)
-			dice_labels.append(die)
+			dice_buttons.append(die)
 
 		var total_label := Label.new()
 		total_label.text = "= —"
@@ -161,6 +188,17 @@ func _build_result_rows() -> void:
 		if _has_skill():
 			stepper = _build_stepper(i)
 			row.add_child(stepper["box"])
+
+		var exert_button := Button.new()
+		exert_button.text = "+1"
+		exert_button.custom_minimum_size = Vector2(50, 32)
+		exert_button.focus_mode = Control.FOCUS_NONE
+		exert_button.add_theme_font_size_override("font_size", 17)
+		exert_button.tooltip_text = "Exert yourself: +1 to %s" % selection["ability"]
+		UiStyles.apply_exert(exert_button)
+		exert_button.pressed.connect(_on_exert_bonus_picked.bind(i))
+		exert_button.visible = false
+		row.add_child(exert_button)
 
 		var target_label := Label.new()
 		target_label.text = "needs %d" % Dice.difficulty_target(selection["difficulty"])
@@ -179,13 +217,15 @@ func _build_result_rows() -> void:
 		_results.add_child(row)
 		_rows.append({
 			"selection": selection,
-			"dice": dice_labels,
+			"dice": dice_buttons,
 			"total": total_label,
 			"outcome": outcome_label,
 			"stepper": stepper,
+			"exert": exert_button,
 		})
 
 	_render_allocation()
+	_render_exert_bar()
 
 
 func _build_stepper(index: int) -> Dictionary:
@@ -196,6 +236,7 @@ func _build_stepper(index: int) -> Dictionary:
 	var minus := Button.new()
 	minus.text = "-"
 	minus.custom_minimum_size = Vector2(28, 28)
+	minus.focus_mode = Control.FOCUS_NONE
 	minus.add_theme_font_size_override("font_size", 18)
 	UiStyles.apply_stepper(minus)
 	minus.pressed.connect(_on_allocate.bind(index, -1))
@@ -212,6 +253,7 @@ func _build_stepper(index: int) -> Dictionary:
 	var plus := Button.new()
 	plus.text = "+"
 	plus.custom_minimum_size = Vector2(28, 28)
+	plus.focus_mode = Control.FOCUS_NONE
 	plus.add_theme_font_size_override("font_size", 18)
 	UiStyles.apply_stepper(plus)
 	plus.pressed.connect(_on_allocate.bind(index, 1))
@@ -228,11 +270,13 @@ func _on_roll_pressed() -> void:
 	_roll_button.text = "ROLLING…"
 	_set_outcome("", Color(1, 1, 1))
 
-	# A fresh roll hands the whole skill pool back.
+	# A fresh roll hands back the whole skill pool and the exertion.
 	for i in _allocations.size():
 		_allocations[i] = 0
+	_reset_exertion()
 	_rolled = []
 	_render_allocation()
+	_render_exert_bar()
 
 	var results := Dice.roll(_selections, _rng)
 	await _shuffle_animation()
@@ -260,11 +304,15 @@ func _die_text(die: Dictionary) -> String:
 	return "%s %d" % [die["face"], die["value"]]
 
 
-## The rolled results with the allocated skill points folded in.
+## Skill points plus every exertion bonus that landed on this ability.
+func _bonus_for(index: int) -> int:
+	return _allocations[index] + _exert_bonuses[index]
+
+
 func _boosted_results() -> Array:
 	var boosted: Array = []
 	for i in _rolled.size():
-		boosted.append(Dice.boosted(_rolled[i], _allocations[i]))
+		boosted.append(Dice.boosted(_rolled[i], _bonus_for(i)))
 	return boosted
 
 
@@ -280,6 +328,7 @@ func _on_allocate(index: int, delta: int) -> void:
 func _render_results() -> void:
 	if _rolled.is_empty():
 		_render_allocation()
+		_render_exert_bar()
 		return
 
 	var boosted := _boosted_results()
@@ -287,14 +336,14 @@ func _render_results() -> void:
 		var result: Dictionary = boosted[i]
 		var row: Dictionary = _rows[i]
 
-		var dice_labels: Array = row["dice"]
-		for d in dice_labels.size():
-			dice_labels[d].text = _die_text(_rolled[i]["dice"][d])
+		var dice_buttons: Array = row["dice"]
+		for d in dice_buttons.size():
+			dice_buttons[d].text = _die_text(_rolled[i]["dice"][d])
 
-		var spent: int = _allocations[i]
+		var bonus := _bonus_for(i)
 		var total_text := "= %d" % result["total"]
-		if spent > 0:
-			total_text += " (+%d)" % spent
+		if bonus > 0:
+			total_text += " (+%d)" % bonus
 		row["total"].text = total_text
 
 		var outcome: Label = row["outcome"]
@@ -304,6 +353,7 @@ func _render_results() -> void:
 		outcome.modulate = PASS_COLOR if result["passed"] else FAIL_COLOR
 
 	_render_allocation()
+	_render_exert_bar()
 	_show_outcome(boosted)
 
 
@@ -327,6 +377,140 @@ func _render_allocation() -> void:
 		# Points can only be spread once the dice have actually landed.
 		stepper["minus"].disabled = _rolled.is_empty() or spent == 0
 		stepper["plus"].disabled = _rolled.is_empty() or remaining <= 0
+
+
+# --- Exertion -----------------------------------------------------------------
+
+
+func _on_exert_pressed() -> void:
+	_exert_state = EXERT_CHOOSING
+	_render_exert_bar()
+
+
+func _on_exert_cancelled() -> void:
+	_exert_state = EXERT_IDLE
+	_render_exert_bar()
+
+
+func _on_exert_choice(choice: String) -> void:
+	_exert_state = choice
+	_render_exert_bar()
+
+
+func _on_die_picked(ability_index: int, die_index: int) -> void:
+	if _exert_state != EXERT_PICK_DIE:
+		return
+	var before: int = _rolled[ability_index]["dice"][die_index]["value"]
+	_rolled[ability_index] = Dice.reroll_die(_rolled[ability_index], die_index, _rng)
+	var after: int = _rolled[ability_index]["dice"][die_index]["value"]
+	_exert_log.append("%s d%d  %d → %d" % [
+		_selections[ability_index]["ability"], die_index + 1, before, after
+	])
+	_exert_state = EXERT_IDLE
+	_render_results()
+
+
+func _on_exert_bonus_picked(ability_index: int) -> void:
+	if _exert_state != EXERT_PICK_RESULT:
+		return
+	_exert_bonuses[ability_index] += 1
+	_exert_log.append("+1 %s" % _selections[ability_index]["ability"])
+	_exert_state = EXERT_IDLE
+	_render_results()
+
+
+func _render_exert_bar() -> void:
+	for child in _exert_bar.get_children():
+		child.queue_free()
+
+	var picking_die := _exert_state == EXERT_PICK_DIE
+	for row in _rows:
+		for die in row["dice"]:
+			die.disabled = not picking_die
+			UiStyles.apply_die(die, picking_die)
+		row["exert"].visible = _exert_state == EXERT_PICK_RESULT
+
+	if _rolled.is_empty():
+		return
+
+	_exert_bar.add_child(_build_exert_log())
+
+	match _exert_state:
+		EXERT_IDLE:
+			_exert_bar.add_child(_exert_button(
+				"Exert again" if not _exert_log.is_empty() else "Exert yourself",
+				_on_exert_pressed
+			))
+		EXERT_CHOOSING:
+			_exert_bar.add_child(_exert_button(
+				"Reroll a die", _on_exert_choice.bind(EXERT_PICK_DIE)
+			))
+			_exert_bar.add_child(_exert_button(
+				"+1 to a result", _on_exert_choice.bind(EXERT_PICK_RESULT)
+			))
+			_exert_bar.add_child(_exert_button("Cancel", _on_exert_cancelled))
+		EXERT_PICK_DIE:
+			_exert_bar.add_child(_exert_label("Pick a die to reroll"))
+			_exert_bar.add_child(_exert_button("Cancel", _on_exert_cancelled))
+		EXERT_PICK_RESULT:
+			_exert_bar.add_child(_exert_label("Pick a result to add +1 to"))
+			_exert_bar.add_child(_exert_button("Cancel", _on_exert_cancelled))
+
+
+## The running list of exertions, kept to one scrolling line so a long run of
+## them never pushes the results around.
+func _build_exert_log() -> Control:
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size.y = 36
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	scroll.add_child(row)
+
+	if not _exert_log.is_empty():
+		row.add_child(_exert_label("Exerted %d× —" % _exert_log.size()))
+		for entry in _exert_log:
+			row.add_child(_exert_chip(entry))
+		# Keep the newest exertion in view. The scrollbar's own "changed" signal
+		# is the point at which its range is known, which a resize handler on the
+		# row is still too early for.
+		var bar := scroll.get_h_scroll_bar()
+		bar.changed.connect(func() -> void: bar.value = bar.max_value - bar.page)
+	return scroll
+
+
+func _exert_chip(text: String) -> Label:
+	var chip := Label.new()
+	chip.text = text
+	chip.add_theme_font_size_override("font_size", 15)
+	chip.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	chip.add_theme_stylebox_override("normal", UiStyles.flat(UiStyles.SURFACE, 6))
+	return chip
+
+
+func _exert_button(text: String, handler: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(0, 36)
+	button.focus_mode = Control.FOCUS_NONE
+	button.add_theme_font_size_override("font_size", 17)
+	UiStyles.apply_exert(button)
+	button.pressed.connect(handler)
+	return button
+
+
+func _exert_label(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 17)
+	label.modulate = MUTED_COLOR
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return label
+
+
+# --- Boons and complications --------------------------------------------------
 
 
 func _show_outcome(results: Array) -> void:

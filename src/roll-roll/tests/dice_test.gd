@@ -124,6 +124,47 @@ func _initialize() -> void:
 	# Very weak dice top out at 4 each, so 16 is out of reach.
 	_check(not results[1]["passed"], "a very weak ability cannot pass Very hard")
 
+	print("exertion: rerolling a die")
+
+	var reroll_rng := RandomNumberGenerator.new()
+	reroll_rng.seed = 99
+	var two_dice := {
+		"ability": "Agility", "rank": 5, "difficulty": 1,
+		"dice": [
+			{"pips": 1, "face": "Horrible", "value": 3},
+			{"pips": 6, "face": "Amazing", "value": 8},
+		],
+		"total": 11, "target": 8, "margin": 3, "passed": true,
+	}
+
+	var kept_faces := true
+	var retallied := true
+	var rescored := true
+	var in_range := true
+	for _i in 500:
+		var thrown := Dice.reroll_die(two_dice, 0, reroll_rng)
+		if thrown["dice"][1] != two_dice["dice"][1]:
+			kept_faces = false
+		var sum := 0
+		for die in thrown["dice"]:
+			sum += int(die["value"])
+		if sum != thrown["total"]:
+			retallied = false
+		if thrown["margin"] != thrown["total"] - 8 or thrown["passed"] != (thrown["total"] >= 8):
+			rescored = false
+		var thrown_value: int = thrown["dice"][0]["value"]
+		if thrown_value < 3 or thrown_value > 8:
+			in_range = false
+	_check(kept_faces, "rerolling one die leaves the other alone")
+	_check(retallied, "the total is re-tallied from the dice")
+	_check(rescored, "the margin and pass are re-scored after a reroll")
+	_check(in_range, "the new die uses the ability's own rank")
+	_check(two_dice["total"] == 11, "rerolling does not modify the original result")
+	_check(
+		two_dice["dice"][0]["value"] == 3,
+		"rerolling does not modify the original result's dice"
+	)
+
 	print("skill points")
 
 	var short_check := {"total": 7, "target": 8, "margin": -1, "passed": false}
