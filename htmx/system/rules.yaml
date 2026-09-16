@@ -1,0 +1,50 @@
+# RPG system definition. Loaded once at server startup — restart after editing.
+#
+# PLACEHOLDER RULES: this only demonstrates the file format. Replace with your system.
+#
+# Field types:
+#   number  — stepper with − / + buttons (min, max, default)
+#   track   — row of clickable pips from 0 to max (default)
+#   text    — free text box (lines = height)
+#
+# Formulas (derived values and rolls) can use:
+#   field ids and earlier derived ids, numbers, + - * / ( ),
+#   floor() ceil() round() min() max() abs()
+#   dice (rolls only): 2d6, d20, (body + athletics)d6
+# Field ids must not look like dice (d6, d20).
+
+name: Sample System
+
+sections:
+  - label: Attributes
+    fields:
+      - { id: body,     label: Body,     type: number, min: 1, max: 5, default: 2 }
+      - { id: agility,  label: Agility,  type: number, min: 1, max: 5, default: 2 }
+      - { id: mind,     label: Mind,     type: number, min: 1, max: 5, default: 2 }
+      - { id: presence, label: Presence, type: number, min: 1, max: 5, default: 2 }
+
+  - label: Skills
+    fields:
+      - { id: athletics, label: Athletics, type: number, min: 0, max: 5, default: 0 }
+      - { id: melee,     label: Melee,     type: number, min: 0, max: 5, default: 0 }
+      - { id: notice,    label: Notice,    type: number, min: 0, max: 5, default: 0 }
+
+  - label: Condition
+    fields:
+      - { id: wounds,   label: Wounds,   type: track, max: 5 }
+      - { id: exertion, label: Exertion, type: track, max: 3 }
+
+  - label: Gear & Notes
+    fields:
+      - { id: gear,  label: Gear,  type: text, lines: 4 }
+      - { id: notes, label: Notes, type: text, lines: 3 }
+
+derived:
+  - { id: wound_penalty, label: Wound penalty, formula: "floor(wounds / 2)" }
+  - { id: carry,         label: Carry limit,   formula: "body * 3 + 2" }
+
+rolls:
+  - { id: athletics_check, label: Athletics, dice: "(body + athletics - wound_penalty)d6" }
+  - { id: melee_attack,    label: Melee,     dice: "(body + melee - wound_penalty)d6" }
+  - { id: notice_check,    label: Notice,    dice: "(mind + notice)d6" }
+  - { id: flat_d20,        label: d20,       dice: "d20" }

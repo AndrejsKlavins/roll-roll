@@ -1,0 +1,21 @@
+{
+  "name": "roll-table",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run src/index.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "alpinejs": "3",
+    "hono": "^4.13.8",
+    "htmx-ext-ws": "2",
+    "htmx.org": "2",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/qrcode": "^1.5.6",
+    "typescript": "^7.0.2"
+  }
+}
