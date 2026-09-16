@@ -90,16 +90,34 @@ document.addEventListener('DOMContentLoaded', () => {
 })
 
 // ---- Connection ------------------------------------------------------------
+// Reloading while the laptop is unreachable would leave the browser's own
+// "can't connect" page, where no script runs to recover. So wait for the
+// server to answer first, showing a banner (body.offline) meanwhile.
+let reloadPending = false
+async function reloadWhenServerUp() {
+  if (reloadPending) return
+  reloadPending = true
+  document.body.classList.add('offline')
+  for (;;) {
+    try {
+      const res = await fetch('/health', { cache: 'no-store', signal: AbortSignal.timeout(3000) })
+      if (res.ok) return location.reload()
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 3000))
+  }
+}
+
 // If the socket dropped (phone slept, server restarted), reload on reconnect
 // so the page catches up on anything missed while offline.
 let wasDisconnected = false
 document.addEventListener('htmx:wsOpen', () => {
-  if (wasDisconnected) return location.reload()
+  if (wasDisconnected) return reloadWhenServerUp()
   lastMessageAt = Date.now()
   document.getElementById('conn')?.classList.add('online')
 })
 document.addEventListener('htmx:wsClose', () => {
   wasDisconnected = true
+  document.body.classList.add('offline')
   document.getElementById('conn')?.classList.remove('online')
 })
 
@@ -122,14 +140,14 @@ function checkConnection({ force = false } = {}) {
   if (!document.body.hasAttribute('ws-connect') || document.visibilityState !== 'visible') return
   if (Date.now() - lastMessageAt < STALE_AFTER_MS) return
   if (!force && isTyping()) return // don't throw away half-typed text; retry on next check
-  location.reload()
+  reloadWhenServerUp()
 }
 
 // Unlock / tab switch back. Nothing is typed while the phone was locked, so force.
 document.addEventListener('visibilitychange', () => checkConnection({ force: true }))
 // Page restored from the back/forward cache: its socket is certainly gone.
 window.addEventListener('pageshow', (e) => {
-  if (e.persisted) location.reload()
+  if (e.persisted) reloadWhenServerUp()
 })
 setInterval(checkConnection, 10_000)
 

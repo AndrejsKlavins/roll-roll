@@ -11,6 +11,8 @@ export type Visibility = 'public' | 'gm' | 'hidden'
 
 export type EventData =
   | { type: 'character_created'; charId: string; name: string }
+  | { type: 'character_renamed'; charId: string; from: string; to: string; by: string }
+  | { type: 'character_deleted'; charId: string; by: string }
   | { type: 'field_set'; charId: string; field: string; from: number | string; to: number | string; by: string }
   | {
       type: 'roll'
@@ -23,16 +25,30 @@ export type EventData =
       visibility: Visibility
     }
   | { type: 'undo'; target: number; by: string }
+  | { type: 'session_started'; by: string }
 
 export type LoggedEvent = EventData & { id: number; ts: number }
 export type RollEvent = Extract<LoggedEvent, { type: 'roll' }>
 export type FieldSetEvent = Extract<LoggedEvent, { type: 'field_set' }>
+export type SessionStartedEvent = Extract<LoggedEvent, { type: 'session_started' }>
 
 export type Character = { id: string; name: string; values: Values }
+
+const CHANGE_TYPES = new Set<EventData['type']>([
+  'field_set',
+  'undo',
+  'character_renamed',
+  'character_deleted',
+  'session_started',
+])
+
+export const cleanName = (name: string) => name.trim().replace(/\s+/g, ' ').slice(0, 40)
 
 export class Session {
   readonly events: LoggedEvent[] = []
   readonly characters = new Map<string, Character>()
+  /** Latest name of every character ever created, including deleted ones (for the change log). */
+  readonly names = new Map<string, string>()
   private readonly undone = new Set<number>()
   private readonly db: Database
 
@@ -69,6 +85,7 @@ export class Session {
 
   private rebuild() {
     this.characters.clear()
+    this.names.clear()
     this.undone.clear()
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
     for (const e of this.events) this.apply(e)
@@ -79,6 +96,16 @@ export class Session {
     switch (e.type) {
       case 'character_created':
         this.characters.set(e.charId, { id: e.charId, name: e.name, values: defaultValues(this.rules) })
+        this.names.set(e.charId, e.name)
+        break
+      case 'character_renamed': {
+        const c = this.characters.get(e.charId)
+        if (c) c.name = e.to
+        this.names.set(e.charId, e.to)
+        break
+      }
+      case 'character_deleted':
+        this.characters.delete(e.charId)
         break
       case 'field_set': {
         const c = this.characters.get(e.charId)
@@ -100,8 +127,22 @@ export class Session {
 
   createCharacter(name: string): Character {
     const charId = crypto.randomUUID().slice(0, 8)
-    this.append({ type: 'character_created', charId, name: name.trim().slice(0, 40) || 'Nameless' })
+    this.append({ type: 'character_created', charId, name: cleanName(name) || 'Nameless' })
     return this.characters.get(charId)!
+  }
+
+  /** Returns the event, or null if the character is missing or the name is unchanged/empty. */
+  renameCharacter(charId: string, name: string, by: string) {
+    const c = this.characters.get(charId)
+    const to = cleanName(name)
+    if (!c || !to || to === c.name) return null
+    return this.append({ type: 'character_renamed', charId, from: c.name, to, by })
+  }
+
+  /** Removes the character from play. The history stays in the event log. */
+  deleteCharacter(charId: string, by: string) {
+    if (!this.characters.has(charId)) return null
+    return this.append({ type: 'character_deleted', charId, by })
   }
 
   /** Returns the event, or null if nothing changed. */
@@ -161,11 +202,32 @@ export class Session {
     }) as RollEvent
   }
 
+  /** Marks the start of a play session. The feed and change log only show what happened since. */
+  startSession(by: string) {
+    return this.append({ type: 'session_started', by }) as SessionStartedEvent
+  }
+
+  /** 1-based number of the current play session (0 before the first "start session"). */
+  sessionNumber() {
+    return this.events.filter((e) => e.type === 'session_started').length
+  }
+
+  private sinceSessionStart(): LoggedEvent[] {
+    for (let i = this.events.length - 1; i >= 0; i--) {
+      if (this.events[i]!.type === 'session_started') return this.events.slice(i)
+    }
+    return this.events
+  }
+
   recentRolls(limit = 40): RollEvent[] {
-    return this.events.filter((e): e is RollEvent => e.type === 'roll').slice(-limit)
+    return this.sinceSessionStart()
+      .filter((e): e is RollEvent => e.type === 'roll')
+      .slice(-limit)
   }
 
   recentChanges(limit = 40): LoggedEvent[] {
-    return this.events.filter((e) => e.type === 'field_set' || e.type === 'undo').slice(-limit)
+    return this.sinceSessionStart()
+      .filter((e) => CHANGE_TYPES.has(e.type))
+      .slice(-limit)
   }
 }

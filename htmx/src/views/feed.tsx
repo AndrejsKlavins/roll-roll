@@ -36,19 +36,37 @@ export function RollEntry(props: { roll: RollEvent; viewer: Viewer }) {
   )
 }
 
-export function Feed(props: { rolls: RollEvent[]; viewer: Viewer }) {
+export function Feed(props: { session: Session; viewer: Viewer }) {
   return (
     <div id="feed" class="feed">
-      {[...props.rolls].reverse().map((r) => (
-        <RollEntry roll={r} viewer={props.viewer} />
-      ))}
+      {props.session
+        .recentRolls()
+        .reverse()
+        .map((r) => (
+          <RollEntry roll={r} viewer={props.viewer} />
+        ))}
+      <SessionMarker session={props.session} />
+    </div>
+  )
+}
+
+/** Divider at the bottom of the feed: everything above happened in this session. */
+export function SessionMarker(props: { session: Session }) {
+  const started = props.session.events.findLast((e) => e.type === 'session_started')
+  if (!started) return null
+  return (
+    <div class="session-marker">
+      Session {props.session.sessionNumber()} started <time>{time(started.ts)}</time>
     </div>
   )
 }
 
 function describeChange(e: LoggedEvent, session: Session, rules: Rules): string {
+  if (e.type === 'session_started') return `${e.by} started session ${sessionIndex(e.id, session)}`
+  if (e.type === 'character_renamed') return `${e.by} renamed ${e.from} → ${e.to}`
+  if (e.type === 'character_deleted') return `${e.by} deleted ${session.names.get(e.charId) ?? 'a character'}`
   if (e.type === 'field_set') {
-    const who = session.characters.get(e.charId)?.name ?? '?'
+    const who = session.names.get(e.charId) ?? '?'
     const field = rules.fields.get(e.field)
     const label = field?.label ?? e.field
     const change = field?.type === 'text' ? 'edited' : `${e.from} → ${e.to}`
@@ -61,6 +79,9 @@ function describeChange(e: LoggedEvent, session: Session, rules: Rules): string 
   }
   return ''
 }
+
+const sessionIndex = (eventId: number, session: Session) =>
+  session.events.filter((e) => e.type === 'session_started' && e.id <= eventId).length
 
 export function ChangeLog(props: { session: Session; oob?: boolean }) {
   const { session } = props

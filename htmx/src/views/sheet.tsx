@@ -99,16 +99,53 @@ export function DerivedView(props: { rules: Rules; char: Character; scope: Recor
   )
 }
 
-export function Sheet(props: { rules: Rules; char: Character; scope: Record<string, number>; oob?: boolean }) {
+export function SheetHead(props: { char: Character; oob?: boolean }) {
+  const { char } = props
+  return (
+    <div id={`head-${char.id}`} class="sheet-head" hx-swap-oob={oobAttr(props.oob)}>
+      <h2>{char.name}</h2>
+      <button type="button" class="small" hx-post={`/c/${char.id}/undo`} hx-swap="none" title="Undo last change">
+        ↶ Undo
+      </button>
+    </div>
+  )
+}
+
+/** GM-only: rename and delete. */
+function ManageCharacter(props: { char: Character }) {
+  const { char } = props
+  return (
+    <details class="manage">
+      <summary>Manage</summary>
+      <form class="rename" hx-post={`/c/${char.id}/rename`} hx-swap="none">
+        <input name="name" value={char.name} maxlength={40} required autocomplete="off" />
+        <button type="submit">Rename</button>
+      </form>
+      <button
+        type="button"
+        class="danger"
+        hx-post={`/c/${char.id}/delete`}
+        hx-swap="none"
+        hx-confirm={`Delete ${char.name}? The player is sent back to character selection. This cannot be undone.`}
+      >
+        Delete character
+      </button>
+    </details>
+  )
+}
+
+export function Sheet(props: {
+  rules: Rules
+  char: Character
+  scope: Record<string, number>
+  gm?: boolean
+  oob?: boolean
+}) {
   const { rules, char } = props
   return (
     <section id={`sheet-${char.id}`} class="sheet" hx-swap-oob={oobAttr(props.oob)}>
-      <div class="sheet-head">
-        <h2>{char.name}</h2>
-        <button type="button" class="small" hx-post={`/c/${char.id}/undo`} hx-swap="none" title="Undo last change">
-          ↶ Undo
-        </button>
-      </div>
+      <SheetHead char={char} />
+      {props.gm && <ManageCharacter char={char} />}
 
       {rules.sections.map((s) => (
         <fieldset>

@@ -1,5 +1,5 @@
 import { raw } from 'hono/html'
-import type { Session } from '../session'
+import type { Character, Session } from '../session'
 import { ChangeLog, Feed } from './feed'
 import { Layout } from './layout'
 import { Sheet } from './sheet'
@@ -29,24 +29,49 @@ export function JoinPage(props: { session: Session }) {
   )
 }
 
+export function WhoLink(props: { char: Character; oob?: boolean }) {
+  return (
+    <a id="who-link" href="/leave" hx-swap-oob={props.oob ? 'true' : undefined}>
+      {props.char.name} ⇄
+    </a>
+  )
+}
+
+/** Replaces the player's page when the GM deletes their character. */
+export function CharacterRemoved() {
+  return (
+    <main id="main" class="join" hx-swap-oob="true">
+      <h1>Your character was removed</h1>
+      <p class="muted">The GM deleted this character.</p>
+      <a class="button" href="/leave">
+        Choose another character
+      </a>
+    </main>
+  )
+}
+
 export function PlayerPage(props: { session: Session; charId: string }) {
   const { session, charId } = props
   const char = session.characters.get(charId)!
   return (
-    <Layout
-      title={char.name}
-      system={session.rules.name}
-      who={<a href="/leave">{char.name} ⇄</a>}
-      wsUrl={`/ws?char=${charId}`}
-    >
-      <main class="player-grid">
+    <Layout title={char.name} system={session.rules.name} who={<WhoLink char={char} />} wsUrl={`/ws?char=${charId}`}>
+      <main id="main" class="player-grid">
         <Sheet rules={session.rules} char={char} scope={session.scope(charId)} />
         <aside>
           <h3>Rolls</h3>
-          <Feed rolls={session.recentRolls()} viewer="player" />
+          <Feed session={session} viewer="player" />
         </aside>
       </main>
     </Layout>
+  )
+}
+
+export function SessionLabel(props: { session: Session; oob?: boolean }) {
+  const n = props.session.sessionNumber()
+  return (
+    <strong id="session-label" hx-swap-oob={props.oob ? 'true' : undefined}>
+      {n === 0 ? 'No session started yet' : `Session ${n}`}
+    </strong>
   )
 }
 
@@ -63,6 +88,19 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
               <p class="muted">Also: {u}</p>
             ))}
           </details>
+
+          <div class="card session-card">
+            <SessionLabel session={session} />
+            <button
+              type="button"
+              class="small"
+              hx-post="/gm/session"
+              hx-swap="none"
+              hx-confirm="Start a new session? The roll feed and change log are cleared on every screen. Characters and history are kept."
+            >
+              Start new session
+            </button>
+          </div>
 
           <form
             class="card gm-roll"
@@ -89,7 +127,7 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
           <p class="error"></p>
 
           <h3>Rolls</h3>
-          <Feed rolls={session.recentRolls()} viewer="gm" />
+          <Feed session={session} viewer="gm" />
 
           <h3>Changes</h3>
           <ChangeLog session={session} />
@@ -97,7 +135,7 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
 
         <div id="sheets" class="sheets">
           {[...session.characters.values()].map((c) => (
-            <Sheet rules={session.rules} char={c} scope={session.scope(c.id)} />
+            <Sheet rules={session.rules} char={c} scope={session.scope(c.id)} gm />
           ))}
         </div>
       </main>

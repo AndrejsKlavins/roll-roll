@@ -5,9 +5,9 @@ import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
 import { hub } from './hub'
 import type { Character, FieldSetEvent, RollEvent, Session, Visibility } from './session'
-import { ChangeLog, RollEntry } from './views/feed'
-import { GmPage, JoinPage, PlayerPage } from './views/pages'
-import { DerivedView, FieldView, Sheet } from './views/sheet'
+import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
+import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, WhoLink } from './views/pages'
+import { DerivedView, FieldView, Sheet, SheetHead } from './views/sheet'
 
 const CHAR_COOKIE = 'char'
 const html = (node: Child) => String(node ?? '')
@@ -49,11 +49,16 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   }
 
   const pushWholeSheet = (char: Character) => {
-    const sheet = html(<Sheet rules={rules} char={char} scope={session.scope(char.id)} oob />)
+    const scope = session.scope(char.id)
     hub.send(toOwnerAndGm(char.id), (client) =>
-      client.role === 'gm' ? sheet + html(<ChangeLog session={session} oob />) : sheet,
+      client.role === 'gm'
+        ? html(<Sheet rules={rules} char={char} scope={scope} gm oob />) + html(<ChangeLog session={session} oob />)
+        : html(<Sheet rules={rules} char={char} scope={scope} oob />),
     )
   }
+
+  const pushChangeLogToGm = () =>
+    hub.send((client) => client.role === 'gm', () => html(<ChangeLog session={session} oob />))
 
   // ---- helpers ------------------------------------------------------------
   const actorName = (c: Context) =>
@@ -68,6 +73,9 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   // ---- pages --------------------------------------------------------------
   app.get('/', (c) => c.redirect('/play'))
 
+  // Clients check this before reloading so they never reload into a "can't connect" page.
+  app.get('/health', (c) => c.body(null, 204))
+
   app.get('/play', (c) => {
     const charId = getCookie(c, CHAR_COOKIE)
     if (charId && session.characters.has(charId)) return c.html(<PlayerPage session={session} charId={charId} />)
@@ -77,14 +85,16 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   app.post('/join', async (c) => {
     const body = await form(c)
     let charId = body.charId
-    if (!charId || !session.characters.has(charId)) {
+    // Stale join page listing a character that has since been deleted.
+    if (charId && !session.characters.has(charId)) return c.redirect('/play', 303)
+    if (!charId) {
       const char = session.createCharacter(body.name ?? '')
       charId = char.id
       hub.send(
         (client) => client.role === 'gm',
         () =>
           `<div hx-swap-oob="beforeend:#sheets">${html(
-            <Sheet rules={rules} char={char} scope={session.scope(char.id)} />,
+            <Sheet rules={rules} char={char} scope={session.scope(char.id)} gm />,
           )}</div>`,
       )
     }
@@ -115,6 +125,30 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const body = await form(c)
     const e = session.adjustField(char.id, body.field ?? '', Number(body.delta), actorName(c))
     if (e) pushFieldChange(char, e)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/rename', async (c) => {
+    const charId = c.req.param('id')
+    const e = session.renameCharacter(charId, (await form(c)).name ?? '', actorName(c))
+    const char = session.characters.get(charId)
+    if (!e || !char) return noContent(c)
+    hub.send(toOwnerAndGm(charId), (client) =>
+      client.role === 'gm'
+        ? html(<SheetHead char={char} oob />) + html(<ChangeLog session={session} oob />)
+        : html(<SheetHead char={char} oob />) + html(<WhoLink char={char} oob />),
+    )
+    return noContent(c)
+  })
+
+  app.post('/c/:id/delete', (c) => {
+    const charId = c.req.param('id')
+    if (!session.deleteCharacter(charId, actorName(c))) return noContent(c)
+    hub.send(toOwnerAndGm(charId), (client) =>
+      client.role === 'gm'
+        ? `<section id="sheet-${charId}" hx-swap-oob="delete"></section>` + html(<ChangeLog session={session} oob />)
+        : html(<CharacterRemoved />),
+    )
     return noContent(c)
   })
 
@@ -160,6 +194,19 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       if (err instanceof ExprError) return c.text(err.message)
       throw err
     }
+  })
+
+  app.post('/gm/session', (c) => {
+    session.startSession('GM')
+    const marker = html(<SessionMarker session={session} />)
+    hub.send(
+      () => true,
+      (client) =>
+        `<div hx-swap-oob="innerHTML:#feed">${marker}</div>` +
+        (client.role === 'gm' ? html(<SessionLabel session={session} oob />) : ''),
+    )
+    pushChangeLogToGm()
+    return noContent(c)
   })
 
   // ---- live updates -------------------------------------------------------

@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-16
+Last updated: 2026-09-16 (sessions, character management, safe reconnect)
 
 ---
 
@@ -47,6 +47,8 @@ It is an **upgraded notation tool with automated calculations — not a rules en
 | Rules loading | **Loaded once at startup**, validated | Simple; restart after editing rules |
 | Roll visibility | public / GM-only / secret ("GM rolled in secret") | Secret GM rolls were requested |
 | Physical dice | Wanted, secondary — **not built yet** | Primarily digital rolls |
+| Sessions | One database = one campaign; GM "Start new session" inserts a marker event | Feed and change log only show the current play session; history stays in the log |
+| Character management | GM can rename and delete (soft delete via event); no player-side rename | Clean up test/duplicate characters without wiping the database |
 | Keep phones awake | **Not built** (deliberately) | Locking is normal and saves battery; instead the page reliably catches up on unlock (see §6). Opt-in NoSleep-style toggle is a possible later addition |
 | Sound | Wanted. Synthesised via Web Audio for now | No asset files to manage yet |
 | Godot | Not used for this app | Too clunky for dynamic data-driven screens; the Godot project stays as the reference for the rolling system |
@@ -122,9 +124,9 @@ htmx/
       sheet.ts          default values, computeScope (fields + derived)
     views/
       layout.tsx        page shell: scripts, ws-connect, top bar (connection dot, mute)
-      sheet.tsx         Sheet, FieldView, DerivedView (all generated from rules)
-      feed.tsx          RollEntry (per-viewer visibility), Feed, ChangeLog
-      pages.tsx         JoinPage, PlayerPage, GmPage
+      sheet.tsx         Sheet, SheetHead, FieldView, DerivedView (generated from rules), GM Manage section
+      feed.tsx          RollEntry (per-viewer visibility), Feed, SessionMarker, ChangeLog
+      pages.tsx         JoinPage, PlayerPage, GmPage, SessionLabel, WhoLink, CharacterRemoved
 ```
 
 Dependencies: `hono`, `htmx.org@2`, `htmx-ext-ws@2`, `alpinejs@3`, `qrcode`; dev: `typescript@7`, `@types/bun`, `@types/qrcode`.
@@ -180,6 +182,9 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | type | data |
 |---|---|
 | `character_created` | `charId, name` |
+| `character_renamed` | `charId, from, to, by` |
+| `character_deleted` | `charId, by` (removed from play; events stay in the log) |
+| `session_started` | `by` |
 | `field_set` | `charId, field, from, to, by` (by = character name or `GM`) |
 | `roll` | `charId \| null (GM), by, label, expr, total, breakdown, visibility` |
 | `undo` | `target` (event id), `by` |
@@ -188,12 +193,16 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 - New events are applied incrementally; an `undo` triggers a full rebuild that skips undone events.
 - `undoLast(charId)` undoes the most recent non-undone `field_set` for that character. No redo. Rolls are not undoable.
 - Clamping/validation happens in `setField`; no-op changes produce no event.
+- `session.names` keeps the latest name of every character ever created (incl. deleted) for the change log.
+- `recentRolls()` / `recentChanges()` only return events since the last `session_started`. `sessionNumber()` counts those markers.
 
 ### 6.4 Identity and pages
 
 - `/` → `/play`. If the `char` cookie points to an existing character → player sheet; otherwise the join page (pick existing or create new).
 - `/leave` clears the cookie (switch character).
-- `/gm` — GM screen: join QR code, GM roll form with visibility, roll feed, change log, all sheets (editable).
+- Cookie is per origin (IP:port). If the laptop's IP changes, players rescan the QR and pick their character from the list.
+- Posting a deleted `charId` from a stale join page just redirects back to the join page (no character is created).
+- `/gm` — GM screen: join QR code, session card ("Session N" + Start new session), GM roll form with visibility, roll feed, change log, all sheets (editable, each with a "Manage" section for rename/delete).
 - **No authentication.** Players are trusted; anyone on the Wi-Fi can open `/gm`.
 - Actor name for the change log: GM page sends header `X-Actor: gm` (set via `hx-headers` on `<body>`); otherwise the cookie's character name.
 
@@ -208,6 +217,10 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | POST | `/c/:id/set` | `field, value` | set field (tracks, text) |
 | POST | `/c/:id/adjust` | `field, delta` | increment number field (avoids races on fast taps) |
 | POST | `/c/:id/undo` | | undo last change, pushes whole sheet |
+| POST | `/c/:id/rename` | `name` | GM: rename; pushes sheet head (+ player's top-bar link) |
+| POST | `/c/:id/delete` | | GM (hx-confirm): delete; GM sheet removed, player's `#main` replaced with "character removed" |
+| POST | `/gm/session` | | GM (hx-confirm): start new session; every feed reset to the session marker |
+| GET | `/health` | | 204; clients check it before reloading |
 | POST | `/c/:id/roll` | `roll` (roll id) | public roll from rules |
 | POST | `/c/:id/roll-free` | `expr` | public free roll; returns error text or empty |
 | POST | `/gm/roll` | `expr, label, visibility` | GM roll; returns error text or empty |
@@ -222,7 +235,10 @@ Every top-level element is an out-of-band swap:
 - New roll: `<div hx-swap-oob="afterbegin:#feed">…entry…</div>` rendered **per client** by role:
   players never receive `gm` rolls; `hidden` rolls render as "GM rolled in secret".
 - Field change: `<… id="f-{charId}-{fieldId}" hx-swap-oob="true">` + `<dl id="derived-{charId}" hx-swap-oob="true">`; GM also gets `<ul id="changes" hx-swap-oob="true">`.
-- Undo: whole `<section id="sheet-{charId}" hx-swap-oob="true">` (+ change log for GM).
+- Undo: whole `<section id="sheet-{charId}" hx-swap-oob="true">` (+ change log for GM). GM version includes the Manage section, player version doesn't — render per role.
+- Rename: `<div id="head-{charId}" hx-swap-oob="true">`; player also gets `<a id="who-link">`; GM gets change log.
+- Delete: GM gets `<section id="sheet-{charId}" hx-swap-oob="delete">`; player gets `<main id="main" hx-swap-oob="true">` (removed notice).
+- New session: `<div hx-swap-oob="innerHTML:#feed">{session marker}</div>` to all (innerHTML, not outerHTML, so the feed's MutationObserver survives); GM also gets `#session-label` and change log.
 - New character: `<div hx-swap-oob="beforeend:#sheets">` to GM only.
 - Field/sheet updates go only to that character's player sockets and GM sockets (avoids oob "target not found" errors elsewhere).
 - **Heartbeat**: a single space `' '` every 15 s to all clients (no swap happens, but the client records it).
@@ -238,7 +254,8 @@ Notes:
 - **Sound**: Web Audio synthesis (`roll` = clicks like tumbling dice, `secret` = low tone). Audio unlocks on first `pointerdown` (iOS requirement). A `MutationObserver` on `#feed` plays `data-sound` of newly added entries. Mute stored per device in `localStorage` (wrapped in try/catch), exposed as Alpine store `$store.sound`.
 - **Feed** is trimmed to 60 entries client-side.
 - **Connection handling** (so sleeping phones never show stale data):
-  - `htmx:wsClose` → mark disconnected; next `htmx:wsOpen` → `location.reload()`.
+  - Every reload goes through `reloadWhenServerUp()`: polls `GET /health` every 3 s and only reloads once it answers, so a phone never reloads into the browser's "can't connect" page (where no script could recover). While waiting, `body.offline` shows a "Reconnecting to the GM laptop…" banner.
+  - `htmx:wsClose` → mark disconnected + show banner; the htmx ws extension retries (codes 1006/1011/1012/1013); next `htmx:wsOpen` → reload.
   - `htmx:wsAfterMessage` updates `lastMessageAt`.
   - On `visibilitychange` (unlock/tab return): if no message for 40 s → reload (forced).
   - Every 10 s while visible: same check, but skipped while the user is typing (focused textarea or non-empty input).
@@ -257,6 +274,10 @@ Notes:
 - GM roll visibility: public, GM-only (invisible to players), secret (players see placeholder).
 - Live sync player ↔ GM; change log; undo with strike-through in log.
 - Heartbeat received; stale-connection reload on visibility change; typing guard; no reload when fresh.
+- Server down: phone shows banner and waits (no reload into error page); server back → phone reloads by itself.
+- Restart persistence: characters, session number, deletions survive a server restart.
+- Start new session clears player + GM feeds and change log live.
+- GM rename updates player sheet head and top bar live; GM delete removes the GM sheet and shows the removed notice on the player; deleted characters disappear from the join list.
 - `bun test` (6 evaluator tests) and `bun run check` pass.
 
 ### Not verified yet
@@ -273,7 +294,11 @@ Notes:
 - Screens may sleep (by design, see decisions).
 - A whole-sheet push after undo can replace a textarea someone is editing on the same sheet.
 - Text field changes save on `change` (blur), not while typing.
-- No redo; rolls cannot be undone.
+- No redo; rolls, renames, deletions and session starts cannot be undone.
+- Rename doesn't update the browser tab `<title>` until reload; past rolls keep the old name (stored at roll time).
+- Client feed trimming (60 entries) can drop the session marker in very long sessions.
+- No UI to switch between campaigns; use separate DB files via the `DB` env var.
+- Recommended: DHCP reservation for the GM laptop so the URL and phone cookies stay valid between sessions.
 - `bun build --compile` single exe not set up (static paths point into `node_modules`).
 
 ---
