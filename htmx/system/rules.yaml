@@ -1,7 +1,5 @@
 # RPG system definition. Loaded once at server startup — restart after editing.
 #
-# PLACEHOLDER RULES: this only demonstrates the file format. Replace with your system.
-#
 # Field types:
 #   number  — stepper with − / + buttons (min, max, default)
 #   track   — row of clickable pips from 0 to max (default)
@@ -16,23 +14,43 @@
 name: Sample System
 
 sections:
-  - label: Attributes
+  - label: Bio
     fields:
-      - { id: body,     label: Body,     type: number, min: 1, max: 5, default: 2 }
-      - { id: agility,  label: Agility,  type: number, min: 1, max: 5, default: 2 }
-      - { id: mind,     label: Mind,     type: number, min: 1, max: 5, default: 2 }
-      - { id: presence, label: Presence, type: number, min: 1, max: 5, default: 2 }
+      # "full_name" (not "name") so it doesn't get confused with the login/character
+      # identity name used for join and the top bar — that one is set at character creation.
+      - { id: full_name, label: Name,       type: text, lines: 1 }
+      - { id: age,        label: Age,        type: text, lines: 1 }
+      - { id: profession, label: Profession, type: text, lines: 1 }
+      - { id: race,       label: Race,       type: text, lines: 1 }
+
+  - label: Core Abilities
+    fields:
+      # 1 very weak, 2 weak, 3 average, 4 strong, 5 very strong — default average.
+      - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3 }
+      - { id: agility,    label: Agility,    type: number, min: 1, max: 5, default: 3 }
+      - { id: perception, label: Perception, type: number, min: 1, max: 5, default: 3 }
+      - { id: knowledge,  label: Knowledge,  type: number, min: 1, max: 5, default: 3 }
+      - { id: intuition,  label: Intuition,  type: number, min: 1, max: 5, default: 3 }
+
+  - label: Supporting Abilities
+    fields:
+      - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3 }
+      - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3 }
 
   - label: Skills
     fields:
-      - { id: athletics, label: Athletics, type: number, min: 0, max: 5, default: 0 }
-      - { id: melee,     label: Melee,     type: number, min: 0, max: 5, default: 0 }
-      - { id: notice,    label: Notice,    type: number, min: 0, max: 5, default: 0 }
-
-  - label: Condition
-    fields:
-      - { id: wounds,   label: Wounds,   type: track, max: 5 }
-      - { id: exertion, label: Exertion, type: track, max: 3 }
+      - { id: melee_combat,  label: Melee combat,  type: number, min: 0, max: 5, default: 0 }
+      - { id: ranged_combat, label: Ranged combat, type: number, min: 0, max: 5, default: 0 }
+      - { id: manipulation,  label: Manipulation,  type: number, min: 0, max: 5, default: 0 }
+      - { id: performance,   label: Performance,   type: number, min: 0, max: 5, default: 0 }
+      - { id: acrobatics,    label: Acrobatics,    type: number, min: 0, max: 5, default: 0 }
+      - { id: athletics,     label: Athletics,     type: number, min: 0, max: 5, default: 0 }
+      - { id: stealth,       label: Stealth,       type: number, min: 0, max: 5, default: 0 }
+      - { id: medicine,      label: Medicine,      type: number, min: 0, max: 5, default: 0 }
+      - { id: theory,        label: Theory,        type: number, min: 0, max: 5, default: 0 }
+      - { id: thieving,      label: Thieving,      type: number, min: 0, max: 5, default: 0 }
+      - { id: crafting,      label: Crafting,      type: number, min: 0, max: 5, default: 0 }
+      - { id: outdoorsman,   label: Outdoorsman,   type: number, min: 0, max: 5, default: 0 }
 
   - label: Gear & Notes
     fields:
@@ -40,11 +58,15 @@ sections:
       - { id: notes, label: Notes, type: text, lines: 3 }
 
 derived:
-  - { id: wound_penalty, label: Wound penalty, formula: "floor(wounds / 2)" }
-  - { id: carry,         label: Carry limit,   formula: "body * 3 + 2" }
+  - { id: body,               label: Body,               formula: "endurance + floor(strength / 2)" }
+  - { id: mind,                label: Mind,               formula: "resolve + floor(intuition / 2)" }
+  - { id: speed,               label: Speed,              formula: "floor((agility + perception) / 2)" }
+  - { id: evasion,             label: Evasion,            formula: "1 + agility + perception" }
+  - { id: physical_resistance, label: Physical Resistance, formula: "2 + endurance" }
+  - { id: mental_resistance,   label: Mental Resistance,  formula: "2 + resolve" }
+  - { id: stamina,             label: Stamina,            formula: "endurance" }
+  - { id: willpower,           label: Willpower,          formula: "resolve" }
 
-rolls:
-  - { id: athletics_check, label: Athletics, dice: "(body + athletics - wound_penalty)d6" }
-  - { id: melee_attack,    label: Melee,     dice: "(body + melee - wound_penalty)d6" }
-  - { id: notice_check,    label: Notice,    dice: "(mind + notice)d6" }
-  - { id: flat_d20,        label: d20,       dice: "d20" }
+# Rolls intentionally left empty: the real rolling system (special dice, exertion,
+# skill distribution, difficulty) hasn't been ported from the Godot project yet.
+rolls: []
