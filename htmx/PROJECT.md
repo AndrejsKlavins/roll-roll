@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-17 (character creation stage and base values)
+Last updated: 2026-09-17 (field icons and colours)
 
 ---
 
@@ -111,6 +111,7 @@ htmx/
   README.md             short run instructions
   package.json          scripts: dev (hot), start, check (tsc), test via `bun test`
   tsconfig.json         strict, noUncheckedIndexedAccess, skipLibCheck (TS 7 vs bun-types), Hono JSX
+  system/icons/         ability icons (SVG, stroke=currentColor) referenced from rules.yaml
   system/rules.yaml     RPG system definition (user's real bio/abilities/skills/derived; rolls still empty)
   data/session.db       SQLite event log (gitignored). Delete to start fresh.
   public/
@@ -122,6 +123,7 @@ htmx/
     rules.ts            YAML loading + validation → typed Rules
     session.ts          event types, SQLite persistence (events + drafts), state projection, stages/base values, undo, roll
     session.test.ts     bun tests for drafts, finishing, base/adjustment, undo, restart replay
+    rules.test.ts       bun tests for field icon/colour parsing and validation
     hub.ts              connected WebSocket clients, send helper, heartbeat
     network.ts          LAN IPv4 detection (prefers Wi-Fi, skips virtual adapters)
     engine/
@@ -163,6 +165,8 @@ rolls:
 ```
 
 - Field types: `number` (stepper, clamped min..max), `track` (pips 0..max), `text` (textarea).
+- Optional look on any field: `icon` = file in `system/icons/` (SVG inlined at startup after stripping XML prolog/comments, drawn with `currentColor` → white on the colour chip; PNG/WebP/JPG linked via `/system/icons/*`) or short text/emoji; `color` = hex (quoted; unquoted numbers are padded). Missing files / bad colours fail startup. Rendered by `FieldName` (icon chip) and `rowAttrs` (`--field-color` custom property → left stripe) in `views/sheet.tsx`.
+- Abilities have user-chosen colours; the 7 icons in `system/icons/` were drawn for this project as placeholders (stroke line icons, 24×24) — replace freely.
 - Ids must be unique across fields/derived/rolls, match `[A-Za-z_][A-Za-z0-9_]*`, and must not look like dice (`d6`).
 - Derived formulas are evaluated in order; they may reference fields and earlier derived values; dice not allowed.
 - On startup every formula and roll is dry-run against defaults; any problem aborts startup with a list of errors.

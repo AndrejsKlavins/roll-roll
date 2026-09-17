@@ -24,6 +24,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   }
   for (const [file, path] of Object.entries(vendor)) app.get(`/vendor/${file}`, serveStatic({ path }))
   app.use('/public/*', serveStatic({ root: './' }))
+  app.use('/system/icons/*', serveStatic({ root: './' })) // PNG/WebP icons (SVGs are inlined)
 
   // ---- push helpers -------------------------------------------------------
   const pushRoll = (roll: RollEvent) =>

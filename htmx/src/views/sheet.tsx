@@ -3,11 +3,32 @@
 //
 // Draft sheets edit values directly. Active sheets show base fields as "current (base N)";
 // the "✎ Base" toggle (Alpine state on the <section>) swaps those steppers to edit the base.
+import { raw } from 'hono/html'
+import type { Child } from 'hono/jsx'
 import type { Field, NumberField } from '../rules'
 import { isBaseField, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 export const fieldDomId = (charId: string, fieldId: string) => `f-${charId}-${fieldId}`
+
+/** Root attributes for a field row: colour stripe via the --field-color custom property. */
+const rowAttrs = (f: Field, cls: string) =>
+  f.color ? { class: `${cls} has-color`, style: `--field-color: ${f.color}` } : { class: cls }
+
+/** Icon chip (if configured) followed by the label content. */
+function FieldName(props: { field: Field; children?: Child }) {
+  const { icon } = props.field
+  return (
+    <span class="field-name">
+      {icon && (
+        <span class="field-icon" aria-hidden="true">
+          {icon.kind === 'svg' ? raw(icon.markup) : icon.kind === 'img' ? <img src={icon.src} alt="" /> : icon.text}
+        </span>
+      )}
+      <span class="label">{props.children ?? props.field.label}</span>
+    </span>
+  )
+}
 
 function Stepper(props: {
   class: string
@@ -52,10 +73,10 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
   return (
     <div
       id={fieldDomId(char.id, f.id)}
-      class={modified ? 'field number based modified' : 'field number based'}
+      {...rowAttrs(f, modified ? 'field number based modified' : 'field number based')}
       hx-swap-oob={oobAttr(props.oob)}
     >
-      <span class="label">
+      <FieldName field={f}>
         {f.label}
         <small class="base-note">
           base {base}
@@ -71,7 +92,7 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
             </button>
           )}
         </small>
-      </span>
+      </FieldName>
       <Stepper class="play" url={`${post}/adjust`} field={f.id} value={current} min={0} max={Infinity} />
       <Stepper class="base-edit" url={`${post}/adjust-base`} field={f.id} value={base} min={f.min} max={f.max} />
     </div>
@@ -87,8 +108,8 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
 
   if (f.type === 'text') {
     return (
-      <label id={id} class="field text" hx-swap-oob={oobAttr(props.oob)}>
-        <span>{f.label}</span>
+      <label id={id} {...rowAttrs(f, 'field text')} hx-swap-oob={oobAttr(props.oob)}>
+        <FieldName field={f} />
         <textarea
           name="value"
           rows={f.lines}
@@ -107,8 +128,8 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
 
   if (f.type === 'track') {
     return (
-      <div id={id} class="field track" hx-swap-oob={oobAttr(props.oob)}>
-        <span>{f.label}</span>
+      <div id={id} {...rowAttrs(f, 'field track')} hx-swap-oob={oobAttr(props.oob)}>
+        <FieldName field={f} />
         <div class="pips">
           {Array.from({ length: f.max }, (_, i) => i + 1).map((n) => (
             <button
@@ -129,8 +150,8 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
   }
 
   return (
-    <div id={id} class="field number" hx-swap-oob={oobAttr(props.oob)}>
-      <span>{f.label}</span>
+    <div id={id} {...rowAttrs(f, 'field number')} hx-swap-oob={oobAttr(props.oob)}>
+      <FieldName field={f} />
       <Stepper class="" url={`${post}/adjust`} field={f.id} value={value} min={f.min} max={f.max} />
     </div>
   )

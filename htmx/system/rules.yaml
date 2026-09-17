@@ -10,6 +10,11 @@
 #   track   — row of clickable pips from 0 to max (default)
 #   text    — free text box (lines = height)
 #
+# Any field can have a look:
+#   icon    — file in system/icons/ (SVG recommended; drawn in white on the colour)
+#             or a short text/emoji, e.g. icon: "⚔"
+#   color   — hex colour in quotes, e.g. color: "#99342c"
+#
 # Formulas (derived values and rolls) can use:
 #   field ids and earlier derived ids, numbers, + - * / ( ),
 #   floor() ceil() round() min() max() abs()
@@ -32,17 +37,17 @@ sections:
     base: true
     fields:
       # 1 very weak, 2 weak, 3 average, 4 strong, 5 very strong — default average.
-      - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3 }
-      - { id: agility,    label: Agility,    type: number, min: 1, max: 5, default: 3 }
-      - { id: perception, label: Perception, type: number, min: 1, max: 5, default: 3 }
-      - { id: knowledge,  label: Knowledge,  type: number, min: 1, max: 5, default: 3 }
-      - { id: intuition,  label: Intuition,  type: number, min: 1, max: 5, default: 3 }
+      - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3, icon: strength.svg,   color: "#99342c" }
+      - { id: agility,    label: Agility,    type: number, min: 1, max: 5, default: 3, icon: agility.svg,    color: "#899937" }
+      - { id: perception, label: Perception, type: number, min: 1, max: 5, default: 3, icon: perception.svg, color: "#dba34f" }
+      - { id: knowledge,  label: Knowledge,  type: number, min: 1, max: 5, default: 3, icon: knowledge.svg,  color: "#8ab8ac" }
+      - { id: intuition,  label: Intuition,  type: number, min: 1, max: 5, default: 3, icon: intuition.svg,  color: "#8a4368" }
 
   - label: Supporting Abilities
     base: true
     fields:
-      - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3 }
-      - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3 }
+      - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3, icon: endurance.svg, color: "#69302b" }
+      - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3, icon: resolve.svg,   color: "#2e4c5e" }
 
   - label: Skills
     base: true
