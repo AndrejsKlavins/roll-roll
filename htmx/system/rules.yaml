@@ -1,5 +1,10 @@
 # RPG system definition. Loaded once at server startup — restart after editing.
 #
+# Sections (or single number fields) marked "base: true" get base values. While a
+# character is in creation they are edited freely and nothing is logged. "Finish
+# character" locks them in as base values; changes during play are shown against
+# the base, e.g. "3 (base 4)".
+#
 # Field types:
 #   number  — stepper with − / + buttons (min, max, default)
 #   track   — row of clickable pips from 0 to max (default)
@@ -24,6 +29,7 @@ sections:
       - { id: race,       label: Race,       type: text, lines: 1 }
 
   - label: Core Abilities
+    base: true
     fields:
       # 1 very weak, 2 weak, 3 average, 4 strong, 5 very strong — default average.
       - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3 }
@@ -33,11 +39,13 @@ sections:
       - { id: intuition,  label: Intuition,  type: number, min: 1, max: 5, default: 3 }
 
   - label: Supporting Abilities
+    base: true
     fields:
       - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3 }
       - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3 }
 
   - label: Skills
+    base: true
     fields:
       - { id: melee_combat,  label: Melee combat,  type: number, min: 0, max: 5, default: 0 }
       - { id: ranged_combat, label: Ranged combat, type: number, min: 0, max: 5, default: 0 }

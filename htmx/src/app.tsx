@@ -4,7 +4,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
 import { hub } from './hub'
-import type { Character, FieldSetEvent, RollEvent, Session, Visibility } from './session'
+import type { Character, RollEvent, Session, Visibility } from './session'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, WhoLink } from './views/pages'
 import { DerivedView, FieldView, Sheet, SheetHead } from './views/sheet'
@@ -38,24 +38,22 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   const toOwnerAndGm = (charId: string) => (client: { role: string; charId: string | null }) =>
     client.role === 'gm' || client.charId === charId
 
-  const pushFieldChange = (char: Character, e: FieldSetEvent) => {
-    const field = rules.fields.get(e.field)!
+  const pushFieldChange = (char: Character, fieldId: string) => {
+    const field = rules.fields.get(fieldId)!
     const parts =
-      html(<FieldView char={char} field={field} oob />) +
-      html(<DerivedView rules={rules} char={char} scope={session.scope(char.id)} oob />)
+      html(<FieldView session={session} char={char} field={field} oob />) +
+      html(<DerivedView session={session} char={char} oob />)
     hub.send(toOwnerAndGm(char.id), (client) =>
       client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
     )
   }
 
-  const pushWholeSheet = (char: Character) => {
-    const scope = session.scope(char.id)
+  const pushWholeSheet = (char: Character) =>
     hub.send(toOwnerAndGm(char.id), (client) =>
       client.role === 'gm'
-        ? html(<Sheet rules={rules} char={char} scope={scope} gm oob />) + html(<ChangeLog session={session} oob />)
-        : html(<Sheet rules={rules} char={char} scope={scope} oob />),
+        ? html(<Sheet session={session} char={char} gm oob />) + html(<ChangeLog session={session} oob />)
+        : html(<Sheet session={session} char={char} oob />),
     )
-  }
 
   const pushChangeLogToGm = () =>
     hub.send((client) => client.role === 'gm', () => html(<ChangeLog session={session} oob />))
@@ -94,7 +92,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
         (client) => client.role === 'gm',
         () =>
           `<div hx-swap-oob="beforeend:#sheets">${html(
-            <Sheet rules={rules} char={char} scope={session.scope(char.id)} gm />,
+            <Sheet session={session} char={char} gm />,
           )}</div>`,
       )
     }
@@ -114,8 +112,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
     const body = await form(c)
-    const e = session.setField(char.id, body.field ?? '', body.value ?? '', actorName(c))
-    if (e) pushFieldChange(char, e)
+    const field = body.field ?? ''
+    if (session.setField(char.id, field, body.value ?? '', actorName(c))) pushFieldChange(char, field)
     return noContent(c)
   })
 
@@ -123,8 +121,24 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
     const body = await form(c)
-    const e = session.adjustField(char.id, body.field ?? '', Number(body.delta), actorName(c))
-    if (e) pushFieldChange(char, e)
+    const field = body.field ?? ''
+    if (session.adjustField(char.id, field, Number(body.delta), actorName(c))) pushFieldChange(char, field)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/adjust-base', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const body = await form(c)
+    const field = body.field ?? ''
+    if (session.adjustBase(char.id, field, Number(body.delta), actorName(c))) pushFieldChange(char, field)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/finalize', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    if (session.finalizeCharacter(char.id, actorName(c))) pushWholeSheet(char)
     return noContent(c)
   })
 
@@ -135,8 +149,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     if (!e || !char) return noContent(c)
     hub.send(toOwnerAndGm(charId), (client) =>
       client.role === 'gm'
-        ? html(<SheetHead char={char} oob />) + html(<ChangeLog session={session} oob />)
-        : html(<SheetHead char={char} oob />) + html(<WhoLink char={char} oob />),
+        ? html(<SheetHead session={session} char={char} oob />) + html(<ChangeLog session={session} oob />)
+        : html(<SheetHead session={session} char={char} oob />) + html(<WhoLink char={char} oob />),
     )
     return noContent(c)
   })

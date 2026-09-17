@@ -2,7 +2,16 @@
 import { join } from 'node:path'
 import { evaluate, ExprError } from './engine/expr'
 
-export type NumberField = { id: string; label: string; type: 'number'; min: number; max: number; default: number }
+/** base: value is fixed when the character is finished; play changes are stored relative to it. */
+export type NumberField = {
+  id: string
+  label: string
+  type: 'number'
+  min: number
+  max: number
+  default: number
+  base: boolean
+}
 export type TrackField = { id: string; label: string; type: 'track'; max: number; default: number }
 export type TextField = { id: string; label: string; type: 'text'; lines: number; default: string }
 export type Field = NumberField | TrackField | TextField
@@ -50,7 +59,8 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
         case 'number': {
           const min = Number(f.min ?? 0)
           const max = Number(f.max ?? 10)
-          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? min) }
+          const base = Boolean(f.base ?? s?.base ?? false)
+          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? min), base }
           break
         }
         case 'track':

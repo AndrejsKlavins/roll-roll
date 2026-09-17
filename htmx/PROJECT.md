@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-16 (sessions, character management, safe reconnect)
+Last updated: 2026-09-17 (character creation stage and base values)
 
 ---
 
@@ -49,6 +49,11 @@ It is an **upgraded notation tool with automated calculations — not a rules en
 | Physical dice | Wanted, secondary — **not built yet** | Primarily digital rolls |
 | Sessions | One database = one campaign; GM "Start new session" inserts a marker event | Feed and change log only show the current play session; history stays in the log |
 | Character management | GM can rename and delete (soft delete via event); no player-side rename | Clean up test/duplicate characters without wiping the database |
+| Character stages | **Draft** (in creation) → **Finish character** (player alone) → **active** | Creation choices aren't worth logging; later traits will modify many values at once |
+| Draft storage | Separate `drafts` table, overwritten per edit, not in the event log | Survives phone sleep/reload and is visible live to the GM, without log noise |
+| Base values | Sections/fields with `base: true`; frozen at finish. Play changes stored as **adjustment** (current = base + adj) | Players see normal vs current value; base corrections keep in-play modifiers |
+| Editing base | Anyone, via "✎ Base" mode on an active sheet; logged as `base_set`, undoable | User wanted it open to all; a distinct mode avoids accidental base edits |
+| Creation rules | Fully flexible for now (free steppers within min..max) | Trait picking system planned later (see §8) |
 | Keep phones awake | **Not built** (deliberately) | Locking is normal and saves battery; instead the page reliably catches up on unlock (see §6). Opt-in NoSleep-style toggle is a possible later addition |
 | Sound | Wanted. Synthesised via Web Audio for now | No asset files to manage yet |
 | Godot | Not used for this app | Too clunky for dynamic data-driven screens; the Godot project stays as the reference for the rolling system |
@@ -65,7 +70,7 @@ roll-roll/
   htmx/                 ← this web app
 ```
 
-The web app currently uses **placeholder rules**. The real rolling mechanics have **not** been
+`rules.yaml` holds the user's real bio fields, abilities, skills and derived values, but no rolls. The real rolling mechanics have **not** been
 ported from Godot yet; the user asked not to design the rolling system in the web app until then.
 
 ---
@@ -106,7 +111,7 @@ htmx/
   README.md             short run instructions
   package.json          scripts: dev (hot), start, check (tsc), test via `bun test`
   tsconfig.json         strict, noUncheckedIndexedAccess, skipLibCheck (TS 7 vs bun-types), Hono JSX
-  system/rules.yaml     RPG system definition (PLACEHOLDER content)
+  system/rules.yaml     RPG system definition (user's real bio/abilities/skills/derived; rolls still empty)
   data/session.db       SQLite event log (gitignored). Delete to start fresh.
   public/
     app.js              sound synthesis, mute store (Alpine), feed trimming, connection handling
@@ -115,7 +120,8 @@ htmx/
     index.ts            entry: chdir to project, load rules, open session, print QR + URLs, export Bun server config
     app.tsx             Hono routes, static files, push helpers
     rules.ts            YAML loading + validation → typed Rules
-    session.ts          event types, SQLite persistence, state projection, undo, roll
+    session.ts          event types, SQLite persistence (events + drafts), state projection, stages/base values, undo, roll
+    session.test.ts     bun tests for drafts, finishing, base/adjustment, undo, restart replay
     hub.ts              connected WebSocket clients, send helper, heartbeat
     network.ts          LAN IPv4 detection (prefers Wi-Fi, skips virtual adapters)
     engine/
@@ -185,7 +191,9 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | `character_renamed` | `charId, from, to, by` |
 | `character_deleted` | `charId, by` (removed from play; events stay in the log) |
 | `session_started` | `by` |
-| `field_set` | `charId, field, from, to, by` (by = character name or `GM`) |
+| `character_finalized` | `charId, base {field: n}, values (full snapshot), by` |
+| `field_set` | `charId, field, from, to, by` (by = character name or `GM`). For base fields of active characters from/to are **current** values; applying sets `adj = to − base` |
+| `base_set` | `charId, field, from, to, by` (base value, clamped to field min..max) |
 | `roll` | `charId \| null (GM), by, label, expr, total, breakdown, visibility` |
 | `undo` | `target` (event id), `by` |
 
@@ -193,6 +201,9 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 - New events are applied incrementally; an `undo` triggers a full rebuild that skips undone events.
 - `undoLast(charId)` undoes the most recent non-undone `field_set` for that character. No redo. Rolls are not undoable.
 - Clamping/validation happens in `setField`; no-op changes produce no event.
+- **Character stages**: `Character.status` is `draft` until `character_finalized`. Draft edits go to the `drafts` table (`char_id, data JSON, updated`) via `saveDraft` and are layered over replayed state at the end of `rebuild()` (so legacy `field_set` events of old drafts still count). Finalizing deletes the draft row.
+- **Values**: always read through `session.valueOf(char, field)` (current) and `session.baseOf(char, field)`. Active base field current = `max(0, base + adj)`; play range is 0..PLAY_MAX (99), base range is the field's min..max. `scope()` feeds current values to formulas.
+- `undoLast` undoes the latest `field_set` **or** `base_set`.
 - `session.names` keeps the latest name of every character ever created (incl. deleted) for the change log.
 - `recentRolls()` / `recentChanges()` only return events since the last `session_started`. `sessionNumber()` counts those markers.
 
@@ -217,6 +228,8 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | POST | `/c/:id/set` | `field, value` | set field (tracks, text) |
 | POST | `/c/:id/adjust` | `field, delta` | increment number field (avoids races on fast taps) |
 | POST | `/c/:id/undo` | | undo last change, pushes whole sheet |
+| POST | `/c/:id/finalize` | | draft → active (hx-confirm); pushes whole sheet |
+| POST | `/c/:id/adjust-base` | `field, delta` | active only: change base value (logged) |
 | POST | `/c/:id/rename` | `name` | GM: rename; pushes sheet head (+ player's top-bar link) |
 | POST | `/c/:id/delete` | | GM (hx-confirm): delete; GM sheet removed, player's `#main` replaced with "character removed" |
 | POST | `/gm/session` | | GM (hx-confirm): start new session; every feed reset to the session marker |
@@ -249,6 +262,12 @@ Notes:
 - Hono's Bun adapter creates a new `WSContext` per event, so clients are matched by `ws.raw`.
 - Client set and heartbeat timer live on `globalThis` so `bun --hot` reloads don't duplicate them.
 
+### 6.6b Sheet UI stages (`views/sheet.tsx`)
+
+- Draft: "In creation" badge, hint strip, plain steppers, no Undo/rolls, "Finish character" button at the bottom.
+- Active: base fields render as `BaseField`: label with "base N" note (accent-coloured + "reset" link when current ≠ base) and two steppers: `.play` (posts `/adjust`) and `.base-edit` (posts `/adjust-base`).
+- "✎ Base" toggle is Alpine state on the `<section>` (`x-data="{ editBase: false }"`, class `editing-base`); CSS swaps which stepper is visible and shows a sticky purple "Editing base values" banner. Field oob swaps don't reset the mode (the section isn't replaced); whole-sheet pushes (undo, finalize) do.
+
 ### 6.7 Client script (`public/app.js`)
 
 - **Sound**: Web Audio synthesis (`roll` = clicks like tumbling dice, `secret` = low tone). Audio unlocks on first `pointerdown` (iOS requirement). A `MutationObserver` on `#feed` plays `data-sound` of newly added entries. Mute stored per device in `localStorage` (wrapped in try/catch), exposed as Alpine store `$store.sound`.
@@ -278,7 +297,9 @@ Notes:
 - Restart persistence: characters, session number, deletions survive a server restart.
 - Start new session clears player + GM feeds and change log live.
 - GM rename updates player sheet head and top bar live; GM delete removes the GM sheet and shows the removed notice on the player; deleted characters disappear from the join list.
-- `bun test` (6 evaluator tests) and `bun run check` pass.
+- `bun test` (evaluator + session stage tests in `src/session.test.ts`) and `bun run check` pass.
+- Creation stage: draft edits not logged, GM sees draft live with badge, finish logs one event, rolls appear after finishing.
+- Play: current vs base display, modified highlight + reset, base edit mode (banner, stepper swap, stays on during live updates), base change keeps adjustment, undo of base changes, change log entries. Checked at 375 px.
 
 ### Not verified yet
 
@@ -294,7 +315,9 @@ Notes:
 - Screens may sleep (by design, see decisions).
 - A whole-sheet push after undo can replace a textarea someone is editing on the same sheet.
 - Text field changes save on `change` (blur), not while typing.
-- No redo; rolls, renames, deletions and session starts cannot be undone.
+- No redo; rolls, renames, deletions, session starts and finishing a character cannot be undone (no "reopen creation" yet).
+- Characters created before the stage feature have no `character_finalized` event, so they show as drafts (their previous values are kept); finish them once.
+- Undo of in-play value changes is by event order per character; undoing an adjustment after a later base change restores the old *current* value relative to the base at that time.
 - Rename doesn't update the browser tab `<title>` until reload; past rolls keep the old name (stored at roll time).
 - Client feed trimming (60 entries) can drop the session marker in very long sessions.
 - No UI to switch between campaigns; use separate DB files via the `DB` env var.
@@ -305,14 +328,15 @@ Notes:
 
 ## 8. Next steps (suggested order)
 
-1. **Port the rolling system** from the Godot project (`../src/roll-roll`). Read its scripts first;
+1. **Trait picking in creation** (user-confirmed, later): store *choices* (trait ids, point allocations) in the draft and compute values from them; `rules.yaml` gets trait groups with modifiers and budgets; finish blocked until valid. Keep finalization producing plain base values so play logic stays unchanged. Consider a GM "reopen creation" using stored choices.
+2. **Port the rolling system** from the Godot project (`../src/roll-roll`). Read its scripts first;
    the user said it has real complexity (special die rolls, exertion, skill distribution, difficulty).
    Likely changes: richer `RollDef` in rules.yaml, a roll result model beyond `total/breakdown`,
    possibly multi-step rolls (player choices) with server-held pending-roll state, updated `RollEntry` view.
    Keep the engine UI-free and cover it with `bun test`.
-2. **Physical dice entry**: same roll button, "I rolled physically" toggle → input dice faces → same math, feed marks it as physical.
-3. Test on real phones at the table; fix what shows up.
-4. Optional: situational ± modifier before rolling, GM rolling on behalf of a player (hidden result), opt-in keep-awake toggle, real sound files, table display page (`/table`) showing only the feed.
+3. **Physical dice entry**: same roll button, "I rolled physically" toggle → input dice faces → same math, feed marks it as physical.
+4. Test on real phones at the table; fix what shows up.
+5. Optional: situational ± modifier before rolling, GM rolling on behalf of a player (hidden result), opt-in keep-awake toggle, real sound files, table display page (`/table`) showing only the feed.
 
 ---
 

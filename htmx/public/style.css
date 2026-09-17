@@ -134,3 +134,32 @@ body.offline::before {
 .manage .rename { display: flex; gap: 0.5rem; margin: 0.5rem 0; }
 button.danger { background: none; border-color: var(--danger); color: var(--danger); }
 a.button { display: inline-block; padding: 0.7rem 1rem; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-weight: 600; text-decoration: none; text-align: center; }
+
+/* ---- character stages & base values ---- */
+[x-cloak] { display: none !important; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4rem; color: var(--accent); font-size: inherit; text-decoration: underline; }
+.badge.draft { background: var(--accent); color: var(--accent-ink); margin-left: 0.5rem; vertical-align: middle; }
+.head-actions { display: flex; gap: 0.4rem; }
+.stage-note { margin: 0.5rem 0 0; padding: 0.5rem 0.7rem; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 0.85rem; }
+.finish { margin-top: 1rem; }
+.finish button { width: 100%; }
+
+.field .label { display: flex; flex-direction: column; }
+.base-note { color: var(--muted); font-size: 0.75rem; }
+.field.modified .stepper.play output { color: var(--accent); }
+.field.modified .base-note { color: var(--accent); }
+
+.stepper.base-edit { display: none; }
+.sheet.editing-base .stepper.play { display: none; }
+.sheet.editing-base .stepper.base-edit { display: flex; }
+.sheet.editing-base .stepper.base-edit button { border-color: var(--secret); }
+.sheet.editing-base .field.based { background: color-mix(in srgb, var(--secret) 12%, transparent); border-radius: 6px; padding: 0 0.3rem; }
+.sheet.editing-base .base-note button { display: none; }
+.base-banner {
+  position: sticky; top: 3rem; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  margin-top: 0.5rem; padding: 0.4rem 0.7rem; border-radius: 8px;
+  background: var(--secret); color: #fff; font-size: 0.9rem; font-weight: 600;
+}
+.base-banner button { background: #fff2; color: #fff; border-color: #fff6; }

@@ -56,7 +56,7 @@ export function PlayerPage(props: { session: Session; charId: string }) {
   return (
     <Layout title={char.name} system={session.rules.name} who={<WhoLink char={char} />} wsUrl={`/ws?char=${charId}`}>
       <main id="main" class="player-grid">
-        <Sheet rules={session.rules} char={char} scope={session.scope(charId)} />
+        <Sheet session={session} char={char} />
         <aside>
           <h3>Rolls</h3>
           <Feed session={session} viewer="player" />
@@ -135,7 +135,7 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
 
         <div id="sheets" class="sheets">
           {[...session.characters.values()].map((c) => (
-            <Sheet rules={session.rules} char={c} scope={session.scope(c.id)} gm />
+            <Sheet session={session} char={c} gm />
           ))}
         </div>
       </main>

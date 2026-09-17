@@ -65,6 +65,15 @@ function describeChange(e: LoggedEvent, session: Session, rules: Rules): string 
   if (e.type === 'session_started') return `${e.by} started session ${sessionIndex(e.id, session)}`
   if (e.type === 'character_renamed') return `${e.by} renamed ${e.from} → ${e.to}`
   if (e.type === 'character_deleted') return `${e.by} deleted ${session.names.get(e.charId) ?? 'a character'}`
+  if (e.type === 'character_finalized') {
+    const who = session.names.get(e.charId) ?? '?'
+    return `${who} finished character creation${e.by !== who ? ` (by ${e.by})` : ''}`
+  }
+  if (e.type === 'base_set') {
+    const who = session.names.get(e.charId) ?? '?'
+    const label = rules.fields.get(e.field)?.label ?? e.field
+    return `${who} · base ${label} ${e.from} → ${e.to}${e.by !== who ? ` (by ${e.by})` : ''}`
+  }
   if (e.type === 'field_set') {
     const who = session.names.get(e.charId) ?? '?'
     const field = rules.fields.get(e.field)
