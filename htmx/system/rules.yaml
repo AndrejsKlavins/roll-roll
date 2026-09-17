@@ -32,6 +32,13 @@ scales:
     3: average
     4: high
     5: excellent
+  skill:
+    0: untrained
+    1: novice
+    2: experienced
+    3: advanced
+    4: expert
+    5: master
 
 sections:
   - label: Bio
@@ -47,34 +54,39 @@ sections:
     base: true
     scale: rating
     fields:
-      - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3, icon: strength.svg,   color: "#99342c" }
-      - { id: agility,    label: Agility,    type: number, min: 1, max: 5, default: 3, icon: agility.svg,    color: "#899937" }
-      - { id: perception, label: Perception, type: number, min: 1, max: 5, default: 3, icon: perception.svg, color: "#dba34f" }
-      - { id: knowledge,  label: Knowledge,  type: number, min: 1, max: 5, default: 3, icon: knowledge.svg,  color: "#8ab8ac" }
-      - { id: intuition,  label: Intuition,  type: number, min: 1, max: 5, default: 3, icon: intuition.svg,  color: "#8a4368" }
+      - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3, icon: strength.svg,   color: "#c74446" }
+      - { id: agility,    label: Agility,    type: number, min: 1, max: 5, default: 3, icon: agility.svg,    color: "#a7a758" }
+      - { id: perception, label: Perception, type: number, min: 1, max: 5, default: 3, icon: perception.svg, color: "#ebac4d" }
+      - { id: knowledge,  label: Knowledge,  type: number, min: 1, max: 5, default: 3, icon: knowledge.svg,  color: "#7dadc8" }
+      - { id: intuition,  label: Intuition,  type: number, min: 1, max: 5, default: 3, icon: intuition.svg,  color: "#af6d77" }
 
   - label: Supporting Abilities
     base: true
     scale: rating
     fields:
-      - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3, icon: endurance.svg, color: "#69302b" }
-      - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3, icon: resolve.svg,   color: "#2e4c5e" }
+      - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3, icon: endurance.svg, color: "#975638" }
+      - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3, icon: resolve.svg,   color: "#556a97" }
 
   - label: Skills
     base: true
+    scale: skill
     fields:
-      - { id: melee_combat,  label: Melee combat,  type: number, min: 0, max: 5, default: 0 }
-      - { id: ranged_combat, label: Ranged combat, type: number, min: 0, max: 5, default: 0 }
-      - { id: manipulation,  label: Manipulation,  type: number, min: 0, max: 5, default: 0 }
-      - { id: performance,   label: Performance,   type: number, min: 0, max: 5, default: 0 }
-      - { id: acrobatics,    label: Acrobatics,    type: number, min: 0, max: 5, default: 0 }
-      - { id: athletics,     label: Athletics,     type: number, min: 0, max: 5, default: 0 }
-      - { id: stealth,       label: Stealth,       type: number, min: 0, max: 5, default: 0 }
-      - { id: medicine,      label: Medicine,      type: number, min: 0, max: 5, default: 0 }
-      - { id: theory,        label: Theory,        type: number, min: 0, max: 5, default: 0 }
-      - { id: thieving,      label: Thieving,      type: number, min: 0, max: 5, default: 0 }
-      - { id: crafting,      label: Crafting,      type: number, min: 0, max: 5, default: 0 }
-      - { id: outdoorsman,   label: Outdoorsman,   type: number, min: 0, max: 5, default: 0 }
+      # Combat
+      - { id: melee_combat,  label: Melee combat,  type: number, min: 0, max: 5, default: 0, icon: melee_combat.svg,  color: "#c68d80" }
+      - { id: ranged_combat, label: Ranged combat, type: number, min: 0, max: 5, default: 0, icon: ranged_combat.svg, color: "#c68d80" }
+      # Social
+      - { id: manipulation,  label: Manipulation,  type: number, min: 0, max: 5, default: 0, icon: manipulation.svg,  color: "#ddac88" }
+      - { id: performance,   label: Performance,   type: number, min: 0, max: 5, default: 0, icon: performance.svg,   color: "#ddac88" }
+      # Physical
+      - { id: acrobatics,    label: Acrobatics,    type: number, min: 0, max: 5, default: 0, icon: acrobatics.svg,    color: "#cfccca" }
+      - { id: athletics,     label: Athletics,     type: number, min: 0, max: 5, default: 0, icon: athletics.svg,     color: "#cfccca" }
+      - { id: stealth,       label: Stealth,       type: number, min: 0, max: 5, default: 0, icon: stealth.svg,       color: "#cfccca" }
+      # Other
+      - { id: medicine,      label: Medicine,      type: number, min: 0, max: 5, default: 0, icon: medicine.svg,      color: "#f2d08d" }
+      - { id: theory,        label: Theory,        type: number, min: 0, max: 5, default: 0, icon: theory.svg,        color: "#f2d08d" }
+      - { id: thieving,      label: Thieving,      type: number, min: 0, max: 5, default: 0, icon: thieving.svg,      color: "#f2d08d" }
+      - { id: crafting,      label: Crafting,      type: number, min: 0, max: 5, default: 0, icon: crafting.svg,      color: "#f2d08d" }
+      - { id: outdoorsman,   label: Outdoorsman,   type: number, min: 0, max: 5, default: 0, icon: outdoorsman.svg,   color: "#f2d08d" }
 
   - label: Gear & Notes
     fields:

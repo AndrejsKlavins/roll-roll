@@ -153,7 +153,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .field-icon {
   flex: none; display: grid; place-items: center;
   width: 30px; height: 30px; border-radius: 8px;
-  background: var(--field-color, var(--panel-2)); color: #fff;
+  background: var(--field-color, var(--panel-2)); color: var(--field-ink, #fff);
   box-shadow: inset 0 0 0 1px #ffffff1f;
 }
 .field-icon svg, .field-icon img { width: 18px; height: 18px; display: block; }
@@ -174,6 +174,8 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--field-color, var(--text)); }
 .stepper output:has(.rating) { min-width: 5.6em; }
 .stepper .rating { align-items: center; }
+/* A 0 (e.g. "untrained") shows nothing in the closed row; the open stepper still names it. */
+.field-controls .value .rating.zero { display: none; }
 /* An open row drops its controls to a second line when they don't fit (phones). */
 .field.number { flex-wrap: wrap; row-gap: 0.35rem; }
 .field-name, .field-controls { flex-shrink: 0; }

@@ -17,7 +17,7 @@ export const fieldDomId = (charId: string, fieldId: string) => `f-${charId}-${fi
 
 /** Root attributes for a field row: colour stripe via the --field-color custom property. */
 const rowAttrs = (f: Field, cls: string) =>
-  f.color ? { class: `${cls} has-color`, style: `--field-color: ${f.color}` } : { class: cls }
+  f.color ? { class: `${cls} has-color`, style: `--field-color: ${f.color}; --field-ink: ${f.ink}` } : { class: cls }
 
 /** Icon chip (if configured) followed by the label content. */
 function FieldName(props: { field: Field; children?: Child }) {
@@ -40,7 +40,7 @@ function ValueDisplay(props: { field: NumberField; value: number }) {
   if (!f.scale) return <>{String(value)}</> // a bare 0 child would render as nothing
   const dots = Math.max(0, Math.min(value, 10))
   return (
-    <span class="rating">
+    <span class={value === 0 ? 'rating zero' : 'rating'}>
       <span class="rating-word">{f.scale[value] ?? String(value)}</span>
       <span class="dots" aria-hidden="true">
         {Array.from({ length: dots }, () => (

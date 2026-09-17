@@ -8,7 +8,8 @@ import { evaluate, ExprError } from './engine/expr'
  * coloured by CSS; PNG/WebP/JPG are linked) or short text such as an emoji.
  */
 export type Icon = { kind: 'svg'; markup: string } | { kind: 'img'; src: string } | { kind: 'text'; text: string }
-type Look = { icon?: Icon; color?: string }
+/** ink: icon colour that stays readable on the colour chip (dark on light colours, white otherwise). */
+type Look = { icon?: Icon; color?: string; ink?: string }
 
 /** base: value is fixed when the character is finished; play changes are stored relative to it. */
 export type NumberField = Look & {
@@ -75,7 +76,10 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     if (f.color !== undefined) {
       // Unquoted 899937 is a YAML number; pad in case it had leading zeros.
       const hex = (typeof f.color === 'number' ? String(f.color).padStart(6, '0') : String(f.color)).replace(/^#/, '')
-      if (/^[0-9a-f]{6}$/i.test(hex)) look.color = `#${hex.toLowerCase()}`
+      if (/^[0-9a-f]{6}$/i.test(hex)) {
+        look.color = `#${hex.toLowerCase()}`
+        look.ink = luminance(hex) > 0.45 ? '#1b1a1f' : '#ffffff'
+      }
       else fail(`${where}: color must be a hex colour like "#99342c", got ${JSON.stringify(f.color)}`)
     }
     if (f.icon !== undefined) {
@@ -166,6 +170,15 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)
   }
   return { name: String(raw?.name ?? 'Untitled system'), sections, derived, rolls, fields }
+}
+
+/** WCAG relative luminance of a 6-digit hex colour (0 = black, 1 = white). */
+function luminance(hex: string) {
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
 }
 
 /** Strips XML prolog, doctype and comments so downloaded SVGs can be inlined. */

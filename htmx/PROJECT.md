@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-17 (ability rating words + dots)
+Last updated: 2026-09-17 (skill icons, colours and word scale)
 
 ---
 
@@ -166,8 +166,9 @@ rolls:
 
 - Field types: `number` (stepper, clamped min..max), `track` (pips 0..max), `text` (textarea).
 - Optional look on any field: `icon` = file in `system/icons/` (SVG inlined at startup after stripping XML prolog/comments, drawn with `currentColor` → white on the colour chip; PNG/WebP/JPG linked via `/system/icons/*`) or short text/emoji; `color` = hex (quoted; unquoted numbers are padded). Missing files / bad colours fail startup. Rendered by `FieldName` (icon chip) and `rowAttrs` (`--field-color` custom property → left stripe) in `views/sheet.tsx`.
-- Word scales: top-level `scales: { rating: { 1: horrible, 2: low, 3: average, 4: high, 5: excellent } }`; a section or number field with `scale: rating` shows the **word + one dot per point** (dots in the field colour) instead of the number — in the closed row, inside the open stepper, and in the "base …" note. Values without a word (e.g. 0 or a buffed 6) fall back to the number, dots capped at 10. Unknown scale names fail startup. Core and Supporting Abilities use `rating`; skills show numbers.
-- Abilities have user-chosen colours; the 7 icons in `system/icons/` were drawn for this project as placeholders (stroke line icons, 24×24) — replace freely.
+- Word scales: top-level `scales: { rating: { 1: horrible, 2: low, 3: average, 4: high, 5: excellent } }`; a section or number field with `scale: rating` shows the **word + one dot per point** (dots in the field colour) instead of the number — in the closed row, inside the open stepper, and in the "base …" note. Values without a word (e.g. 0 or a buffed 6) fall back to the number, dots capped at 10. Unknown scale names fail startup. Core and Supporting Abilities use `rating` (1 horrible … 5 excellent); Skills use `skill` (0 untrained, 1 novice, 2 experienced, 3 advanced, 4 expert, 5 master — at 0 the closed row shows no word or dots; the open stepper still says "untrained").
+- Abilities and skills have user-chosen colours (skills grouped: combat #af6d77, manipulation/performance #ddac88, acrobatics/athletics/stealth #cfccca, rest #f2d08d). The 19 icons in `system/icons/` were drawn for this project as placeholders (stroke line icons, 24×24) — replace freely.
+- Icon ink: `rules.ts` computes WCAG luminance of `color`; > 0.45 → dark icon (`#1b1a1f`), otherwise white. Exposed as `--field-ink` next to `--field-color`.
 - Ids must be unique across fields/derived/rolls, match `[A-Za-z_][A-Za-z0-9_]*`, and must not look like dice (`d6`).
 - Derived formulas are evaluated in order; they may reference fields and earlier derived values; dice not allowed.
 - On startup every formula and roll is dry-run against defaults; any problem aborts startup with a list of errors.

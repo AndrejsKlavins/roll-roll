@@ -29,16 +29,18 @@ describe('field look', () => {
       [
         '      - { id: a, type: number, color: "#99342C", icon: eye.svg }',
         '      - { id: b, type: number, color: 899937, icon: eye.png }',
-        '      - { id: c, type: number, color: "8ab8ac", icon: "⚔" }',
+        '      - { id: c, type: number, color: "f2d08d", icon: "⚔" }',
         '      - { id: d, type: number }',
       ].join('\n'),
     )
     const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((id) => rules.fields.get(id)!)
     expect(a!.color).toBe('#99342c')
     expect(a!.icon).toEqual({ kind: 'svg', markup: '<svg viewBox="0 0 24 24"><circle r="3"/></svg>' })
+    expect(a!.ink).toBe('#ffffff') // dark colour → white icon
     expect(b!.color).toBe('#899937') // unquoted YAML number
     expect(b!.icon).toEqual({ kind: 'img', src: '/system/icons/eye.png' })
     expect(c!.icon).toEqual({ kind: 'text', text: '⚔' })
+    expect(c!.ink).toBe('#1b1a1f') // light colour → dark icon
     expect(d!.color).toBeUndefined()
     expect(d!.icon).toBeUndefined()
   })
