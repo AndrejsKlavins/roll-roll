@@ -158,16 +158,40 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 }
 .field-icon svg, .field-icon img { width: 18px; height: 18px; display: block; }
 .field.has-color { border-left: 3px solid var(--field-color); padding-left: 0.55rem; }
-.base-note { color: var(--muted); font-size: 0.75rem; }
-.field.modified .stepper.play output { color: var(--accent); }
-.field.modified .base-note { color: var(--accent); }
+
+/* Name and value take the field's colour. */
+.field.has-color .label, .field.has-color .value, .field.has-color .stepper output { color: var(--field-color); }
+.field-controls { display: flex; align-items: center; gap: 0.4rem; }
+.field-controls .value { min-width: 2ch; text-align: center; font-size: 1.25rem; font-weight: 700; }
+.edit-toggle { width: 36px; min-height: 36px; height: 36px; padding: 0; font-size: 1rem; color: var(--muted); }
+.field.editing .edit-toggle { color: var(--text); border-color: var(--accent); }
+.delta { color: var(--muted); font-size: 0.7rem; }
+
+/* Scaled values ("average" + dots) instead of numbers. */
+.rating { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; line-height: 1.1; }
+.field-controls .value .rating-word, .stepper .rating-word { font-size: 0.95rem; font-weight: 600; }
+.dots { display: flex; gap: 3px; min-height: 7px; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--field-color, var(--text)); }
+.stepper output:has(.rating) { min-width: 5.6em; }
+.stepper .rating { align-items: center; }
+/* An open row drops its controls to a second line when they don't fit (phones). */
+.field.number { flex-wrap: wrap; row-gap: 0.35rem; }
+.field-name, .field-controls { flex-shrink: 0; }
+.field-controls { margin-left: auto; }
+.base-note { white-space: nowrap; }
+
+/* Closed row: value + pencil. Open row: stepper + check, base note under the name. */
+.stepper.play, .stepper.base-edit, .base-note { display: none; }
+.field.editing .stepper.play { display: flex; }
+.field.editing .value, .field.editing .delta { display: none; }
+.field.editing .base-note { display: block; color: var(--muted); font-size: 0.75rem; font-weight: normal; }
 
 .stepper.base-edit { display: none; }
-.sheet.editing-base .stepper.play { display: none; }
-.sheet.editing-base .stepper.base-edit { display: flex; }
+/* Base mode shows base steppers directly on based rows, regardless of open rows. */
+.sheet.editing-base .field.based .stepper.base-edit { display: flex; }
+.sheet.editing-base .field.based :is(.stepper.play, .value, .delta, .edit-toggle, .base-note) { display: none; }
 .sheet.editing-base .stepper.base-edit button { border-color: var(--secret); }
 .sheet.editing-base .field.based { background: color-mix(in srgb, var(--secret) 12%, transparent); border-radius: 6px; padding: 0 0.3rem; }
-.sheet.editing-base .base-note button { display: none; }
 .base-banner {
   position: sticky; top: 3rem; z-index: 5;
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;

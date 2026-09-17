@@ -23,6 +23,16 @@
 
 name: Sample System
 
+# Named word scales. A number field (or section) with "scale: <name>" shows the word and
+# one dot per point in its colour instead of the number.
+scales:
+  rating:
+    1: horrible
+    2: low
+    3: average
+    4: high
+    5: excellent
+
 sections:
   - label: Bio
     fields:
@@ -35,8 +45,8 @@ sections:
 
   - label: Core Abilities
     base: true
+    scale: rating
     fields:
-      # 1 very weak, 2 weak, 3 average, 4 strong, 5 very strong — default average.
       - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3, icon: strength.svg,   color: "#99342c" }
       - { id: agility,    label: Agility,    type: number, min: 1, max: 5, default: 3, icon: agility.svg,    color: "#899937" }
       - { id: perception, label: Perception, type: number, min: 1, max: 5, default: 3, icon: perception.svg, color: "#dba34f" }
@@ -45,6 +55,7 @@ sections:
 
   - label: Supporting Abilities
     base: true
+    scale: rating
     fields:
       - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3, icon: endurance.svg, color: "#69302b" }
       - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3, icon: resolve.svg,   color: "#2e4c5e" }

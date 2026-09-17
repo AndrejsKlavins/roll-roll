@@ -19,6 +19,8 @@ export type NumberField = Look & {
   max: number
   default: number
   base: boolean
+  /** Words per value (e.g. 3 → "average"). When set, the sheet shows the word and dots instead of the number. */
+  scale?: Record<number, string>
 }
 export type TrackField = Look & { id: string; label: string; type: 'track'; max: number; default: number }
 export type TextField = Look & { id: string; label: string; type: 'text'; lines: number; default: string }
@@ -57,6 +59,17 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
 
   const iconsDir = join(dirname(path), 'icons')
 
+  // scales: { rating: { 1: horrible, 2: low, ... } }
+  const scales = new Map<string, Record<number, string>>()
+  for (const [name, words] of Object.entries(raw?.scales ?? {})) {
+    const scale: Record<number, string> = {}
+    for (const [value, word] of Object.entries((words ?? {}) as Record<string, unknown>)) {
+      if (!/^-?\d+$/.test(value)) fail(`scales.${name}: keys must be whole numbers, got "${value}"`)
+      else scale[Number(value)] = String(word)
+    }
+    scales.set(name, scale)
+  }
+
   const parseLook = (f: any, where: string): Look => {
     const look: Look = {}
     if (f.color !== undefined) {
@@ -94,6 +107,12 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
           const max = Number(f.max ?? 10)
           const base = Boolean(f.base ?? s?.base ?? false)
           field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? min), base }
+          const scaleName = f.scale ?? s?.scale
+          if (scaleName !== undefined && scaleName !== null) {
+            const scale = scales.get(String(scaleName))
+            if (scale) field.scale = scale
+            else fail(`${where}: unknown scale "${scaleName}" (define it under "scales:")`)
+          }
           break
         }
         case 'track':

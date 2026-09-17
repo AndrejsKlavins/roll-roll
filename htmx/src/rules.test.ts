@@ -50,3 +50,42 @@ describe('field look', () => {
     await expect(load).rejects.toThrow(/color must be a hex colour[\s\S]*icon file not found: system\/icons\/missing\.svg/)
   })
 })
+
+describe('scales', () => {
+  test('section scale applies to its number fields; fields can override', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'roll-rules-'))
+    dirs.push(dir)
+    const path = join(dir, 'rules.yaml')
+    writeFileSync(
+      path,
+      [
+        'name: Test',
+        'scales:',
+        '  rating: { 1: horrible, 2: low, 3: average }',
+        '  other: { 1: one }',
+        'sections:',
+        '  - label: A',
+        '    scale: rating',
+        '    fields:',
+        '      - { id: a, type: number }',
+        '      - { id: b, type: number, scale: other }',
+        '      - { id: c, type: text }',
+        '  - label: B',
+        '    fields:',
+        '      - { id: d, type: number }',
+        'derived: []',
+        'rolls: []',
+      ].join('\n'),
+    )
+    const rules = await loadRules(path)
+    const get = (id: string) => rules.fields.get(id) as { scale?: Record<number, string> }
+    expect(get('a').scale).toEqual({ 1: 'horrible', 2: 'low', 3: 'average' })
+    expect(get('b').scale).toEqual({ 1: 'one' })
+    expect(get('c').scale).toBeUndefined()
+    expect(get('d').scale).toBeUndefined()
+  })
+
+  test('unknown scale fails startup', async () => {
+    await expect(rulesWith('      - { id: a, type: number, scale: nope }')).rejects.toThrow('unknown scale "nope"')
+  })
+})

@@ -3,6 +3,10 @@
 //
 // Draft sheets edit values directly. Active sheets show base fields as "current (base N)";
 // the "✎ Base" toggle (Alpine state on the <section>) swaps those steppers to edit the base.
+//
+// Number rows show just the value plus a per-row edit toggle; the steppers appear only while
+// the row is open. Open rows live in the section's Alpine state (open.<fieldId>) so they stay
+// open when the row itself is replaced by a live update.
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
 import type { Field, NumberField } from '../rules'
@@ -30,15 +34,34 @@ function FieldName(props: { field: Field; children?: Child }) {
   )
 }
 
+/** Shown value of a number field: word + dots for fields with a scale, otherwise the number. */
+function ValueDisplay(props: { field: NumberField; value: number }) {
+  const { field: f, value } = props
+  if (!f.scale) return <>{String(value)}</> // a bare 0 child would render as nothing
+  const dots = Math.max(0, Math.min(value, 10))
+  return (
+    <span class="rating">
+      <span class="rating-word">{f.scale[value] ?? String(value)}</span>
+      <span class="dots" aria-hidden="true">
+        {Array.from({ length: dots }, () => (
+          <i></i>
+        ))}
+      </span>
+    </span>
+  )
+}
+
+const scaleWord = (f: NumberField, value: number) => f.scale?.[value] ?? String(value)
+
 function Stepper(props: {
   class: string
   url: string
-  field: string
+  field: NumberField
   value: number
   min: number
   max: number
 }) {
-  const step = (delta: number) => JSON.stringify({ field: props.field, delta })
+  const step = (delta: number) => JSON.stringify({ field: props.field.id, delta })
   return (
     <div class={`stepper ${props.class}`}>
       <button
@@ -50,7 +73,9 @@ function Stepper(props: {
       >
         −
       </button>
-      <output>{props.value}</output>
+      <output>
+        <ValueDisplay field={props.field} value={props.value} />
+      </output>
       <button
         type="button"
         hx-post={props.url}
@@ -64,6 +89,26 @@ function Stepper(props: {
   )
 }
 
+/** Pencil ↔ check button that opens/closes a number row's steppers. */
+function EditToggle(props: { field: Field }) {
+  const key = `open.${props.field.id}`
+  return (
+    <button
+      type="button"
+      class="edit-toggle"
+      x-on:click={`${key} = !${key}`}
+      x-text={`${key} ? '✓' : '✎'`}
+      x-bind:aria-pressed={`!!${key}`}
+      aria-label={`Edit ${props.field.label}`}
+    >
+      ✎
+    </button>
+  )
+}
+
+/** x-bind:class for a number row: "editing" while its steppers are open. */
+const editingClass = (f: Field) => `{ editing: open.${f.id} }`
+
 function BaseField(props: { session: Session; char: Character; field: NumberField; oob?: boolean }) {
   const { session, char, field: f } = props
   const post = `/c/${char.id}`
@@ -74,12 +119,13 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
     <div
       id={fieldDomId(char.id, f.id)}
       {...rowAttrs(f, modified ? 'field number based modified' : 'field number based')}
+      x-bind:class={editingClass(f)}
       hx-swap-oob={oobAttr(props.oob)}
     >
       <FieldName field={f}>
         {f.label}
         <small class="base-note">
-          base {base}
+          base {scaleWord(f, base)}
           {modified && (
             <button
               type="button"
@@ -93,8 +139,19 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
           )}
         </small>
       </FieldName>
-      <Stepper class="play" url={`${post}/adjust`} field={f.id} value={current} min={0} max={Infinity} />
-      <Stepper class="base-edit" url={`${post}/adjust-base`} field={f.id} value={base} min={f.min} max={f.max} />
+      <div class="field-controls">
+        {modified && (
+          <span class="delta" title={`base ${scaleWord(f, base)}`}>
+            {current > base ? '▲' : '▼'}
+          </span>
+        )}
+        <output class="value">
+          <ValueDisplay field={f} value={current} />
+        </output>
+        <Stepper class="play" url={`${post}/adjust`} field={f} value={current} min={0} max={Infinity} />
+        <Stepper class="base-edit" url={`${post}/adjust-base`} field={f} value={base} min={f.min} max={f.max} />
+        <EditToggle field={f} />
+      </div>
     </div>
   )
 }
@@ -150,9 +207,15 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
   }
 
   return (
-    <div id={id} {...rowAttrs(f, 'field number')} hx-swap-oob={oobAttr(props.oob)}>
+    <div id={id} {...rowAttrs(f, 'field number')} x-bind:class={editingClass(f)} hx-swap-oob={oobAttr(props.oob)}>
       <FieldName field={f} />
-      <Stepper class="" url={`${post}/adjust`} field={f.id} value={value} min={f.min} max={f.max} />
+      <div class="field-controls">
+        <output class="value">
+          <ValueDisplay field={f} value={value} />
+        </output>
+        <Stepper class="play" url={`${post}/adjust`} field={f} value={value} min={f.min} max={f.max} />
+        <EditToggle field={f} />
+      </div>
     </div>
   )
 }
@@ -240,7 +303,7 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
       id={`sheet-${char.id}`}
       class="sheet"
       hx-swap-oob={oobAttr(props.oob)}
-      x-data="{ editBase: false }"
+      x-data="{ editBase: false, open: {} }"
       x-bind:class="{ 'editing-base': editBase }"
     >
       <SheetHead session={session} char={char} />

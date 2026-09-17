@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-17 (field icons and colours)
+Last updated: 2026-09-17 (ability rating words + dots)
 
 ---
 
@@ -166,6 +166,7 @@ rolls:
 
 - Field types: `number` (stepper, clamped min..max), `track` (pips 0..max), `text` (textarea).
 - Optional look on any field: `icon` = file in `system/icons/` (SVG inlined at startup after stripping XML prolog/comments, drawn with `currentColor` → white on the colour chip; PNG/WebP/JPG linked via `/system/icons/*`) or short text/emoji; `color` = hex (quoted; unquoted numbers are padded). Missing files / bad colours fail startup. Rendered by `FieldName` (icon chip) and `rowAttrs` (`--field-color` custom property → left stripe) in `views/sheet.tsx`.
+- Word scales: top-level `scales: { rating: { 1: horrible, 2: low, 3: average, 4: high, 5: excellent } }`; a section or number field with `scale: rating` shows the **word + one dot per point** (dots in the field colour) instead of the number — in the closed row, inside the open stepper, and in the "base …" note. Values without a word (e.g. 0 or a buffed 6) fall back to the number, dots capped at 10. Unknown scale names fail startup. Core and Supporting Abilities use `rating`; skills show numbers.
 - Abilities have user-chosen colours; the 7 icons in `system/icons/` were drawn for this project as placeholders (stroke line icons, 24×24) — replace freely.
 - Ids must be unique across fields/derived/rolls, match `[A-Za-z_][A-Za-z0-9_]*`, and must not look like dice (`d6`).
 - Derived formulas are evaluated in order; they may reference fields and earlier derived values; dice not allowed.
@@ -269,8 +270,11 @@ Notes:
 ### 6.6b Sheet UI stages (`views/sheet.tsx`)
 
 - Draft: "In creation" badge, hint strip, plain steppers, no Undo/rolls, "Finish character" button at the bottom.
-- Active: base fields render as `BaseField`: label with "base N" note (accent-coloured + "reset" link when current ≠ base) and two steppers: `.play` (posts `/adjust`) and `.base-edit` (posts `/adjust-base`).
-- "✎ Base" toggle is Alpine state on the `<section>` (`x-data="{ editBase: false }"`, class `editing-base`); CSS swaps which stepper is visible and shows a sticky purple "Editing base values" banner. Field oob swaps don't reset the mode (the section isn't replaced); whole-sheet pushes (undo, finalize) do.
+- Number rows (draft and active) show only the **value** and a per-row **edit toggle** (✎ ↔ ✓). Steppers are hidden until the row is open (user request: no always-visible − / +). Open rows are tracked in the section's Alpine state `open.<fieldId>` and the row binds `x-bind:class="{ editing: open.<id> }"`, so a row stays open when a live update replaces it.
+- Field name and value use the field's colour (`--field-color`). Number rows use `flex-wrap`, so an open row moves its controls to a second line on phones (rated steppers are wide).
+- Active base fields (`BaseField`): the base value is **not** shown by default (user request). While the row is open, "base N" (+ "reset" when modified) appears under the name; when closed, a modified value gets a small ▲/▼ marker (title shows base).
+- Base fields have two steppers: `.play` (posts `/adjust`) and `.base-edit` (posts `/adjust-base`).
+- "✎ Base" toggle is Alpine state on the `<section>` (`x-data="{ editBase: false }"`, class `editing-base`); CSS shows base steppers directly on base rows (hiding value, marker and edit toggle) and a sticky purple "Editing base values" banner. Field oob swaps don't reset the mode (the section isn't replaced); whole-sheet pushes (undo, finalize) do.
 
 ### 6.7 Client script (`public/app.js`)
 
