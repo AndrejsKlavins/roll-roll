@@ -9,6 +9,9 @@
 #   number  — stepper with − / + buttons (min, max, default)
 #   track   — row of clickable pips from 0 to max (default)
 #   text    — free text box (lines = height)
+#   derived — calculated number (formula); can be placed in any section. Finished characters
+#             can apply play changes with ✎. "pool: true" makes the formula a maximum shown
+#             as circles (filled = left, empty = spent), e.g. Health.
 #
 # Any field can have a look:
 #   icon    — file in system/icons/ (SVG recommended; drawn in white on the colour)
@@ -67,6 +70,27 @@ sections:
       - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3, icon: endurance.svg, color: "#975638" }
       - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3, icon: resolve.svg,   color: "#556a97" }
 
+  # Calculated stats (type: derived) — read-only numbers worked out from the formula.
+  - label: Body
+    fields:
+      - { id: health, label: Health, type: derived, pool: true, formula: "endurance + floor(strength / 2)", icon: health.svg, color: "#c74446" }
+      - { id: mind,   label: Mind,   type: derived, pool: true, formula: "resolve + floor(intuition / 2)",  icon: mind.svg,   color: "#5c81a3" }
+
+  - label: Reserves
+    fields:
+      - { id: stamina,   label: Stamina,   type: derived, pool: true, formula: "endurance", icon: stamina.svg,   color: "#d0763e" }
+      - { id: willpower, label: Willpower, type: derived, pool: true, formula: "resolve",   icon: willpower.svg, color: "#7dadc8" }
+
+  - label: Defense
+    fields:
+      - { id: evasion,             label: Evasion,             type: derived, formula: "1 + agility + perception", icon: evasion.svg,             color: "#a7a758" }
+      - { id: physical_resistance, label: Physical resistance, type: derived, formula: "2 + endurance",            icon: physical_resistance.svg, color: "#a6a6a6" }
+      - { id: mental_resistance,   label: Mental resistance,   type: derived, formula: "2 + resolve",              icon: mental_resistance.svg,   color: "#b0d6d9" }
+
+  - label: Misc
+    fields:
+      - { id: speed, label: Speed, type: derived, formula: "floor((agility + perception) / 2)", icon: speed.svg, color: "#f2d08d" }
+
   - label: Skills
     base: true
     scale: skill
@@ -93,15 +117,9 @@ sections:
       - { id: gear,  label: Gear,  type: text, lines: 4 }
       - { id: notes, label: Notes, type: text, lines: 3 }
 
-derived:
-  - { id: body,               label: Body,               formula: "endurance + floor(strength / 2)" }
-  - { id: mind,                label: Mind,               formula: "resolve + floor(intuition / 2)" }
-  - { id: speed,               label: Speed,              formula: "floor((agility + perception) / 2)" }
-  - { id: evasion,             label: Evasion,            formula: "1 + agility + perception" }
-  - { id: physical_resistance, label: Physical Resistance, formula: "2 + endurance" }
-  - { id: mental_resistance,   label: Mental Resistance,  formula: "2 + resolve" }
-  - { id: stamina,             label: Stamina,            formula: "endurance" }
-  - { id: willpower,           label: Willpower,          formula: "resolve" }
+# Calculated values not placed in a section are listed here and shown in a compact block
+# at the bottom of the sheet. All current ones live in the sections above.
+derived: []
 
 # Rolls intentionally left empty: the real rolling system (special dice, exertion,
 # skill distribution, difficulty) hasn't been ported from the Godot project yet.

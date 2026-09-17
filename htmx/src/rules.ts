@@ -27,8 +27,21 @@ export type TrackField = Look & { id: string; label: string; type: 'track'; max:
 export type TextField = Look & { id: string; label: string; type: 'text'; lines: number; default: string }
 export type Field = NumberField | TrackField | TextField
 
-export type Section = { label: string; fields: Field[] }
-export type Derived = { id: string; label: string; formula: string }
+/**
+ * Calculated, read-only value. Can sit inside a section (type: derived) to be shown with the
+ * section's other rows, or in the top-level "derived:" list (shown in a compact block).
+ */
+export type Derived = Look & {
+  id: string
+  label: string
+  type: 'derived'
+  formula: string
+  inSection: boolean
+  /** Resource pool (e.g. Health): the formula is the maximum, shown as filled/empty circles. */
+  pool: boolean
+}
+export type SectionItem = Field | Derived
+export type Section = { label: string; fields: SectionItem[] }
 export type RollDef = { id: string; label: string; dice: string }
 
 export type Rules = {
@@ -97,12 +110,28 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     return look
   }
 
+  const parseDerived = (d: any, where: string, inSection: boolean): Derived => ({
+    id: d.id,
+    label: String(d.label ?? d.id),
+    type: 'derived',
+    formula: String(d.formula ?? ''),
+    inSection,
+    pool: Boolean(d.pool),
+    ...parseLook(d, where),
+  })
+
   const fields = new Map<string, Field>()
+  const derived: Derived[] = []
   const sections: Section[] = (raw?.sections ?? []).map((s: any, si: number) => ({
     label: String(s?.label ?? `Section ${si + 1}`),
-    fields: (s?.fields ?? []).flatMap((f: any, fi: number): Field[] => {
+    fields: (s?.fields ?? []).flatMap((f: any, fi: number): SectionItem[] => {
       const where = `sections[${si}].fields[${fi}]`
       if (!checkId(f?.id, where)) return []
+      if (f.type === 'derived') {
+        const d = parseDerived(f, where, true)
+        derived.push(d)
+        return [d]
+      }
       const label = String(f.label ?? f.id)
       let field: Field
       switch (f.type) {
@@ -126,7 +155,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
           field = { id: f.id, label, type: 'text', lines: Number(f.lines ?? 3), default: String(f.default ?? '') }
           break
         default:
-          fail(`${where}: unknown type ${JSON.stringify(f.type)} (use number, track or text)`)
+          fail(`${where}: unknown type ${JSON.stringify(f.type)} (use number, track, text or derived)`)
           return []
       }
       Object.assign(field, parseLook(f, where))
@@ -140,18 +169,18 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   for (const f of fields.values()) if (f.type !== 'text') scope[f.id] = f.default
   const dryRng = () => 1
 
-  const derived: Derived[] = (raw?.derived ?? []).flatMap((d: any, i: number) => {
-    const where = `derived[${i}]`
-    if (!checkId(d?.id, where)) return []
-    const formula = String(d.formula ?? '')
+  ;(raw?.derived ?? []).forEach((d: any, i: number) => {
+    if (checkId(d?.id, `derived[${i}]`)) derived.push(parseDerived(d, `derived[${i}]`, false))
+  })
+  // Evaluated in order: section derived values top to bottom, then the top-level list.
+  for (const d of derived) {
     try {
-      scope[d.id] = evaluate(formula, scope, { allowDice: false }).total
+      scope[d.id] = evaluate(d.formula, scope, { allowDice: false }).total
     } catch (e) {
-      fail(`${where} "${d.id}": ${(e as Error).message}`)
+      fail(`derived "${d.id}": ${(e as Error).message}`)
       scope[d.id] = 0
     }
-    return [{ id: d.id, label: String(d.label ?? d.id), formula }]
-  })
+  }
 
   const rolls: RollDef[] = (raw?.rolls ?? []).flatMap((r: any, i: number) => {
     const where = `rolls[${i}]`

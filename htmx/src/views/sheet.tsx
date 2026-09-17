@@ -9,18 +9,18 @@
 // open when the row itself is replaced by a live update.
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
-import type { Field, NumberField } from '../rules'
+import type { Derived, Field, NumberField } from '../rules'
 import { isBaseField, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 export const fieldDomId = (charId: string, fieldId: string) => `f-${charId}-${fieldId}`
 
 /** Root attributes for a field row: colour stripe via the --field-color custom property. */
-const rowAttrs = (f: Field, cls: string) =>
+const rowAttrs = (f: Field | Derived, cls: string) =>
   f.color ? { class: `${cls} has-color`, style: `--field-color: ${f.color}; --field-ink: ${f.ink}` } : { class: cls }
 
 /** Icon chip (if configured) followed by the label content. */
-function FieldName(props: { field: Field; children?: Child }) {
+function FieldName(props: { field: Field | Derived; children?: Child }) {
   const { icon } = props.field
   return (
     <span class="field-name">
@@ -90,7 +90,7 @@ function Stepper(props: {
 }
 
 /** Pencil ↔ check button that opens/closes a number row's steppers. */
-function EditToggle(props: { field: Field }) {
+function EditToggle(props: { field: Field | Derived }) {
   const key = `open.${props.field.id}`
   return (
     <button
@@ -107,7 +107,7 @@ function EditToggle(props: { field: Field }) {
 }
 
 /** x-bind:class for a number row: "editing" while its steppers are open. */
-const editingClass = (f: Field) => `{ editing: open.${f.id} }`
+const editingClass = (f: Field | Derived) => `{ editing: open.${f.id} }`
 
 function BaseField(props: { session: Session; char: Character; field: NumberField; oob?: boolean }) {
   const { session, char, field: f } = props
@@ -220,18 +220,125 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
   )
 }
 
+const derivedText = (v: number | undefined) => (v === undefined || Number.isNaN(v) ? 'err' : formatNumber(v))
+
+/** Pool stat: one circle per point of maximum, filled for what is left. */
+function PoolCircles(props: { current: number; max: number }) {
+  const max = Math.max(0, Math.min(props.max, 40))
+  return (
+    <span class="pool" aria-label={`${props.current} of ${props.max}`}>
+      {Array.from({ length: max }, (_, i) => (
+        <i class={i < props.current ? 'full' : undefined}></i>
+      ))}
+    </span>
+  )
+}
+
+/**
+ * A calculated value placed inside a section. Shows a number (or circles for pools); finished
+ * characters get the same ✎ toggle as editable rows to apply play changes on top of the formula.
+ */
+export function DerivedRow(props: { session: Session; char: Character; derived: Derived; oob?: boolean }) {
+  const { session, char, derived: d } = props
+  const stat = session.statOf(char, d.id)!
+  const broken = Number.isNaN(session.scope(char.id)[d.id] ?? NaN)
+  const editable = char.status === 'active' && !broken
+  const modified = stat.current !== stat.normal
+  const post = `/c/${char.id}`
+  const step = (delta: number) => JSON.stringify({ stat: d.id, delta })
+  const shown = broken ? 'err' : d.pool ? <PoolCircles current={stat.current} max={stat.normal} /> : formatNumber(stat.current)
+  const cls = ['field stat', d.pool && 'pool-stat', modified && 'modified', !editable && 'readonly'].filter(Boolean).join(' ')
+  return (
+    <div
+      id={`dv-${char.id}-${d.id}`}
+      {...rowAttrs(d, cls)}
+      x-bind:class={editable ? editingClass(d) : undefined}
+      title={d.formula}
+      hx-swap-oob={oobAttr(props.oob)}
+    >
+      <FieldName field={d}>
+        {d.label}
+        {editable && modified && (
+          <small class="base-note">
+            {d.pool ? `${stat.current} of ${stat.normal}` : `normal ${formatNumber(stat.normal)}`}
+            <button
+              type="button"
+              class="link"
+              hx-post={`${post}/set-stat`}
+              hx-vals={JSON.stringify({ stat: d.id, value: stat.normal })}
+              hx-swap="none"
+            >
+              {d.pool ? 'restore' : 'reset'}
+            </button>
+          </small>
+        )}
+      </FieldName>
+      <div class="field-controls">
+        {!d.pool && modified && (
+          <span class="delta" title={`normal ${formatNumber(stat.normal)}`}>
+            {stat.current > stat.normal ? '▲' : '▼'}
+          </span>
+        )}
+        <output class="value">{shown}</output>
+        {editable && (
+          <div class="stepper play">
+            <button
+              type="button"
+              hx-post={`${post}/adjust-stat`}
+              hx-vals={step(-1)}
+              hx-swap="none"
+              disabled={stat.current <= 0 || undefined}
+            >
+              −
+            </button>
+            <output>{shown}</output>
+            <button
+              type="button"
+              hx-post={`${post}/adjust-stat`}
+              hx-vals={step(1)}
+              hx-swap="none"
+              disabled={(d.pool && stat.current >= stat.normal) || undefined}
+            >
+              +
+            </button>
+          </div>
+        )}
+        {editable && <EditToggle field={d} />}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * All calculated values for a character, as out-of-band updates: every in-section row plus
+ * the compact block for top-level derived values. Any field change can affect any of them.
+ */
+export function DerivedUpdates(props: { session: Session; char: Character }) {
+  return (
+    <>
+      {props.session.rules.derived
+        .filter((d) => d.inSection)
+        .map((d) => (
+          <DerivedRow session={props.session} char={props.char} derived={d} oob />
+        ))}
+      <DerivedView session={props.session} char={props.char} oob />
+    </>
+  )
+}
+
+/** Compact block for derived values not placed in any section. */
 export function DerivedView(props: { session: Session; char: Character; oob?: boolean }) {
-  const { rules } = props.session
-  if (rules.derived.length === 0) return null
+  const loose = props.session.rules.derived.filter((d) => !d.inSection)
+  if (loose.length === 0) return null
   const scope = props.session.scope(props.char.id)
   return (
     <dl id={`derived-${props.char.id}`} class="derived" hx-swap-oob={oobAttr(props.oob)}>
-      {rules.derived.map((d) => {
+      {loose.map((d) => {
         const v = scope[d.id]
         return (
           <div title={d.formula}>
             <dt>{d.label}</dt>
-            <dd>{v === undefined || Number.isNaN(v) ? 'err' : formatNumber(v)}</dd>
+            <dd>{derivedText(v)}</dd>
           </div>
         )
       })}
@@ -323,9 +430,13 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
       {rules.sections.map((s) => (
         <fieldset>
           <legend>{s.label}</legend>
-          {s.fields.map((f) => (
-            <FieldView session={session} char={char} field={f} />
-          ))}
+          {s.fields.map((f) =>
+            f.type === 'derived' ? (
+              <DerivedRow session={session} char={char} derived={f} />
+            ) : (
+              <FieldView session={session} char={char} field={f} />
+            ),
+          )}
         </fieldset>
       ))}
 

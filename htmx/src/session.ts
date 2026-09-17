@@ -23,6 +23,8 @@ export type EventData =
   // For base fields of active characters, from/to are current values (base + adjustment).
   | { type: 'field_set'; charId: string; field: string; from: number | string; to: number | string; by: string }
   | { type: 'base_set'; charId: string; field: string; from: number; to: number; by: string }
+  // Play change to a calculated stat: adj is stored (current = formula + adj); from/to are shown values.
+  | { type: 'stat_set'; charId: string; stat: string; adj: number; from: number; to: number; by: string }
   | {
       type: 'roll'
       charId: string | null // null = GM
@@ -49,12 +51,15 @@ export type Character = {
   values: Values
   base: Record<string, number>
   adj: Record<string, number>
+  /** Active only: change applied to calculated stats (pools: negative = spent). */
+  statAdj: Record<string, number>
 }
 
 const CHANGE_TYPES = new Set<EventData['type']>([
   'character_finalized',
   'field_set',
   'base_set',
+  'stat_set',
   'undo',
   'character_renamed',
   'character_deleted',
@@ -157,17 +162,23 @@ export class Session {
           values: defaultValues(this.rules),
           base: {},
           adj: {},
+          statAdj: {},
         })
         this.names.set(e.charId, e.name)
         break
       case 'character_finalized': {
         const c = this.characters.get(e.charId)
-        if (c) Object.assign(c, { status: 'active', base: { ...e.base }, values: { ...e.values }, adj: {} })
+        if (c) Object.assign(c, { status: 'active', base: { ...e.base }, values: { ...e.values }, adj: {}, statAdj: {} })
         break
       }
       case 'base_set': {
         const c = this.characters.get(e.charId)
         if (c?.status === 'active') c.base[e.field] = e.to
+        break
+      }
+      case 'stat_set': {
+        const c = this.characters.get(e.charId)
+        if (c?.status === 'active') c.statAdj[e.stat] = e.adj
         break
       }
       case 'character_renamed': {
@@ -213,6 +224,40 @@ export class Session {
     const values: Values = {}
     for (const f of this.rules.fields.values()) values[f.id] = this.valueOf(c, f)
     return computeScope(this.rules, values)
+  }
+
+  /**
+   * A calculated stat: `normal` is the formula result (a pool's maximum), `current` includes play
+   * changes. Formulas and rolls use the formula results, not the play-adjusted values.
+   */
+  statOf(c: Character, statId: string): { normal: number; current: number } | null {
+    const d = this.rules.derived.find((x) => x.id === statId)
+    if (!d) return null
+    const raw = this.scope(c.id)[statId] ?? NaN
+    const normal = Number.isFinite(raw) ? raw : 0
+    const shifted = normal + (c.status === 'active' ? (c.statAdj[statId] ?? 0) : 0)
+    const current = d.pool ? Math.min(normal, Math.max(0, shifted)) : Math.min(PLAY_MAX, Math.max(0, shifted))
+    return { normal, current }
+  }
+
+  /** Sets a finished character's shown stat value (logged). Returns false if nothing changed. */
+  setStat(charId: string, statId: string, value: number, by: string) {
+    const c = this.characters.get(charId)
+    const stat = c && this.statOf(c, statId)
+    if (c?.status !== 'active' || !stat || !Number.isFinite(value)) return false
+    const d = this.rules.derived.find((x) => x.id === statId)!
+    const to = d.pool
+      ? Math.min(stat.normal, Math.max(0, Math.round(value)))
+      : Math.min(PLAY_MAX, Math.max(0, Math.round(value)))
+    if (to === stat.current) return false
+    this.append({ type: 'stat_set', charId, stat: statId, adj: to - stat.normal, from: stat.current, to, by })
+    return true
+  }
+
+  adjustStat(charId: string, statId: string, delta: number, by: string) {
+    const c = this.characters.get(charId)
+    const stat = c && this.statOf(c, statId)
+    return stat ? this.setStat(charId, statId, stat.current + delta, by) : false
   }
 
   createCharacter(name: string): Character {
@@ -295,11 +340,12 @@ export class Session {
     return true
   }
 
-  /** Undoes the character's most recent value or base change that is still in effect. */
+  /** Undoes the character's most recent value, base or stat change that is still in effect. */
   undoLast(charId: string, by: string): LoggedEvent | null {
     for (let i = this.events.length - 1; i >= 0; i--) {
       const e = this.events[i]!
-      if ((e.type === 'field_set' || e.type === 'base_set') && e.charId === charId && !this.undone.has(e.id)) {
+      const undoable = e.type === 'field_set' || e.type === 'base_set' || e.type === 'stat_set'
+      if (undoable && e.charId === charId && !this.undone.has(e.id)) {
         this.append({ type: 'undo', target: e.id, by })
         return e
       }

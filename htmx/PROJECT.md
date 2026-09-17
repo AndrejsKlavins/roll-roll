@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-17 (skill icons, colours and word scale)
+Last updated: 2026-09-17 (editable stats, pool circles)
 
 ---
 
@@ -167,10 +167,12 @@ rolls:
 - Field types: `number` (stepper, clamped min..max), `track` (pips 0..max), `text` (textarea).
 - Optional look on any field: `icon` = file in `system/icons/` (SVG inlined at startup after stripping XML prolog/comments, drawn with `currentColor` → white on the colour chip; PNG/WebP/JPG linked via `/system/icons/*`) or short text/emoji; `color` = hex (quoted; unquoted numbers are padded). Missing files / bad colours fail startup. Rendered by `FieldName` (icon chip) and `rowAttrs` (`--field-color` custom property → left stripe) in `views/sheet.tsx`.
 - Word scales: top-level `scales: { rating: { 1: horrible, 2: low, 3: average, 4: high, 5: excellent } }`; a section or number field with `scale: rating` shows the **word + one dot per point** (dots in the field colour) instead of the number — in the closed row, inside the open stepper, and in the "base …" note. Values without a word (e.g. 0 or a buffed 6) fall back to the number, dots capped at 10. Unknown scale names fail startup. Core and Supporting Abilities use `rating` (1 horrible … 5 excellent); Skills use `skill` (0 untrained, 1 novice, 2 experienced, 3 advanced, 4 expert, 5 master — at 0 the closed row shows no word or dots; the open stepper still says "untrained").
-- Abilities and skills have user-chosen colours (skills grouped: combat #af6d77, manipulation/performance #ddac88, acrobatics/athletics/stealth #cfccca, rest #f2d08d). The 19 icons in `system/icons/` were drawn for this project as placeholders (stroke line icons, 24×24) — replace freely.
+- Abilities and skills have user-chosen colours (skills grouped: combat #af6d77, manipulation/performance #ddac88, acrobatics/athletics/stealth #cfccca, rest #f2d08d). The 27 icons in `system/icons/` were drawn for this project as placeholders (stroke line icons, 24×24) — replace freely.
 - Icon ink: `rules.ts` computes WCAG luminance of `color`; > 0.45 → dark icon (`#1b1a1f`), otherwise white. Exposed as `--field-ink` next to `--field-color`.
 - Ids must be unique across fields/derived/rolls, match `[A-Za-z_][A-Za-z0-9_]*`, and must not look like dice (`d6`).
-- Derived formulas are evaluated in order; they may reference fields and earlier derived values; dice not allowed.
+- **Calculated stats** (`type: derived` + `formula`) can sit inside any section and support `icon`/`color`; they render as `DerivedRow` (class `field stat`). In creation they are read-only (`readonly` class keeps values aligned). Once finished they get the same ✎ toggle: play changes are stored as `statAdj[stat]` (current = formula + adj, ≥ 0), logged as `stat_set` and undoable. `pool: true` (Health, Mind, Stamina, Willpower) treats the formula as a **maximum**: circles, filled = left, empty = spent, current clamped to 0..max; damage persists when the max changes. Regular stats show a number with ▲/▼ when modified; open rows show "normal N · reset" / "X of N · restore". Formulas and rolls use the **formula results**, not play-adjusted stats. They are not in `rules.fields` (not editable/stored). Top-level `derived:` entries (`inSection: false`) still render in the compact `.derived` block (currently none).
+- Derived formulas are evaluated in order — section ones top to bottom, then the top-level list; they may reference fields and earlier derived values; dice not allowed.
+- Current sheet order (user-specified): Bio, Core Abilities, Supporting Abilities, **Body** (Health, Mind), **Reserves** (Stamina, Willpower), **Defense** (Evasion, Physical resistance, Mental resistance), **Misc** (Speed), Skills, Gear & Notes. Stat colours are all `#ffffff` placeholders for the user to customise. "Body" stat was renamed to **Health** (id `health`). The user's list said "Reserves: Stamina, Resolve"; kept label **Willpower** (Resolve is already a supporting ability) — pending confirmation.
 - On startup every formula and roll is dry-run against defaults; any problem aborts startup with a list of errors.
 - Events referencing fields later removed from the rules are ignored when rebuilding state.
 
@@ -200,6 +202,7 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | `character_finalized` | `charId, base {field: n}, values (full snapshot), by` |
 | `field_set` | `charId, field, from, to, by` (by = character name or `GM`). For base fields of active characters from/to are **current** values; applying sets `adj = to − base` |
 | `base_set` | `charId, field, from, to, by` (base value, clamped to field min..max) |
+| `stat_set` | `charId, stat, adj, from, to, by` — play change to a calculated stat (adj applied; from/to shown values) |
 | `roll` | `charId \| null (GM), by, label, expr, total, breakdown, visibility` |
 | `undo` | `target` (event id), `by` |
 
@@ -236,6 +239,8 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | POST | `/c/:id/undo` | | undo last change, pushes whole sheet |
 | POST | `/c/:id/finalize` | | draft → active (hx-confirm); pushes whole sheet |
 | POST | `/c/:id/adjust-base` | `field, delta` | active only: change base value (logged) |
+| POST | `/c/:id/adjust-stat` | `stat, delta` | active only: play change to a calculated stat (pools: spend/restore) |
+| POST | `/c/:id/set-stat` | `stat, value` | active only: set stat's shown value (reset/restore links) |
 | POST | `/c/:id/rename` | `name` | GM: rename; pushes sheet head (+ player's top-bar link) |
 | POST | `/c/:id/delete` | | GM (hx-confirm): delete; GM sheet removed, player's `#main` replaced with "character removed" |
 | POST | `/gm/session` | | GM (hx-confirm): start new session; every feed reset to the session marker |
@@ -253,7 +258,7 @@ Every top-level element is an out-of-band swap:
 
 - New roll: `<div hx-swap-oob="afterbegin:#feed">…entry…</div>` rendered **per client** by role:
   players never receive `gm` rolls; `hidden` rolls render as "GM rolled in secret".
-- Field change: `<… id="f-{charId}-{fieldId}" hx-swap-oob="true">` + `<dl id="derived-{charId}" hx-swap-oob="true">`; GM also gets `<ul id="changes" hx-swap-oob="true">`.
+- Field change: `<… id="f-{charId}-{fieldId}" hx-swap-oob="true">` + every stat row `<div id="dv-{charId}-{derivedId}" hx-swap-oob="true">` + `<dl id="derived-{charId}">` if top-level derived exist (`DerivedUpdates`); GM also gets `<ul id="changes" hx-swap-oob="true">`.
 - Undo: whole `<section id="sheet-{charId}" hx-swap-oob="true">` (+ change log for GM). GM version includes the Manage section, player version doesn't — render per role.
 - Rename: `<div id="head-{charId}" hx-swap-oob="true">`; player also gets `<a id="who-link">`; GM gets change log.
 - Delete: GM gets `<section id="sheet-{charId}" hx-swap-oob="delete">`; player gets `<main id="main" hx-swap-oob="true">` (removed notice).

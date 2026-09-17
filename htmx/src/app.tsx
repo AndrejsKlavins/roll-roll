@@ -7,7 +7,7 @@ import { hub } from './hub'
 import type { Character, RollEvent, Session, Visibility } from './session'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, WhoLink } from './views/pages'
-import { DerivedView, FieldView, Sheet, SheetHead } from './views/sheet'
+import { DerivedUpdates, FieldView, Sheet, SheetHead } from './views/sheet'
 
 const CHAR_COOKIE = 'char'
 const html = (node: Child) => String(node ?? '')
@@ -43,7 +43,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const field = rules.fields.get(fieldId)!
     const parts =
       html(<FieldView session={session} char={char} field={field} oob />) +
-      html(<DerivedView session={session} char={char} oob />)
+      html(<DerivedUpdates session={session} char={char} />)
     hub.send(toOwnerAndGm(char.id), (client) =>
       client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
     )
@@ -133,6 +133,29 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const body = await form(c)
     const field = body.field ?? ''
     if (session.adjustBase(char.id, field, Number(body.delta), actorName(c))) pushFieldChange(char, field)
+    return noContent(c)
+  })
+
+  const pushStatChange = (char: Character) => {
+    const parts = html(<DerivedUpdates session={session} char={char} />)
+    hub.send(toOwnerAndGm(char.id), (client) =>
+      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
+    )
+  }
+
+  app.post('/c/:id/adjust-stat', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const body = await form(c)
+    if (session.adjustStat(char.id, body.stat ?? '', Number(body.delta), actorName(c))) pushStatChange(char)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/set-stat', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const body = await form(c)
+    if (session.setStat(char.id, body.stat ?? '', Number(body.value), actorName(c))) pushStatChange(char)
     return noContent(c)
   })
 

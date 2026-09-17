@@ -161,6 +161,15 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 
 /* Name and value take the field's colour. */
 .field.has-color .label, .field.has-color .value, .field.has-color .stepper output { color: var(--field-color); }
+/* Calculated stats: read-only number, sized like the rated values next to them. */
+.field.stat { min-height: 44px; }
+/* Leave room where editable rows have their ✎ button so all values line up in one column. */
+.field.stat.readonly .field-controls { padding-right: calc(36px + 0.4rem); }
+/* Pools (Health, Mind, …): filled circle per point left, empty circle per point spent. */
+.pool { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 9.5rem; }
+.stepper .pool { justify-content: center; }
+.pool i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--field-color, var(--text)); }
+.pool i.full { background: var(--field-color, var(--text)); }
 .field-controls { display: flex; align-items: center; gap: 0.4rem; }
 .field-controls .value { min-width: 2ch; text-align: center; font-size: 1.25rem; font-weight: 700; }
 .edit-toggle { width: 36px; min-height: 36px; height: 36px; padding: 0; font-size: 1rem; color: var(--muted); }
@@ -177,7 +186,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* A 0 (e.g. "untrained") shows nothing in the closed row; the open stepper still names it. */
 .field-controls .value .rating.zero { display: none; }
 /* An open row drops its controls to a second line when they don't fit (phones). */
-.field.number { flex-wrap: wrap; row-gap: 0.35rem; }
+.field.number, .field.stat { flex-wrap: wrap; row-gap: 0.35rem; }
 .field-name, .field-controls { flex-shrink: 0; }
 .field-controls { margin-left: auto; }
 .base-note { white-space: nowrap; }

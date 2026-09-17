@@ -18,6 +18,7 @@ sections:
       - { id: notes, label: Notes, type: text }
 derived:
   - { id: carry, label: Carry, formula: "strength * 2" }
+  - { id: health, label: Health, formula: "strength + 2", pool: true }
 rolls: []
 `
 
@@ -120,5 +121,44 @@ describe('character stages', () => {
     s.finalizeCharacter(c.id, 'Mara')
     s.setField(c.id, 'strength', -5, 'Mara')
     expect(s.valueOf(c, s.rules.fields.get('strength') as NumberField)).toBe(0)
+  })
+})
+
+describe('calculated stats in play', () => {
+  test('pools spend and restore within 0..max; damage survives a max change', async () => {
+    const { open } = await setup()
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    const c = () => s.characters.get(id)!
+    expect(s.adjustStat(id, 'health', -1, 'Mara')).toBe(false) // not while in creation
+    s.finalizeCharacter(id, 'Mara')
+    expect(s.statOf(c(), 'health')).toEqual({ normal: 5, current: 5 })
+    expect(s.adjustStat(id, 'health', 1, 'Mara')).toBe(false) // already full
+    s.adjustStat(id, 'health', -2, 'Mara')
+    expect(s.statOf(c(), 'health')).toEqual({ normal: 5, current: 3 })
+    s.setStat(id, 'health', -10, 'Mara')
+    expect(s.statOf(c(), 'health')!.current).toBe(0)
+    s.setStat(id, 'health', 3, 'Mara')
+
+    s.adjustBase(id, 'strength', 1, 'GM') // max 5 → 6, still 2 damage
+    expect(s.statOf(c(), 'health')).toEqual({ normal: 6, current: 4 })
+
+    s.undoLast(id, 'GM') // undo base change
+    s.undoLast(id, 'Mara') // undo set to 3 → back to 0
+    expect(s.statOf(c(), 'health')).toEqual({ normal: 5, current: 0 })
+
+    const reopened = open()
+    expect(reopened.statOf(reopened.characters.get(id)!, 'health')).toEqual({ normal: 5, current: 0 })
+  })
+
+  test('regular stats take a modifier on top of the formula and can exceed it', async () => {
+    const { open } = await setup()
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    s.adjustStat(id, 'carry', 3, 'Mara')
+    expect(s.statOf(s.characters.get(id)!, 'carry')).toEqual({ normal: 6, current: 9 })
+    expect(s.scope(id).carry).toBe(6) // formulas keep using the formula result
+    expect(s.events.at(-1)).toMatchObject({ type: 'stat_set', stat: 'carry', adj: 3, from: 6, to: 9 })
   })
 })

@@ -91,3 +91,23 @@ describe('scales', () => {
     await expect(rulesWith('      - { id: a, type: number, scale: nope }')).rejects.toThrow('unknown scale "nope"')
   })
 })
+
+describe('derived values in sections', () => {
+  test('are placed in their section, evaluated in order, and kept out of editable fields', async () => {
+    const rules = await rulesWith(
+      [
+        '      - { id: str, type: number, default: 4 }',
+        '      - { id: health, label: Health, type: derived, formula: "str * 2", icon: eye.svg, color: "#ffffff" }',
+        '      - { id: guard, type: derived, formula: "health + 1" }',
+      ].join('\n'),
+    )
+    expect(rules.sections[0]!.fields.map((f) => `${f.id}:${f.type}`)).toEqual(['str:number', 'health:derived', 'guard:derived'])
+    expect(rules.derived.map((d) => [d.id, d.inSection])).toEqual([['health', true], ['guard', true]])
+    expect(rules.derived[0]!.ink).toBe('#1b1a1f') // white chip → dark icon
+    expect(rules.fields.has('health')).toBe(false)
+  })
+
+  test('bad formulas fail startup', async () => {
+    await expect(rulesWith('      - { id: x, type: derived, formula: "nope + 1" }')).rejects.toThrow('derived "x": Unknown name "nope"')
+  })
+})
