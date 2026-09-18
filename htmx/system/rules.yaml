@@ -9,6 +9,7 @@
 #   number  — stepper with − / + buttons (min, max, default)
 #   track   — row of clickable pips from 0 to max (default)
 #   text    — free text box (lines = height)
+#   level   — the character's level with a "Level up" button (one per sheet; needs "training:")
 #   derived — calculated number (formula); can be placed in any section. Finished characters
 #             can apply play changes with ✎. "pool: true" makes the formula a maximum shown
 #             as circles (filled = left, empty = spent), e.g. Health.
@@ -43,6 +44,12 @@ scales:
     4: expert
     5: master
 
+# Skill point training. Finishing a character and each level up grant the value of
+# points_stat. Rank n costs rank_costs[n-1] more points: 4, 5, 6, 7, 8 → 4, 9, 15, 22, 30 total.
+training:
+  points_stat: skill_points
+  rank_costs: [4, 5, 6, 7, 8]
+
 sections:
   - label: Bio
     fields:
@@ -52,6 +59,8 @@ sections:
       - { id: age,        label: Age,        type: text, lines: 1 }
       - { id: profession, label: Profession, type: text, lines: 1 }
       - { id: race,       label: Race,       type: text, lines: 1 }
+      # Level counter + "Level up" button (each level up grants Max skill points).
+      - { id: level,      label: Level,      type: level }
 
   - label: Core Abilities
     base: true
@@ -90,9 +99,12 @@ sections:
   - label: Misc
     fields:
       - { id: speed, label: Speed, type: derived, formula: "floor((agility + perception) / 2)", icon: speed.svg, color: "#f2d08d" }
+      # Skill points gained per level (and on finishing the character). "base: true" = only base
+      # ability values count, so temporary changes to Knowledge etc. don't affect it.
+      - { id: skill_points, label: Max skill points, type: derived, base: true, formula: "3 + knowledge + intuition + resolve", icon: skill_points.svg, color: "#f2d08d" }
 
   - label: Skills
-    base: true
+    trained: true   # rank comes from skill points assigned in training mode (see "training:")
     scale: skill
     fields:
       # Combat

@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-17 (editable stats, pool circles)
+Last updated: 2026-09-18 (level row with Level up button)
 
 ---
 
@@ -27,7 +27,7 @@ It is an **upgraded notation tool with automated calculations — not a rules en
 
 ### Out of scope (for now)
 
-- Between-session progression (XP, leveling, editing sheets at home).
+- XP tracking and editing sheets at home. (Levelling = the sheet's "Level up" button, which grants skill points.)
 - Remote play, accounts, authentication, cloud hosting.
 - Haptics, shake-to-roll, native mobile apps.
 
@@ -54,6 +54,10 @@ It is an **upgraded notation tool with automated calculations — not a rules en
 | Base values | Sections/fields with `base: true`; frozen at finish. Play changes stored as **adjustment** (current = base + adj) | Players see normal vs current value; base corrections keep in-play modifiers |
 | Editing base | Anyone, via "✎ Base" mode on an active sheet; logged as `base_set`, undoable | User wanted it open to all; a distinct mode avoids accidental base edits |
 | Creation rules | Fully flexible for now (free steppers within min..max) | Trait picking system planned later (see §8) |
+| Skills | **Trained with skill points**, not set directly. Rank from points assigned: rank n costs 3+n more (4, 5, 6, 7, 8 → totals 4/9/15/22/30), capped at master | User-designed progression |
+| Skill points | Pool = granted − assigned. Granted on finishing and per **level up** (= Max skill points = 3 + Knowledge + Intuition + Resolve, **base values only**); GM can give/take any amount (Manage section, GM-only). **Level up** is a button on the sheet next to the **Level** counter (Bio, after Race) — anyone can press it (confirm dialog), and Undo reverts a level up | User request |
+| Training | Any time after creation via a **Train** toggle on Skills; + spends (blocked at 0 available), − takes back (for corrections); logged and undoable. Skills can't be trained or set during creation | User decision |
+| Skill ✎ | Temporary bonus on top of the trained rank; "✎ Base" mode doesn't touch skills | User decision |
 | Keep phones awake | **Not built** (deliberately) | Locking is normal and saves battery; instead the page reliably catches up on unlock (see §6). Opt-in NoSleep-style toggle is a possible later addition |
 | Sound | Wanted. Synthesised via Web Audio for now | No asset files to manage yet |
 | Godot | Not used for this app | Too clunky for dynamic data-driven screens; the Godot project stays as the reference for the rolling system |
@@ -172,6 +176,7 @@ rolls:
 - Ids must be unique across fields/derived/rolls, match `[A-Za-z_][A-Za-z0-9_]*`, and must not look like dice (`d6`).
 - **Calculated stats** (`type: derived` + `formula`) can sit inside any section and support `icon`/`color`; they render as `DerivedRow` (class `field stat`). In creation they are read-only (`readonly` class keeps values aligned). Once finished they get the same ✎ toggle: play changes are stored as `statAdj[stat]` (current = formula + adj, ≥ 0), logged as `stat_set` and undoable. `pool: true` (Health, Mind, Stamina, Willpower) treats the formula as a **maximum**: circles, filled = left, empty = spent, current clamped to 0..max; damage persists when the max changes. Regular stats show a number with ▲/▼ when modified; open rows show "normal N · reset" / "X of N · restore". Formulas and rolls use the **formula results**, not play-adjusted stats. They are not in `rules.fields` (not editable/stored). Top-level `derived:` entries (`inSection: false`) still render in the compact `.derived` block (currently none).
 - Derived formulas are evaluated in order — section ones top to bottom, then the top-level list; they may reference fields and earlier derived values; dice not allowed.
+- **Skill training** (`rules.ts` `Training`, top-level `training: { points_stat, rank_costs }`; section/field `trained: true` implies `base`): `baseOf` of a trained field = `rankOf(skillPoints[id])` (thresholds = cumulative rank_costs). Character keeps `skillPoints`, `pointsGranted`, `level`. `availablePoints = granted − Σ assigned` (may go negative via GM correction, shown red). `pointsPerLevel` = the points stat evaluated with `scope(id, { base: true })`. Derived `base: true` (`useBase`) = evaluated on base values and read-only. Draft: trained fields read-only at rank 0 with a note. UI: `TrainBar` (available + Train toggle, Alpine `training` on the section) and `TrainPanel` under each trained row (5 rank rows of 4–8 circles, then − and + side by side at the right; no points text); `LevelRow` (`type: level` item in a section, one per sheet, `rules.level`): level number + Level up button (active only). GM `ManagePoints` info line + Give points in Manage. Train panel order: − / + (left-aligned) on top, then the rank rows. Every training/grant pushes all trained rows (their + depends on the pool), the bar, stats and GM info.
 - Current sheet order (user-specified): Bio, Core Abilities, Supporting Abilities, **Body** (Health, Mind), **Reserves** (Stamina, Willpower), **Defense** (Evasion, Physical resistance, Mental resistance), **Misc** (Speed), Skills, Gear & Notes. Stat colours are all `#ffffff` placeholders for the user to customise. "Body" stat was renamed to **Health** (id `health`). The user's list said "Reserves: Stamina, Resolve"; kept label **Willpower** (Resolve is already a supporting ability) — pending confirmation.
 - On startup every formula and roll is dry-run against defaults; any problem aborts startup with a list of errors.
 - Events referencing fields later removed from the rules are ignored when rebuilding state.
@@ -203,6 +208,8 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | `field_set` | `charId, field, from, to, by` (by = character name or `GM`). For base fields of active characters from/to are **current** values; applying sets `adj = to − base` |
 | `base_set` | `charId, field, from, to, by` (base value, clamped to field min..max) |
 | `stat_set` | `charId, stat, adj, from, to, by` — play change to a calculated stat (adj applied; from/to shown values) |
+| `skill_points_granted` | `charId, amount, reason ('creation' \| 'level' \| 'gm'), by` — level ups increment `level` |
+| `skill_trained` | `charId, skill, from, to, by` — points assigned to a trained field (undoable) |
 | `roll` | `charId \| null (GM), by, label, expr, total, breakdown, visibility` |
 | `undo` | `target` (event id), `by` |
 
@@ -241,6 +248,9 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | POST | `/c/:id/adjust-base` | `field, delta` | active only: change base value (logged) |
 | POST | `/c/:id/adjust-stat` | `stat, delta` | active only: play change to a calculated stat (pools: spend/restore) |
 | POST | `/c/:id/set-stat` | `stat, value` | active only: set stat's shown value (reset/restore links) |
+| POST | `/c/:id/train` | `skill, delta` | active only: assign (+1, needs available points) / take back (−1) a skill point |
+| POST | `/c/:id/level-up` | | anyone (sheet button): level + 1 and one level's worth of skill points (undoable) |
+| POST | `/c/:id/grant-points` | `amount` | GM: give (or take, if negative) skill points |
 | POST | `/c/:id/rename` | `name` | GM: rename; pushes sheet head (+ player's top-bar link) |
 | POST | `/c/:id/delete` | | GM (hx-confirm): delete; GM sheet removed, player's `#main` replaced with "character removed" |
 | POST | `/gm/session` | | GM (hx-confirm): start new session; every feed reset to the session marker |
@@ -342,6 +352,7 @@ Notes:
 
 ## 8. Next steps (suggested order)
 
+0. Existing test characters predate skill training; the user said old characters can simply be deleted (no migration).
 1. **Trait picking in creation** (user-confirmed, later): store *choices* (trait ids, point allocations) in the draft and compute values from them; `rules.yaml` gets trait groups with modifiers and budgets; finish blocked until valid. Keep finalization producing plain base values so play logic stays unchanged. Consider a GM "reopen creation" using stored choices.
 2. **Port the rolling system** from the Godot project (`../src/roll-roll`). Read its scripts first;
    the user said it has real complexity (special die rolls, exertion, skill distribution, difficulty).

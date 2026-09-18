@@ -74,6 +74,18 @@ function describeChange(e: LoggedEvent, session: Session, rules: Rules): string 
     const label = rules.fields.get(e.field)?.label ?? e.field
     return `${who} · base ${label} ${e.from} → ${e.to}${e.by !== who ? ` (by ${e.by})` : ''}`
   }
+  if (e.type === 'skill_points_granted') {
+    const who = session.names.get(e.charId) ?? '?'
+    const pts = `${Math.abs(e.amount)} skill point${Math.abs(e.amount) === 1 ? '' : 's'}`
+    if (e.reason === 'creation') return `${who} starts with ${pts}`
+    if (e.reason === 'level') return `${who} leveled up (+${pts})${e.by !== who ? ` (by ${e.by})` : ''}`
+    return `${e.by} ${e.amount > 0 ? 'gave' : 'took'} ${pts} ${e.amount > 0 ? 'to' : 'from'} ${who}`
+  }
+  if (e.type === 'skill_trained') {
+    const who = session.names.get(e.charId) ?? '?'
+    const label = rules.fields.get(e.skill)?.label ?? e.skill
+    return `${who} · trained ${label} ${e.from} → ${e.to} pts${e.by !== who ? ` (by ${e.by})` : ''}`
+  }
   if (e.type === 'stat_set') {
     const who = session.names.get(e.charId) ?? '?'
     const label = rules.derived.find((d) => d.id === e.stat)?.label ?? e.stat

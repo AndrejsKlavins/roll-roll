@@ -35,6 +35,10 @@ export type EventData =
       breakdown: string
       visibility: Visibility
     }
+  // Skill points: granted on finishing ("creation"), per level up ("level") or by hand ("gm").
+  | { type: 'skill_points_granted'; charId: string; amount: number; reason: 'creation' | 'level' | 'gm'; by: string }
+  // Training: points assigned to a trained field (from/to are point totals).
+  | { type: 'skill_trained'; charId: string; skill: string; from: number; to: number; by: string }
   | { type: 'undo'; target: number; by: string }
   | { type: 'session_started'; by: string }
 
@@ -53,6 +57,12 @@ export type Character = {
   adj: Record<string, number>
   /** Active only: change applied to calculated stats (pools: negative = spent). */
   statAdj: Record<string, number>
+  /** Skill points assigned per trained field. */
+  skillPoints: Record<string, number>
+  /** Total skill points ever granted (available = granted − assigned). */
+  pointsGranted: number
+  /** 1 + number of level ups. */
+  level: number
 }
 
 const CHANGE_TYPES = new Set<EventData['type']>([
@@ -60,6 +70,8 @@ const CHANGE_TYPES = new Set<EventData['type']>([
   'field_set',
   'base_set',
   'stat_set',
+  'skill_points_granted',
+  'skill_trained',
   'undo',
   'character_renamed',
   'character_deleted',
@@ -163,6 +175,9 @@ export class Session {
           base: {},
           adj: {},
           statAdj: {},
+          skillPoints: {},
+          pointsGranted: 0,
+          level: 1,
         })
         this.names.set(e.charId, e.name)
         break
@@ -179,6 +194,18 @@ export class Session {
       case 'stat_set': {
         const c = this.characters.get(e.charId)
         if (c?.status === 'active') c.statAdj[e.stat] = e.adj
+        break
+      }
+      case 'skill_points_granted': {
+        const c = this.characters.get(e.charId)
+        if (!c) break
+        c.pointsGranted += e.amount
+        if (e.reason === 'level') c.level += 1
+        break
+      }
+      case 'skill_trained': {
+        const c = this.characters.get(e.charId)
+        if (c) c.skillPoints[e.skill] = e.to
         break
       }
       case 'character_renamed': {
@@ -207,22 +234,43 @@ export class Session {
   }
 
   baseOf(c: Character, f: NumberField): number {
+    if (f.trained) return this.rankOf(c.skillPoints[f.id] ?? 0)
     // Falls back to the stored value if the field was marked "base" after finishing.
     return c.base[f.id] ?? Number(c.values[f.id] ?? f.default)
+  }
+
+  /** Rank reached with this many skill points: number of thresholds met (4, 9, 15, …). */
+  rankOf(points: number) {
+    return this.rules.training?.thresholds.filter((t) => points >= t).length ?? 0
+  }
+
+  /** Skill points not yet assigned. Can be negative after a GM correction. */
+  availablePoints(c: Character) {
+    return c.pointsGranted - Object.values(c.skillPoints).reduce((a, b) => a + b, 0)
+  }
+
+  /** Points granted per level: the training points stat, from base values. */
+  pointsPerLevel(c: Character) {
+    const stat = this.rules.training?.pointsStat
+    return stat ? Math.max(0, Math.round(this.scope(c.id, { base: true })[stat] ?? 0)) : 0
   }
 
   /** The value shown on the sheet and used by formulas. */
   valueOf(c: Character, f: Field): number | string {
     if (f.type === 'text') return String(c.values[f.id] ?? f.default)
     if (isBaseField(f) && c.status === 'active') return Math.max(0, this.baseOf(c, f) + (c.adj[f.id] ?? 0))
+    if (isBaseField(f) && f.trained) return this.baseOf(c, f) // draft: untrained
     return Number(c.values[f.id] ?? f.default)
   }
 
-  scope(charId: string) {
+  /** Values for formulas: current values, or with { base: true } base values (no play changes). */
+  scope(charId: string, opts: { base?: boolean } = {}) {
     const c = this.characters.get(charId)
     if (!c) return {}
     const values: Values = {}
-    for (const f of this.rules.fields.values()) values[f.id] = this.valueOf(c, f)
+    for (const f of this.rules.fields.values()) {
+      values[f.id] = opts.base && isBaseField(f) && c.status === 'active' ? this.baseOf(c, f) : this.valueOf(c, f)
+    }
     return computeScope(this.rules, values)
   }
 
@@ -233,9 +281,9 @@ export class Session {
   statOf(c: Character, statId: string): { normal: number; current: number } | null {
     const d = this.rules.derived.find((x) => x.id === statId)
     if (!d) return null
-    const raw = this.scope(c.id)[statId] ?? NaN
+    const raw = this.scope(c.id, { base: d.useBase })[statId] ?? NaN
     const normal = Number.isFinite(raw) ? raw : 0
-    const shifted = normal + (c.status === 'active' ? (c.statAdj[statId] ?? 0) : 0)
+    const shifted = normal + (c.status === 'active' && !d.useBase ? (c.statAdj[statId] ?? 0) : 0)
     const current = d.pool ? Math.min(normal, Math.max(0, shifted)) : Math.min(PLAY_MAX, Math.max(0, shifted))
     return { normal, current }
   }
@@ -246,6 +294,7 @@ export class Session {
     const stat = c && this.statOf(c, statId)
     if (c?.status !== 'active' || !stat || !Number.isFinite(value)) return false
     const d = this.rules.derived.find((x) => x.id === statId)!
+    if (d.useBase) return false
     const to = d.pool
       ? Math.min(stat.normal, Math.max(0, Math.round(value)))
       : Math.min(PLAY_MAX, Math.max(0, Math.round(value)))
@@ -289,7 +338,43 @@ export class Session {
     for (const f of this.rules.fields.values()) if (isBaseField(f)) base[f.id] = Number(c.values[f.id] ?? f.default)
     const event = this.append({ type: 'character_finalized', charId, base, values: { ...c.values }, by })
     this.dropDraft(charId)
+    if (this.rules.training) {
+      this.append({ type: 'skill_points_granted', charId, amount: this.pointsPerLevel(c), reason: 'creation', by })
+    }
     return event
+  }
+
+  /** Level up: grants one level's worth of skill points. */
+  levelUp(charId: string, by: string) {
+    const c = this.characters.get(charId)
+    if (c?.status !== 'active' || !this.rules.training) return false
+    this.append({ type: 'skill_points_granted', charId, amount: this.pointsPerLevel(c), reason: 'level', by })
+    return true
+  }
+
+  /** Manual grant (or removal, if negative) of skill points. */
+  grantPoints(charId: string, amount: number, by: string) {
+    const c = this.characters.get(charId)
+    const n = Math.round(amount)
+    if (c?.status !== 'active' || !this.rules.training || !Number.isFinite(n) || n === 0) return false
+    this.append({ type: 'skill_points_granted', charId, amount: n, reason: 'gm', by })
+    return true
+  }
+
+  /** Assigns (delta > 0) or takes back (delta < 0) skill points on a trained field. */
+  train(charId: string, fieldId: string, delta: number, by: string) {
+    const c = this.characters.get(charId)
+    const f = this.rules.fields.get(fieldId)
+    const t = this.rules.training
+    if (c?.status !== 'active' || !t || !f || f.type !== 'number' || !f.trained || !Number.isFinite(delta)) return false
+    const from = c.skillPoints[f.id] ?? 0
+    // Can only spend what is available; taking points back is always allowed.
+    const want = Math.round(delta)
+    const step = want > 0 ? Math.min(want, this.availablePoints(c)) : want
+    const to = Math.min(t.maxPoints, Math.max(0, from + step))
+    if (to === from) return false
+    this.append({ type: 'skill_trained', charId, skill: f.id, from, to, by })
+    return true
   }
 
   /**
@@ -300,6 +385,7 @@ export class Session {
     const c = this.characters.get(charId)
     const f = this.rules.fields.get(fieldId)
     if (!c || !f) return false
+    if (c.status === 'draft' && isBaseField(f) && f.trained) return false // trained after finishing
     const from = this.valueOf(c, f)
     let to: number | string
     if (f.type === 'text') {
@@ -332,7 +418,7 @@ export class Session {
   adjustBase(charId: string, fieldId: string, delta: number, by: string) {
     const c = this.characters.get(charId)
     const f = this.rules.fields.get(fieldId)
-    if (c?.status !== 'active' || !f || !isBaseField(f) || !Number.isFinite(delta)) return false
+    if (c?.status !== 'active' || !f || !isBaseField(f) || f.trained || !Number.isFinite(delta)) return false
     const from = this.baseOf(c, f)
     const to = Math.min(f.max, Math.max(f.min, from + Math.round(delta)))
     if (to === from) return false
@@ -344,7 +430,12 @@ export class Session {
   undoLast(charId: string, by: string): LoggedEvent | null {
     for (let i = this.events.length - 1; i >= 0; i--) {
       const e = this.events[i]!
-      const undoable = e.type === 'field_set' || e.type === 'base_set' || e.type === 'stat_set'
+      const undoable =
+        e.type === 'field_set' ||
+        e.type === 'base_set' ||
+        e.type === 'stat_set' ||
+        e.type === 'skill_trained' ||
+        (e.type === 'skill_points_granted' && e.reason === 'level') // a mis-tapped Level up
       if (undoable && e.charId === charId && !this.undone.has(e.id)) {
         this.append({ type: 'undo', target: e.id, by })
         return e

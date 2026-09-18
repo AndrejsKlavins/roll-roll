@@ -9,18 +9,18 @@
 // open when the row itself is replaced by a live update.
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
-import type { Derived, Field, NumberField } from '../rules'
+import type { Derived, Field, LevelItem, NumberField } from '../rules'
 import { isBaseField, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 export const fieldDomId = (charId: string, fieldId: string) => `f-${charId}-${fieldId}`
 
 /** Root attributes for a field row: colour stripe via the --field-color custom property. */
-const rowAttrs = (f: Field | Derived, cls: string) =>
+const rowAttrs = (f: Field | Derived | LevelItem, cls: string) =>
   f.color ? { class: `${cls} has-color`, style: `--field-color: ${f.color}; --field-ink: ${f.ink}` } : { class: cls }
 
 /** Icon chip (if configured) followed by the label content. */
-function FieldName(props: { field: Field | Derived; children?: Child }) {
+function FieldName(props: { field: Field | Derived | LevelItem; children?: Child }) {
   const { icon } = props.field
   return (
     <span class="field-name">
@@ -109,6 +109,102 @@ function EditToggle(props: { field: Field | Derived }) {
 /** x-bind:class for a number row: "editing" while its steppers are open. */
 const editingClass = (f: Field | Derived) => `{ editing: open.${f.id} }`
 
+/**
+ * Training mode panel for a trained field: one row of circles per rank (4, 5, 6, … points),
+ * filled in order as points are assigned, plus − / + to take back or assign one point.
+ */
+function TrainPanel(props: { session: Session; char: Character; field: NumberField }) {
+  const { session, char, field: f } = props
+  const t = session.rules.training!
+  const points = char.skillPoints[f.id] ?? 0
+  const available = session.availablePoints(char)
+  const rankWord = (r: number) => f.scale?.[r] ?? `rank ${r}`
+  const step = (delta: number) => JSON.stringify({ skill: f.id, delta })
+  return (
+    <div class="train-panel">
+      <div class="train-controls">
+        <button
+          type="button"
+          hx-post={`/c/${char.id}/train`}
+          hx-vals={step(-1)}
+          hx-swap="none"
+          disabled={points <= 0 || undefined}
+          aria-label={`Take a point back from ${f.label}`}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          hx-post={`/c/${char.id}/train`}
+          hx-vals={step(1)}
+          hx-swap="none"
+          disabled={available <= 0 || points >= t.maxPoints || undefined}
+          aria-label={`Assign a point to ${f.label}`}
+        >
+          +
+        </button>
+      </div>
+      {t.rankCosts.map((cost, i) => {
+        const filled = Math.max(0, Math.min(cost, points - (t.thresholds[i]! - cost)))
+        return (
+          <div class={filled === cost ? 'rank-row done' : 'rank-row'}>
+            <span class="rank-name">{rankWord(i + 1)}</span>
+            <span class="pool">
+              {Array.from({ length: cost }, (_, n) => (
+                <i class={n < filled ? 'full' : undefined}></i>
+              ))}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Level counter with a Level up button (finished characters only). */
+export function LevelRow(props: { session: Session; char: Character; item: LevelItem; oob?: boolean }) {
+  const { session, char, item } = props
+  const active = char.status === 'active'
+  return (
+    <div
+      id={`lvl-${char.id}`}
+      {...rowAttrs(item, active ? 'field level' : 'field level readonly')}
+      hx-swap-oob={oobAttr(props.oob)}
+    >
+      <FieldName field={item} />
+      <div class="field-controls">
+        <output class="value">{String(char.level)}</output>
+        {active && (
+          <button
+            type="button"
+            class="small level-up"
+            hx-post={`/c/${char.id}/level-up`}
+            hx-swap="none"
+            hx-confirm={`Level up ${char.name} to level ${char.level + 1}? Gains ${session.pointsPerLevel(char)} skill points.`}
+          >
+            Level up
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Skill points available + Train toggle, shown at the top of sections with trained fields. */
+export function TrainBar(props: { session: Session; char: Character; oob?: boolean }) {
+  const available = props.session.availablePoints(props.char)
+  return (
+    <div id={`train-bar-${props.char.id}`} class="train-bar" hx-swap-oob={oobAttr(props.oob)}>
+      <span class={available < 0 ? 'available negative' : 'available'}>
+        Skill points <b>{available}</b>
+      </span>
+      <button type="button" class="small" x-on:click="training = !training" x-text="training ? 'Done' : 'Train'">
+        Train
+      </button>
+    </div>
+  )
+}
+
 function BaseField(props: { session: Session; char: Character; field: NumberField; oob?: boolean }) {
   const { session, char, field: f } = props
   const post = `/c/${char.id}`
@@ -118,7 +214,7 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
   return (
     <div
       id={fieldDomId(char.id, f.id)}
-      {...rowAttrs(f, modified ? 'field number based modified' : 'field number based')}
+      {...rowAttrs(f, ['field number based', modified && 'modified', f.trained && 'trained'].filter(Boolean).join(' '))}
       x-bind:class={editingClass(f)}
       hx-swap-oob={oobAttr(props.oob)}
     >
@@ -149,9 +245,12 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
           <ValueDisplay field={f} value={current} />
         </output>
         <Stepper class="play" url={`${post}/adjust`} field={f} value={current} min={0} max={Infinity} />
-        <Stepper class="base-edit" url={`${post}/adjust-base`} field={f} value={base} min={f.min} max={f.max} />
+        {!f.trained && (
+          <Stepper class="base-edit" url={`${post}/adjust-base`} field={f} value={base} min={f.min} max={f.max} />
+        )}
         <EditToggle field={f} />
       </div>
+      {f.trained && session.rules.training && <TrainPanel session={session} char={char} field={f} />}
     </div>
   )
 }
@@ -162,6 +261,19 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
   const post = `/c/${char.id}`
 
   if (isBaseField(f) && char.status === 'active') return <BaseField {...props} field={f} />
+  if (isBaseField(f) && f.trained) {
+    const rank = session.baseOf(char, f)
+    return (
+      <div id={id} {...rowAttrs(f, 'field number trained readonly')} hx-swap-oob={oobAttr(props.oob)}>
+        <FieldName field={f} />
+        <div class="field-controls">
+          <output class="value">
+            <ValueDisplay field={f} value={rank} />
+          </output>
+        </div>
+      </div>
+    )
+  }
 
   if (f.type === 'text') {
     return (
@@ -242,7 +354,7 @@ export function DerivedRow(props: { session: Session; char: Character; derived: 
   const { session, char, derived: d } = props
   const stat = session.statOf(char, d.id)!
   const broken = Number.isNaN(session.scope(char.id)[d.id] ?? NaN)
-  const editable = char.status === 'active' && !broken
+  const editable = char.status === 'active' && !broken && !d.useBase
   const modified = stat.current !== stat.normal
   const post = `/c/${char.id}`
   const step = (delta: number) => JSON.stringify({ stat: d.id, delta })
@@ -378,12 +490,37 @@ export function SheetHead(props: { session: Session; char: Character; oob?: bool
   )
 }
 
-/** GM-only: rename and delete. */
-function ManageCharacter(props: { char: Character }) {
-  const { char } = props
+/** GM-only line in Manage: level and skill points, kept current by live updates. */
+export function ManagePoints(props: { session: Session; char: Character; oob?: boolean }) {
+  const { session, char } = props
+  return (
+    <span id={`manage-points-${char.id}`} hx-swap-oob={oobAttr(props.oob)}>
+      Level {char.level} · {session.availablePoints(char)} skill points available ·{' '}
+      {session.pointsPerLevel(char)} per level
+    </span>
+  )
+}
+
+/** GM-only: skill point grants, rename and delete. */
+function ManageCharacter(props: { session: Session; char: Character }) {
+  const { session, char } = props
+  const training = session.rules.training && char.status === 'active'
   return (
     <details class="manage">
       <summary>Manage</summary>
+      {training && (
+        <div class="manage-points">
+          <ManagePoints session={session} char={char} />
+          <div class="manage-actions">
+            <form class="grant" hx-post={`/c/${char.id}/grant-points`} hx-swap="none">
+              <input name="amount" type="number" value="1" step="1" aria-label="Skill points to give" />
+              <button type="submit" class="small">
+                Give points
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
       <form class="rename" hx-post={`/c/${char.id}/rename`} hx-swap="none">
         <input name="name" value={char.name} maxlength={40} required autocomplete="off" />
         <button type="submit">Rename</button>
@@ -410,11 +547,11 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
       id={`sheet-${char.id}`}
       class="sheet"
       hx-swap-oob={oobAttr(props.oob)}
-      x-data="{ editBase: false, open: {} }"
-      x-bind:class="{ 'editing-base': editBase }"
+      x-data="{ editBase: false, open: {}, training: false }"
+      x-bind:class="{ 'editing-base': editBase, training: training }"
     >
       <SheetHead session={session} char={char} />
-      {props.gm && <ManageCharacter char={char} />}
+      {props.gm && <ManageCharacter session={session} char={char} />}
 
       {draft ? (
         <p class="stage-note">In creation: set values freely, nothing is logged. Finish at the bottom when ready.</p>
@@ -430,9 +567,18 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
       {rules.sections.map((s) => (
         <fieldset>
           <legend>{s.label}</legend>
+          {session.rules.training &&
+            s.fields.some((f) => f.type === 'number' && f.trained) &&
+            (draft ? (
+              <p class="stage-note">Skills are trained with skill points once the character is finished.</p>
+            ) : (
+              <TrainBar session={session} char={char} />
+            ))}
           {s.fields.map((f) =>
             f.type === 'derived' ? (
               <DerivedRow session={session} char={char} derived={f} />
+            ) : f.type === 'level' ? (
+              <LevelRow session={session} char={char} item={f} />
             ) : (
               <FieldView session={session} char={char} field={f} />
             ),

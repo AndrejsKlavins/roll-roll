@@ -164,7 +164,30 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* Calculated stats: read-only number, sized like the rated values next to them. */
 .field.stat { min-height: 44px; }
 /* Leave room where editable rows have their ✎ button so all values line up in one column. */
-.field.stat.readonly .field-controls { padding-right: calc(36px + 0.4rem); }
+.field.stat.readonly .field-controls, .field.trained.readonly .field-controls { padding-right: calc(36px + 0.4rem); }
+
+/* ---- skill point training ---- */
+.train-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.2rem 0 0.3rem; }
+.train-bar .available { color: var(--muted); font-size: 0.9rem; }
+.train-bar .available b { color: var(--text); font-size: 1.05rem; margin-left: 0.25rem; }
+.train-bar .available.negative b { color: var(--danger); }
+.sheet.training .train-bar button { border-color: var(--accent); }
+.train-panel { display: none; flex-basis: 100%; gap: 0.3rem; padding: 0.35rem 0 0.5rem 2.6rem; }
+.sheet.training .field.trained .train-panel { display: grid; }
+.rank-row { display: flex; align-items: center; gap: 0.5rem; }
+.rank-name { width: 6.5rem; flex: none; font-size: 0.8rem; color: var(--muted); }
+.rank-row.done .rank-name { color: var(--field-color, var(--text)); }
+.train-panel .pool { justify-content: flex-start; max-width: none; flex-wrap: nowrap; }
+.train-panel .pool i { width: 11px; height: 11px; }
+.train-controls { display: flex; justify-content: flex-start; gap: 0.4rem; margin-bottom: 0.2rem; }
+.train-controls button { width: 44px; padding: 0; font-size: 1.2rem; }
+.manage-points { display: grid; gap: 0.4rem; margin: 0.5rem 0; }
+.field.level { min-height: 44px; }
+.field.level.readonly .field-controls { padding-right: calc(36px + 0.4rem); }
+.field.level .level-up { margin-left: 0.3rem; }
+.manage-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.manage-actions .grant { display: flex; gap: 0.4rem; }
+.manage-actions .grant input { width: 4.5rem; }
 /* Pools (Health, Mind, …): filled circle per point left, empty circle per point spent. */
 .pool { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 9.5rem; }
 .stepper .pool { justify-content: center; }
@@ -199,10 +222,10 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 
 .stepper.base-edit { display: none; }
 /* Base mode shows base steppers directly on based rows, regardless of open rows. */
-.sheet.editing-base .field.based .stepper.base-edit { display: flex; }
-.sheet.editing-base .field.based :is(.stepper.play, .value, .delta, .edit-toggle, .base-note) { display: none; }
+.sheet.editing-base .field.based:not(.trained) .stepper.base-edit { display: flex; }
+.sheet.editing-base .field.based:not(.trained) :is(.stepper.play, .value, .delta, .edit-toggle, .base-note) { display: none; }
 .sheet.editing-base .stepper.base-edit button { border-color: var(--secret); }
-.sheet.editing-base .field.based { background: color-mix(in srgb, var(--secret) 12%, transparent); border-radius: 6px; padding: 0 0.3rem; }
+.sheet.editing-base .field.based:not(.trained) { background: color-mix(in srgb, var(--secret) 12%, transparent); border-radius: 6px; padding: 0 0.3rem; }
 .base-banner {
   position: sticky; top: 3rem; z-index: 5;
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;

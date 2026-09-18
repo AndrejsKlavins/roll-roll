@@ -29,10 +29,10 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
-async function setup() {
+async function setup(rulesText = RULES) {
   const dir = mkdtempSync(join(tmpdir(), 'roll-table-'))
   dirs.push(dir)
-  writeFileSync(join(dir, 'rules.yaml'), RULES)
+  writeFileSync(join(dir, 'rules.yaml'), rulesText)
   const rules = await loadRules(join(dir, 'rules.yaml'))
   const dbPath = join(dir, 'session.db')
   const open = () => {
@@ -160,5 +160,104 @@ describe('calculated stats in play', () => {
     expect(s.statOf(s.characters.get(id)!, 'carry')).toEqual({ normal: 6, current: 9 })
     expect(s.scope(id).carry).toBe(6) // formulas keep using the formula result
     expect(s.events.at(-1)).toMatchObject({ type: 'stat_set', stat: 'carry', adj: 3, from: 6, to: 9 })
+  })
+})
+
+const TRAINING_RULES = `
+name: Test
+training: { points_stat: skill_points, rank_costs: [4, 5, 6, 7, 8] }
+sections:
+  - label: Abilities
+    base: true
+    fields:
+      - { id: knowledge, label: Knowledge, type: number, min: 1, max: 5, default: 3 }
+  - label: Misc
+    fields:
+      - { id: level, label: Level, type: level }
+      - { id: skill_points, label: Max skill points, type: derived, base: true, formula: "3 + knowledge" }
+  - label: Skills
+    trained: true
+    fields:
+      - { id: stealth, label: Stealth, type: number, min: 0, max: 5, default: 0 }
+      - { id: theory, label: Theory, type: number, min: 0, max: 5, default: 0 }
+rolls: []
+`
+
+describe('skill point training', () => {
+  const stealth = (s: Session) => s.rules.fields.get('stealth') as NumberField
+
+  test('ranks follow 4 / 9 / 15 / 22 / 30 points', async () => {
+    const { open } = await setup(TRAINING_RULES)
+    const s = open()
+    expect([0, 3, 4, 8, 9, 14, 15, 21, 22, 29, 30].map((p) => s.rankOf(p))).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5])
+  })
+
+  test('finishing grants points; training spends them and sets the rank', async () => {
+    const { open } = await setup(TRAINING_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    const c = () => s.characters.get(id)!
+    expect(s.train(id, 'stealth', 1, 'Mara')).toBe(false) // not in creation
+    expect(s.setField(id, 'stealth', 3, 'Mara')).toBe(false) // skills aren't set directly
+    s.finalizeCharacter(id, 'Mara')
+    expect(s.availablePoints(c())).toBe(6)
+
+    for (let i = 0; i < 5; i++) s.train(id, 'stealth', 1, 'Mara')
+    expect(c().skillPoints.stealth).toBe(5)
+    expect(s.baseOf(c(), stealth(s))).toBe(1)
+    expect(s.availablePoints(c())).toBe(1)
+
+    s.train(id, 'theory', 1, 'Mara')
+    expect(s.availablePoints(c())).toBe(0)
+    expect(s.train(id, 'stealth', 1, 'Mara')).toBe(false) // nothing left to spend
+
+    s.train(id, 'stealth', -1, 'Mara') // correction: take one back
+    expect(s.availablePoints(c())).toBe(1)
+    s.undoLast(id, 'Mara')
+    expect(c().skillPoints.stealth).toBe(5)
+  })
+
+  test('level ups use base Knowledge; GM grants; points stop at master', async () => {
+    const { open } = await setup(TRAINING_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    const c = () => s.characters.get(id)!
+    s.finalizeCharacter(id, 'Mara') // +6
+    s.adjustField(id, 'knowledge', 2, 'Mara') // temporary boost does not count
+    s.levelUp(id, 'GM') // +6
+    expect(c().level).toBe(2)
+    s.adjustBase(id, 'knowledge', 1, 'GM') // base 4 → 7 per level
+    s.levelUp(id, 'GM')
+    expect(s.availablePoints(c())).toBe(19)
+    s.grantPoints(id, 20, 'GM')
+    for (let i = 0; i < 35; i++) s.train(id, 'stealth', 1, 'Mara')
+    expect(c().skillPoints.stealth).toBe(30)
+    expect(s.baseOf(c(), stealth(s))).toBe(5)
+    expect(s.availablePoints(c())).toBe(9)
+
+    // Temporary bonus on top of the trained rank.
+    s.adjustField(id, 'stealth', 1, 'Mara')
+    expect(s.valueOf(c(), stealth(s))).toBe(6)
+
+    const reopened = open()
+    const again = reopened.characters.get(id)!
+    expect(reopened.availablePoints(again)).toBe(9)
+    expect(again.level).toBe(3)
+    expect(reopened.valueOf(again, stealth(reopened))).toBe(6)
+  })
+
+  test('level row is parsed; a mis-tapped level up can be undone', async () => {
+    const { open } = await setup(TRAINING_RULES)
+    const s = open()
+    expect(s.rules.level).toMatchObject({ id: 'level', label: 'Level', type: 'level' })
+    expect(s.rules.fields.has('level')).toBe(false)
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    s.levelUp(id, 'Mara')
+    expect(s.characters.get(id)!.level).toBe(2)
+    expect(s.availablePoints(s.characters.get(id)!)).toBe(12)
+    s.undoLast(id, 'Mara')
+    expect(s.characters.get(id)!.level).toBe(1)
+    expect(s.availablePoints(s.characters.get(id)!)).toBe(6)
   })
 })

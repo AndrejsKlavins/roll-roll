@@ -22,6 +22,8 @@ export type NumberField = Look & {
   base: boolean
   /** Words per value (e.g. 3 → "average"). When set, the sheet shows the word and dots instead of the number. */
   scale?: Record<number, string>
+  /** Base value comes from skill points spent in training (see Rules.training), not set directly. */
+  trained: boolean
 }
 export type TrackField = Look & { id: string; label: string; type: 'track'; max: number; default: number }
 export type TextField = Look & { id: string; label: string; type: 'text'; lines: number; default: string }
@@ -39,10 +41,20 @@ export type Derived = Look & {
   inSection: boolean
   /** Resource pool (e.g. Health): the formula is the maximum, shown as filled/empty circles. */
   pool: boolean
+  /** Evaluated on base values only (ignores play changes); read-only on the sheet. */
+  useBase: boolean
 }
-export type SectionItem = Field | Derived
+/** The character's level with a Level up button (type: level). Needs "training:". */
+export type LevelItem = Look & { id: string; label: string; type: 'level' }
+export type SectionItem = Field | Derived | LevelItem
 export type Section = { label: string; fields: SectionItem[] }
 export type RollDef = { id: string; label: string; dice: string }
+
+/**
+ * Skill point training. Points are granted on finishing a character and on each level up
+ * (the value of pointsStat), and spent on trained fields. Rank n needs thresholds[n-1] points.
+ */
+export type Training = { pointsStat: string; rankCosts: number[]; thresholds: number[]; maxPoints: number }
 
 export type Rules = {
   name: string
@@ -50,6 +62,9 @@ export type Rules = {
   derived: Derived[]
   rolls: RollDef[]
   fields: Map<string, Field>
+  training?: Training
+  /** The "level" row, if the sheet has one. */
+  level?: LevelItem
 }
 
 export const RULES_PATH = join(import.meta.dir, '..', 'system', 'rules.yaml')
@@ -117,11 +132,13 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     formula: String(d.formula ?? ''),
     inSection,
     pool: Boolean(d.pool),
+    useBase: Boolean(d.base),
     ...parseLook(d, where),
   })
 
   const fields = new Map<string, Field>()
   const derived: Derived[] = []
+  let levelItem: LevelItem | undefined
   const sections: Section[] = (raw?.sections ?? []).map((s: any, si: number) => ({
     label: String(s?.label ?? `Section ${si + 1}`),
     fields: (s?.fields ?? []).flatMap((f: any, fi: number): SectionItem[] => {
@@ -132,14 +149,20 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
         derived.push(d)
         return [d]
       }
+      if (f.type === 'level') {
+        if (levelItem) fail(`${where}: only one "level" row is allowed`)
+        levelItem = { id: f.id, label: String(f.label ?? 'Level'), type: 'level', ...parseLook(f, where) }
+        return [levelItem]
+      }
       const label = String(f.label ?? f.id)
       let field: Field
       switch (f.type) {
         case 'number': {
           const min = Number(f.min ?? 0)
           const max = Number(f.max ?? 10)
-          const base = Boolean(f.base ?? s?.base ?? false)
-          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? min), base }
+          const trained = Boolean(f.trained ?? s?.trained ?? false)
+          const base = trained || Boolean(f.base ?? s?.base ?? false)
+          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? min), base, trained }
           const scaleName = f.scale ?? s?.scale
           if (scaleName !== undefined && scaleName !== null) {
             const scale = scales.get(String(scaleName))
@@ -155,7 +178,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
           field = { id: f.id, label, type: 'text', lines: Number(f.lines ?? 3), default: String(f.default ?? '') }
           break
         default:
-          fail(`${where}: unknown type ${JSON.stringify(f.type)} (use number, track, text or derived)`)
+          fail(`${where}: unknown type ${JSON.stringify(f.type)} (use number, track, text, derived or level)`)
           return []
       }
       Object.assign(field, parseLook(f, where))
@@ -182,6 +205,22 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     }
   }
 
+  // training: { points_stat: skill_points, rank_costs: [4, 5, 6, 7, 8] }
+  let training: Training | undefined
+  if (raw?.training) {
+    const t = raw.training
+    const pointsStat = String(t.points_stat ?? '')
+    const rankCosts: number[] = Array.isArray(t.rank_costs) ? t.rank_costs.map(Number) : []
+    if (!derived.some((d) => d.id === pointsStat)) fail(`training.points_stat: no derived value "${pointsStat}"`)
+    if (!rankCosts.length || rankCosts.some((c) => !Number.isInteger(c) || c < 1))
+      fail('training.rank_costs: must be a list of whole numbers ≥ 1, e.g. [4, 5, 6, 7, 8]')
+    const thresholds = rankCosts.map((_, i) => rankCosts.slice(0, i + 1).reduce((a, b) => a + b, 0))
+    training = { pointsStat, rankCosts, thresholds, maxPoints: thresholds.at(-1) ?? 0 }
+  }
+  const trainedFields = [...fields.values()].filter((f) => f.type === 'number' && f.trained)
+  if (trainedFields.length && !training) fail('fields marked "trained" need a top-level "training:" block')
+  if (levelItem && !training) fail('a "level" row needs a top-level "training:" block')
+
   const rolls: RollDef[] = (raw?.rolls ?? []).flatMap((r: any, i: number) => {
     const where = `rolls[${i}]`
     if (!checkId(r?.id, where)) return []
@@ -198,7 +237,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   if (errors.length) {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)
   }
-  return { name: String(raw?.name ?? 'Untitled system'), sections, derived, rolls, fields }
+  return { name: String(raw?.name ?? 'Untitled system'), sections, derived, rolls, fields, training, level: levelItem }
 }
 
 /** WCAG relative luminance of a 6-digit hex colour (0 = black, 1 = white). */

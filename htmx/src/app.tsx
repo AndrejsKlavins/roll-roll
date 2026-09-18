@@ -7,7 +7,7 @@ import { hub } from './hub'
 import type { Character, RollEvent, Session, Visibility } from './session'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, WhoLink } from './views/pages'
-import { DerivedUpdates, FieldView, Sheet, SheetHead } from './views/sheet'
+import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar } from './views/sheet'
 
 const CHAR_COOKIE = 'char'
 const html = (node: Child) => String(node ?? '')
@@ -156,6 +156,47 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     if (!char) return c.notFound()
     const body = await form(c)
     if (session.setStat(char.id, body.stat ?? '', Number(body.value), actorName(c))) pushStatChange(char)
+    return noContent(c)
+  })
+
+  /**
+   * After training, a level up or a grant: every trained row (their + buttons depend on points
+   * available), the points bar, the level row, stats (skills may feed formulas) and GM info.
+   */
+  const pushTraining = (char: Character) => {
+    const trained = [...rules.fields.values()].filter((f) => f.type === 'number' && f.trained)
+    const parts =
+      trained.map((f) => html(<FieldView session={session} char={char} field={f} oob />)).join('') +
+      html(<TrainBar session={session} char={char} oob />) +
+      (rules.level ? html(<LevelRow session={session} char={char} item={rules.level} oob />) : '') +
+      html(<DerivedUpdates session={session} char={char} />)
+    hub.send(toOwnerAndGm(char.id), (client) =>
+      client.role === 'gm'
+        ? parts + html(<ManagePoints session={session} char={char} oob />) + html(<ChangeLog session={session} oob />)
+        : parts,
+    )
+  }
+
+  app.post('/c/:id/train', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const body = await form(c)
+    const skill = body.skill ?? ''
+    if (session.train(char.id, skill, Number(body.delta), actorName(c))) pushTraining(char)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/level-up', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    if (session.levelUp(char.id, actorName(c))) pushTraining(char)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/grant-points', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    if (session.grantPoints(char.id, Number((await form(c)).amount), actorName(c))) pushTraining(char)
     return noContent(c)
   })
 
