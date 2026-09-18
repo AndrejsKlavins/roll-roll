@@ -25,14 +25,16 @@
 #   dice (rolls only): 2d6, d20, (body + athletics)d6
 # Field ids must not look like dice (d6, d20).
 #
-# Traits: bundled ability adjustments a player can pick instead of hand-editing steppers
-# (up to 8, both during creation and, if the GM allows it, later — adding/dropping one
-# on a finished character is a base-value change, logged like any other). "cost" runs
-# -2..2 (negative = buff, positive = flaw, 0 = a mix); it is advisory only — the running
-# total vs. "power_level" is shown but nothing is blocked. Modifiers can only touch
-# untrained base fields (abilities) — trained fields (Skills here) get their value from
-# spent skill points instead. "power_level" is the GM's default target; adjustable at
+# Traits: bundled adjustments a player can pick instead of hand-editing steppers (up to 8,
+# both during creation and, if the GM allows it, later — adding/dropping one on a finished
+# character is a base-value change, logged like any other). "cost" runs -2..2 (negative =
+# buff, positive = flaw, 0 = a mix); it is advisory only — the running total vs. "power_level"
+# is shown but nothing is blocked. "power_level" is the GM's default target; adjustable at
 # the table from the GM page without editing this file.
+#
+# Each modifier targets either an untrained base field (ability) with "delta" (nudges it,
+# e.g. -1..2), or a trained field (skill) with "skill_points" (pre-loads that many points —
+# same currency as training — which may push its rank up once enough are on it).
 #
 # Every trait belongs to one of "categories" (each gets its own "add" picker on the
 # sheet). "max" caps how many from that category can be picked at once (omit for no
@@ -82,6 +84,7 @@ traits:
     - { id: sharp_eyed,  label: Sharp-eyed,  category: basic,      cost: -1, description: "You notice what others miss.",                    modifiers: [{ field: perception, delta: 1 }] }
     - { id: clumsy,      label: Clumsy,      category: basic,      cost: 1,  description: "You trip over your own feet.",                     modifiers: [{ field: agility, delta: -1 }] }
     - { id: jack_of_all, label: Jack of all, category: background, cost: 0,  description: "Well-read, but never bulked up.",                  modifiers: [{ field: knowledge, delta: 1 }, { field: strength, delta: -1 }] }
+    - { id: hunter_background, label: Hunter background, category: background, cost: -2, description: "Grew up hunting and living off the land.", modifiers: [{ field: outdoorsman, skill_points: 4 }, { field: ranged_combat, skill_points: 4 }] }
 
 sections:
   - label: Bio

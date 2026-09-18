@@ -56,10 +56,12 @@ export const isBaseField = (f: Field): f is NumberField => f.type === 'number' &
 /**
  * A bundle of stat adjustments a player can pick during character creation (or later, if the
  * GM allows it). Cost balances against Rules.powerLevel: negative = buff, positive = flaw,
- * 0 = a mix of both. Modifiers can only touch untrained base fields (abilities), since trained
- * fields' value comes from spent skill points, not a stored number.
+ * 0 = a mix of both. Modifiers touch either an untrained base field (ability), nudged by
+ * "delta", or a trained field (skill), pre-loaded with "skill_points" (may push its rank up).
  */
-export type TraitModifier = { field: string; delta: number }
+export type AbilityModifier = { kind: 'ability'; field: string; delta: number }
+export type SkillPointsModifier = { kind: 'skill_points'; field: string; points: number }
+export type TraitModifier = AbilityModifier | SkillPointsModifier
 /** A group traits are picked from (e.g. Origin). max caps how many of that group can be picked. */
 export type TraitCategory = { id: string; label: string; max: number }
 export type Trait = { id: string; label: string; cost: number; description: string; category: string; modifiers: TraitModifier[] }
@@ -285,23 +287,27 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       fail(`${where} "${t.id}": cost must be a whole number from -2 to 2`)
       return []
     }
-    const modifiers: TraitModifier[] = ((t?.modifiers ?? []) as any[]).flatMap((m: any, mi: number) => {
+    const modifiers: TraitModifier[] = ((t?.modifiers ?? []) as any[]).flatMap((m: any, mi: number): TraitModifier[] => {
       const mwhere = `${where}.modifiers[${mi}]`
       const field = fields.get(m?.field)
-      if (!field) {
-        fail(`${mwhere}: unknown field "${m?.field}"`)
+      if (!field || !isBaseField(field)) {
+        fail(`${mwhere}: "${m?.field}" can't be modified by a trait (must be an ability or a trained skill)`)
         return []
       }
-      if (!isBaseField(field) || field.trained) {
-        fail(`${mwhere}: "${m.field}" can't be modified by a trait (only untrained base fields, e.g. abilities)`)
-        return []
+      if (field.trained) {
+        const points = Number(m?.skill_points)
+        if (!Number.isInteger(points) || points === 0) {
+          fail(`${mwhere}: "${m.field}" is a trained skill — give "skill_points" (a non-zero whole number)`)
+          return []
+        }
+        return [{ kind: 'skill_points', field: field.id, points } satisfies TraitModifier]
       }
       const delta = Number(m?.delta)
       if (!Number.isInteger(delta) || delta === 0) {
         fail(`${mwhere}: delta must be a non-zero whole number`)
         return []
       }
-      return [{ field: field.id, delta }]
+      return [{ kind: 'ability', field: field.id, delta } satisfies TraitModifier]
     })
     if (!modifiers.length) {
       fail(`${where} "${t.id}": needs at least one modifier`)

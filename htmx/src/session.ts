@@ -25,9 +25,25 @@ export type EventData =
   // For base fields of active characters, from/to are current values (base + adjustment).
   | { type: 'field_set'; charId: string; field: string; from: number | string; to: number | string; by: string }
   | { type: 'base_set'; charId: string; field: string; from: number; to: number; by: string }
-  // Trait picked/dropped on an already-finished character; changes are the resulting base values.
-  | { type: 'trait_added'; charId: string; traitId: string; changes: { field: string; from: number; to: number }[]; by: string }
-  | { type: 'trait_removed'; charId: string; traitId: string; changes: { field: string; from: number; to: number }[]; by: string }
+  // Trait picked/dropped on an already-finished character. changes are the resulting values —
+  // base for an ability modifier, skillPoints for a skill_points modifier (may shift its rank).
+  // grantedPoints keeps pointsGranted in step with skill_points changes (net zero on the pool).
+  | {
+      type: 'trait_added'
+      charId: string
+      traitId: string
+      changes: { field: string; from: number; to: number }[]
+      grantedPoints: number
+      by: string
+    }
+  | {
+      type: 'trait_removed'
+      charId: string
+      traitId: string
+      changes: { field: string; from: number; to: number }[]
+      grantedPoints: number
+      by: string
+    }
   | { type: 'power_level_set'; value: number; from: number; by: string }
   // Play change to a calculated stat: adj is stored (current = formula + adj); from/to are shown values.
   | { type: 'stat_set'; charId: string; stat: string; adj: number; from: number; to: number; by: string }
@@ -97,7 +113,7 @@ export const MAX_TRAITS = 8
 
 export const cleanName = (name: string) => name.trim().replace(/\s+/g, ' ').slice(0, 40)
 
-type DraftData = { values: Values; traits: string[] }
+type DraftData = { values: Values; traits: string[]; skillPoints: Record<string, number>; pointsGranted: number }
 
 export class Session {
   readonly events: LoggedEvent[] = []
@@ -136,7 +152,9 @@ export class Session {
     for (const row of this.db.query('SELECT char_id, data FROM drafts').all() as { char_id: string; data: string }[]) {
       const parsed = JSON.parse(row.data)
       // Older drafts (before trait picking existed) stored the values object directly.
-      const data: DraftData = parsed.values ? parsed : { values: parsed, traits: [] }
+      const data: DraftData = parsed.values
+        ? { skillPoints: {}, pointsGranted: 0, ...parsed }
+        : { values: parsed, traits: [], skillPoints: {}, pointsGranted: 0 }
       this.drafts.set(row.char_id, data)
     }
     this.rebuild()
@@ -147,7 +165,12 @@ export class Session {
   }
 
   private saveDraft(c: Character) {
-    const data: DraftData = { values: { ...c.values }, traits: [...c.traits] }
+    const data: DraftData = {
+      values: { ...c.values },
+      traits: [...c.traits],
+      skillPoints: { ...c.skillPoints },
+      pointsGranted: c.pointsGranted,
+    }
     this.drafts.set(c.id, data)
     this.db
       .query('INSERT OR REPLACE INTO drafts (char_id, data, updated) VALUES (?, ?, ?)')
@@ -183,6 +206,8 @@ export class Session {
       if (c.status === 'draft' && draft) {
         Object.assign(c.values, draft.values)
         c.traits = [...draft.traits]
+        c.skillPoints = { ...draft.skillPoints }
+        c.pointsGranted = draft.pointsGranted
       }
     }
   }
@@ -227,14 +252,16 @@ export class Session {
       case 'trait_added': {
         const c = this.characters.get(e.charId)
         if (!c) break
-        for (const ch of e.changes) c.base[ch.field] = ch.to
+        for (const ch of e.changes) this.applyTraitChange(c, ch)
+        c.pointsGranted += e.grantedPoints
         if (!c.traits.includes(e.traitId)) c.traits.push(e.traitId)
         break
       }
       case 'trait_removed': {
         const c = this.characters.get(e.charId)
         if (!c) break
-        for (const ch of e.changes) c.base[ch.field] = ch.to
+        for (const ch of e.changes) this.applyTraitChange(c, ch)
+        c.pointsGranted += e.grantedPoints
         c.traits = c.traits.filter((id) => id !== e.traitId)
         break
       }
@@ -277,6 +304,13 @@ export class Session {
         break
       }
     }
+  }
+
+  /** trait_added/trait_removed: a change targets base (ability) or skillPoints (trained skill). */
+  private applyTraitChange(c: Character, ch: { field: string; to: number }) {
+    const f = this.rules.fields.get(ch.field)
+    if (f && (f as NumberField).trained) c.skillPoints[ch.field] = ch.to
+    else c.base[ch.field] = ch.to
   }
 
   isUndone(id: number) {
@@ -493,6 +527,40 @@ export class Session {
     return c.traits.flatMap((id) => this.rules.traits.filter((t) => t.id === id && t.category === categoryId))
   }
 
+  /**
+   * A trait's modifiers as {field, from, to} changes, in the given direction (+1 add, -1 remove).
+   * An ability modifier targets c.values (draft) or the base value (active); a skill_points
+   * modifier always targets c.skillPoints directly. grantedPoints is the actual (post-clamp)
+   * sum of skillPoints deltas, so pointsGranted can move with it and the pool stays balanced.
+   */
+  private traitChanges(c: Character, trait: Trait, sign: 1 | -1) {
+    const maxPoints = this.rules.training?.maxPoints ?? 0
+    let grantedPoints = 0
+    const changes = trait.modifiers.map((m) => {
+      if (m.kind === 'skill_points') {
+        const from = c.skillPoints[m.field] ?? 0
+        const to = Math.min(maxPoints, Math.max(0, from + sign * m.points))
+        grantedPoints += to - from
+        return { field: m.field, from, to }
+      }
+      const f = this.rules.fields.get(m.field) as NumberField
+      const from = c.status === 'draft' ? Number(c.values[f.id] ?? f.default) : this.baseOf(c, f)
+      const to = Math.min(f.max, Math.max(f.min, from + sign * m.delta))
+      return { field: f.id, from, to }
+    })
+    return { changes, grantedPoints }
+  }
+
+  /** Draft equivalent of applyTraitChange: writes straight into values/skillPoints, not logged. */
+  private applyDraftTraitChanges(c: Character, changes: { field: string; to: number }[], grantedPoints: number) {
+    for (const ch of changes) {
+      const f = this.rules.fields.get(ch.field) as NumberField
+      if (f.trained) c.skillPoints[ch.field] = ch.to
+      else c.values[ch.field] = ch.to
+    }
+    c.pointsGranted += grantedPoints
+  }
+
   /** Picks a trait, nudging its modifiers' fields. Draft: not logged. Active: adjusts base values. */
   addTrait(charId: string, traitId: string, by: string) {
     const c = this.characters.get(charId)
@@ -500,18 +568,13 @@ export class Session {
     if (!c || !trait || c.traits.includes(traitId) || c.traits.length >= MAX_TRAITS) return false
     const category = this.rules.traitCategories.find((cat) => cat.id === trait.category)
     if (category && this.traitsInCategory(c, category.id).length >= category.max) return false
-    const changes = trait.modifiers.map((m) => {
-      const f = this.rules.fields.get(m.field) as NumberField
-      const from = c.status === 'draft' ? Number(c.values[f.id] ?? f.default) : this.baseOf(c, f)
-      const to = Math.min(f.max, Math.max(f.min, from + m.delta))
-      return { field: f.id, from, to }
-    })
+    const { changes, grantedPoints } = this.traitChanges(c, trait, 1)
     if (c.status === 'draft') {
-      for (const ch of changes) c.values[ch.field] = ch.to
+      this.applyDraftTraitChanges(c, changes, grantedPoints)
       c.traits.push(traitId)
       this.saveDraft(c)
     } else {
-      this.append({ type: 'trait_added', charId, traitId, changes, by })
+      this.append({ type: 'trait_added', charId, traitId, changes, grantedPoints, by })
     }
     return true
   }
@@ -521,18 +584,13 @@ export class Session {
     const c = this.characters.get(charId)
     const trait = this.rules.traits.find((t) => t.id === traitId)
     if (!c || !trait || !c.traits.includes(traitId)) return false
-    const changes = trait.modifiers.map((m) => {
-      const f = this.rules.fields.get(m.field) as NumberField
-      const from = c.status === 'draft' ? Number(c.values[f.id] ?? f.default) : this.baseOf(c, f)
-      const to = Math.min(f.max, Math.max(f.min, from - m.delta))
-      return { field: f.id, from, to }
-    })
+    const { changes, grantedPoints } = this.traitChanges(c, trait, -1)
     if (c.status === 'draft') {
-      for (const ch of changes) c.values[ch.field] = ch.to
+      this.applyDraftTraitChanges(c, changes, grantedPoints)
       c.traits = c.traits.filter((id) => id !== traitId)
       this.saveDraft(c)
     } else {
-      this.append({ type: 'trait_removed', charId, traitId, changes, by })
+      this.append({ type: 'trait_removed', charId, traitId, changes, grantedPoints, by })
     }
     return true
   }
