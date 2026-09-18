@@ -102,6 +102,20 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             </button>
           </div>
 
+          {session.rules.traits.length > 0 && (
+            <div class="card power-level-card">
+              <span>
+                Power level target <b id="power-level-value">{session.powerLevel}</b>
+              </span>
+              <form hx-post="/gm/power-level" hx-swap="none">
+                <input name="value" type="number" step="1" value={session.powerLevel} aria-label="Power level target" />
+                <button type="submit" class="small">
+                  Set
+                </button>
+              </form>
+            </div>
+          )}
+
           <form
             class="card gm-roll"
             hx-post="/gm/roll"

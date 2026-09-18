@@ -91,6 +91,13 @@ function describeChange(e: LoggedEvent, session: Session, rules: Rules): string 
     const label = rules.derived.find((d) => d.id === e.stat)?.label ?? e.stat
     return `${who} · ${label} ${e.from} → ${e.to}${e.by !== who ? ` (by ${e.by})` : ''}`
   }
+  if (e.type === 'trait_added' || e.type === 'trait_removed') {
+    const who = session.names.get(e.charId) ?? '?'
+    const label = rules.traits.find((t) => t.id === e.traitId)?.label ?? e.traitId
+    const verb = e.type === 'trait_added' ? 'picked' : 'dropped'
+    return `${who} · ${verb} trait ${label}${e.by !== who ? ` (by ${e.by})` : ''}`
+  }
+  if (e.type === 'power_level_set') return `${e.by} set power level target ${e.from} → ${e.value}`
   if (e.type === 'field_set') {
     const who = session.names.get(e.charId) ?? '?'
     const field = rules.fields.get(e.field)

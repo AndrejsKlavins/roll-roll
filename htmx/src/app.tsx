@@ -7,7 +7,7 @@ import { hub } from './hub'
 import type { Character, RollEvent, Session, Visibility } from './session'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, WhoLink } from './views/pages'
-import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar } from './views/sheet'
+import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar, TraitsSection } from './views/sheet'
 
 const CHAR_COOKIE = 'char'
 const html = (node: Child) => String(node ?? '')
@@ -197,6 +197,41 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
     if (session.grantPoints(char.id, Number((await form(c)).amount), actorName(c))) pushTraining(char)
+    return noContent(c)
+  })
+
+  const pushTraits = (char: Character) => {
+    const parts = html(<TraitsSection session={session} char={char} oob />) + html(<DerivedUpdates session={session} char={char} />)
+    hub.send(toOwnerAndGm(char.id), (client) =>
+      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
+    )
+  }
+
+  app.post('/c/:id/trait/add', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const body = await form(c)
+    if (session.addTrait(char.id, body.trait ?? '', actorName(c))) pushTraits(char)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/trait/remove', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const body = await form(c)
+    if (session.removeTrait(char.id, body.trait ?? '', actorName(c))) pushTraits(char)
+    return noContent(c)
+  })
+
+  app.post('/gm/power-level', async (c) => {
+    const body = await form(c)
+    if (session.setPowerLevel(Number(body.value), actorName(c))) {
+      hub.send(
+        (client) => client.role === 'gm',
+        () => `<b id="power-level-value" hx-swap-oob="true">${session.powerLevel}</b>`,
+      )
+      for (const char of session.characters.values()) pushTraits(char)
+    }
     return noContent(c)
   })
 

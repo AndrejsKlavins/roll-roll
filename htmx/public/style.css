@@ -233,3 +233,24 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
   background: var(--secret); color: #fff; font-size: 0.9rem; font-weight: 600;
 }
 .base-banner button { background: #fff2; color: #fff; border-color: #fff6; }
+
+/* ---- traits ---- */
+.power-level-card { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: 1rem; }
+.power-level-card form { display: flex; gap: 0.4rem; }
+.power-level-card input { width: 4.5rem; }
+.trait-budget { display: flex; justify-content: flex-end; }
+.trait-budget .budget { font-weight: 600; font-size: 0.85rem; }
+.trait-budget .budget.ok { color: #5cc27a; }
+.trait-budget .budget.off { color: var(--accent); }
+.trait-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.trait-block { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.6rem; }
+.trait-block-head { display: flex; align-items: center; gap: 0.5rem; }
+.trait-title { font-weight: 600; }
+.trait-block-head b.cost { margin-left: auto; font-size: 0.9rem; }
+/* Inverted from plain +/- convention: a buff has a negative cost but should read as positive. */
+.trait-block-head .cost.buff { color: var(--danger); }
+.trait-block-head .cost.flaw { color: #5cc27a; }
+.trait-block-head .cost.neutral { color: var(--muted); }
+.trait-desc { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.85rem; }
+.add-trait { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+.add-trait select { flex: 1; min-width: 0; }

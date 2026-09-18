@@ -24,6 +24,15 @@
 #   floor() ceil() round() min() max() abs()
 #   dice (rolls only): 2d6, d20, (body + athletics)d6
 # Field ids must not look like dice (d6, d20).
+#
+# Traits: bundled ability adjustments a player can pick instead of hand-editing steppers
+# (up to 8, both during creation and, if the GM allows it, later — adding/dropping one
+# on a finished character is a base-value change, logged like any other). "cost" runs
+# -2..2 (negative = buff, positive = flaw, 0 = a mix); it is advisory only — the running
+# total vs. "power_level" is shown but nothing is blocked. Modifiers can only touch
+# untrained base fields (abilities) — trained fields (Skills here) get their value from
+# spent skill points instead. "power_level" is the GM's default target; adjustable at
+# the table from the GM page without editing this file.
 
 name: Sample System
 
@@ -31,11 +40,13 @@ name: Sample System
 # one dot per point in its colour instead of the number.
 scales:
   rating:
+    0: abysmal
     1: horrible
     2: low
     3: average
     4: high
     5: excellent
+    6: epic
   skill:
     0: untrained
     1: novice
@@ -49,6 +60,16 @@ scales:
 training:
   points_stat: skill_points
   rank_costs: [4, 5, 6, 7, 8]
+
+traits:
+  power_level: 0
+  list:
+    - { id: quick,       label: Quick,       cost: -1, description: "Fast on your feet, quicker to react.",       modifiers: [{ field: agility, delta: 1 }] }
+    - { id: sharp_eyed,  label: Sharp-eyed,  cost: -1, description: "You notice what others miss.",                modifiers: [{ field: perception, delta: 1 }] }
+    - { id: strong_arm,  label: Strong arm,  cost: -1, description: "Raw physical power.",                        modifiers: [{ field: strength, delta: 1 }] }
+    - { id: frail,       label: Frail,       cost: 1,  description: "Your body gives out sooner than most.",      modifiers: [{ field: endurance, delta: -1 }] }
+    - { id: clumsy,      label: Clumsy,      cost: 1,  description: "You trip over your own feet.",                modifiers: [{ field: agility, delta: -1 }] }
+    - { id: jack_of_all, label: Jack of all, cost: 0,  description: "Well-read, but never bulked up.",             modifiers: [{ field: knowledge, delta: 1 }, { field: strength, delta: -1 }] }
 
 sections:
   - label: Bio

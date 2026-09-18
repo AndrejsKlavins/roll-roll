@@ -11,7 +11,9 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
-import type { Field, NumberField, Rules } from './rules'
+import { isBaseField, type Field, type NumberField, type Rules } from './rules'
+
+export { isBaseField }
 
 export type Visibility = 'public' | 'gm' | 'hidden'
 
@@ -19,10 +21,14 @@ export type EventData =
   | { type: 'character_created'; charId: string; name: string }
   | { type: 'character_renamed'; charId: string; from: string; to: string; by: string }
   | { type: 'character_deleted'; charId: string; by: string }
-  | { type: 'character_finalized'; charId: string; base: Record<string, number>; values: Values; by: string }
+  | { type: 'character_finalized'; charId: string; base: Record<string, number>; values: Values; traits: string[]; by: string }
   // For base fields of active characters, from/to are current values (base + adjustment).
   | { type: 'field_set'; charId: string; field: string; from: number | string; to: number | string; by: string }
   | { type: 'base_set'; charId: string; field: string; from: number; to: number; by: string }
+  // Trait picked/dropped on an already-finished character; changes are the resulting base values.
+  | { type: 'trait_added'; charId: string; traitId: string; changes: { field: string; from: number; to: number }[]; by: string }
+  | { type: 'trait_removed'; charId: string; traitId: string; changes: { field: string; from: number; to: number }[]; by: string }
+  | { type: 'power_level_set'; value: number; from: number; by: string }
   // Play change to a calculated stat: adj is stored (current = formula + adj); from/to are shown values.
   | { type: 'stat_set'; charId: string; stat: string; adj: number; from: number; to: number; by: string }
   | {
@@ -63,6 +69,8 @@ export type Character = {
   pointsGranted: number
   /** 1 + number of level ups. */
   level: number
+  /** Ids of traits currently picked, in pick order. */
+  traits: string[]
 }
 
 const CHANGE_TYPES = new Set<EventData['type']>([
@@ -72,30 +80,39 @@ const CHANGE_TYPES = new Set<EventData['type']>([
   'stat_set',
   'skill_points_granted',
   'skill_trained',
+  'trait_added',
+  'trait_removed',
+  'power_level_set',
   'undo',
   'character_renamed',
   'character_deleted',
   'session_started',
 ])
 
-export const isBaseField = (f: Field): f is NumberField => f.type === 'number' && f.base
-
 /** In play a modified base field may leave its creation range (e.g. a 5 buffed to 6), but not go below 0. */
 export const PLAY_MAX = 99
 
+/** Traits a character may pick (during creation or, if the GM allows it, later). */
+export const MAX_TRAITS = 8
+
 export const cleanName = (name: string) => name.trim().replace(/\s+/g, ' ').slice(0, 40)
+
+type DraftData = { values: Values; traits: string[] }
 
 export class Session {
   readonly events: LoggedEvent[] = []
   readonly characters = new Map<string, Character>()
   /** Latest name of every character ever created, including deleted ones (for the change log). */
   readonly names = new Map<string, string>()
+  /** GM's current budget target for trait costs; starts at the rules.yaml default. */
+  powerLevel: number
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
-  private readonly drafts = new Map<string, Values>()
+  private readonly drafts = new Map<string, DraftData>()
   private readonly db: Database
 
   constructor(readonly rules: Rules, dbPath: string) {
+    this.powerLevel = rules.powerLevel
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath, { create: true })
     this.db.run('PRAGMA journal_mode = WAL')
@@ -117,7 +134,10 @@ export class Session {
       updated INTEGER NOT NULL
     )`)
     for (const row of this.db.query('SELECT char_id, data FROM drafts').all() as { char_id: string; data: string }[]) {
-      this.drafts.set(row.char_id, JSON.parse(row.data))
+      const parsed = JSON.parse(row.data)
+      // Older drafts (before trait picking existed) stored the values object directly.
+      const data: DraftData = parsed.values ? parsed : { values: parsed, traits: [] }
+      this.drafts.set(row.char_id, data)
     }
     this.rebuild()
   }
@@ -127,10 +147,11 @@ export class Session {
   }
 
   private saveDraft(c: Character) {
-    this.drafts.set(c.id, { ...c.values })
+    const data: DraftData = { values: { ...c.values }, traits: [...c.traits] }
+    this.drafts.set(c.id, data)
     this.db
       .query('INSERT OR REPLACE INTO drafts (char_id, data, updated) VALUES (?, ?, ?)')
-      .run(c.id, JSON.stringify(c.values), Date.now())
+      .run(c.id, JSON.stringify(data), Date.now())
   }
 
   private dropDraft(charId: string) {
@@ -159,7 +180,10 @@ export class Session {
     // Draft edits aren't events; layer the saved draft on top.
     for (const c of this.characters.values()) {
       const draft = this.drafts.get(c.id)
-      if (c.status === 'draft' && draft) Object.assign(c.values, draft)
+      if (c.status === 'draft' && draft) {
+        Object.assign(c.values, draft.values)
+        c.traits = [...draft.traits]
+      }
     }
   }
 
@@ -178,12 +202,21 @@ export class Session {
           skillPoints: {},
           pointsGranted: 0,
           level: 1,
+          traits: [],
         })
         this.names.set(e.charId, e.name)
         break
       case 'character_finalized': {
         const c = this.characters.get(e.charId)
-        if (c) Object.assign(c, { status: 'active', base: { ...e.base }, values: { ...e.values }, adj: {}, statAdj: {} })
+        if (c)
+          Object.assign(c, {
+            status: 'active',
+            base: { ...e.base },
+            values: { ...e.values },
+            traits: [...e.traits],
+            adj: {},
+            statAdj: {},
+          })
         break
       }
       case 'base_set': {
@@ -191,6 +224,23 @@ export class Session {
         if (c?.status === 'active') c.base[e.field] = e.to
         break
       }
+      case 'trait_added': {
+        const c = this.characters.get(e.charId)
+        if (!c) break
+        for (const ch of e.changes) c.base[ch.field] = ch.to
+        if (!c.traits.includes(e.traitId)) c.traits.push(e.traitId)
+        break
+      }
+      case 'trait_removed': {
+        const c = this.characters.get(e.charId)
+        if (!c) break
+        for (const ch of e.changes) c.base[ch.field] = ch.to
+        c.traits = c.traits.filter((id) => id !== e.traitId)
+        break
+      }
+      case 'power_level_set':
+        this.powerLevel = e.value
+        break
       case 'stat_set': {
         const c = this.characters.get(e.charId)
         if (c?.status === 'active') c.statAdj[e.stat] = e.adj
@@ -336,7 +386,14 @@ export class Session {
     if (c?.status !== 'draft') return null
     const base: Record<string, number> = {}
     for (const f of this.rules.fields.values()) if (isBaseField(f)) base[f.id] = Number(c.values[f.id] ?? f.default)
-    const event = this.append({ type: 'character_finalized', charId, base, values: { ...c.values }, by })
+    const event = this.append({
+      type: 'character_finalized',
+      charId,
+      base,
+      values: { ...c.values },
+      traits: [...c.traits],
+      by,
+    })
     this.dropDraft(charId)
     if (this.rules.training) {
       this.append({ type: 'skill_points_granted', charId, amount: this.pointsPerLevel(c), reason: 'creation', by })
@@ -426,6 +483,61 @@ export class Session {
     return true
   }
 
+  /** Sum of the character's currently picked traits' costs, to compare against powerLevel. */
+  traitCost(c: Character) {
+    return c.traits.reduce((sum, id) => sum + (this.rules.traits.find((t) => t.id === id)?.cost ?? 0), 0)
+  }
+
+  /** Picks a trait, nudging its modifiers' fields. Draft: not logged. Active: adjusts base values. */
+  addTrait(charId: string, traitId: string, by: string) {
+    const c = this.characters.get(charId)
+    const trait = this.rules.traits.find((t) => t.id === traitId)
+    if (!c || !trait || c.traits.includes(traitId) || c.traits.length >= MAX_TRAITS) return false
+    const changes = trait.modifiers.map((m) => {
+      const f = this.rules.fields.get(m.field) as NumberField
+      const from = c.status === 'draft' ? Number(c.values[f.id] ?? f.default) : this.baseOf(c, f)
+      const to = Math.min(f.max, Math.max(f.min, from + m.delta))
+      return { field: f.id, from, to }
+    })
+    if (c.status === 'draft') {
+      for (const ch of changes) c.values[ch.field] = ch.to
+      c.traits.push(traitId)
+      this.saveDraft(c)
+    } else {
+      this.append({ type: 'trait_added', charId, traitId, changes, by })
+    }
+    return true
+  }
+
+  /** Drops a picked trait, reversing its modifiers. */
+  removeTrait(charId: string, traitId: string, by: string) {
+    const c = this.characters.get(charId)
+    const trait = this.rules.traits.find((t) => t.id === traitId)
+    if (!c || !trait || !c.traits.includes(traitId)) return false
+    const changes = trait.modifiers.map((m) => {
+      const f = this.rules.fields.get(m.field) as NumberField
+      const from = c.status === 'draft' ? Number(c.values[f.id] ?? f.default) : this.baseOf(c, f)
+      const to = Math.min(f.max, Math.max(f.min, from - m.delta))
+      return { field: f.id, from, to }
+    })
+    if (c.status === 'draft') {
+      for (const ch of changes) c.values[ch.field] = ch.to
+      c.traits = c.traits.filter((id) => id !== traitId)
+      this.saveDraft(c)
+    } else {
+      this.append({ type: 'trait_removed', charId, traitId, changes, by })
+    }
+    return true
+  }
+
+  /** GM's target for trait cost balance. Not per-character, so not undoable. */
+  setPowerLevel(value: number, by: string) {
+    const n = Math.round(value)
+    if (!Number.isFinite(n) || n === this.powerLevel) return false
+    this.append({ type: 'power_level_set', value: n, from: this.powerLevel, by })
+    return true
+  }
+
   /** Undoes the character's most recent value, base or stat change that is still in effect. */
   undoLast(charId: string, by: string): LoggedEvent | null {
     for (let i = this.events.length - 1; i >= 0; i--) {
@@ -435,6 +547,8 @@ export class Session {
         e.type === 'base_set' ||
         e.type === 'stat_set' ||
         e.type === 'skill_trained' ||
+        e.type === 'trait_added' ||
+        e.type === 'trait_removed' ||
         (e.type === 'skill_points_granted' && e.reason === 'level') // a mis-tapped Level up
       if (undoable && e.charId === charId && !this.undone.has(e.id)) {
         this.append({ type: 'undo', target: e.id, by })

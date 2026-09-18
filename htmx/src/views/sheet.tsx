@@ -10,7 +10,7 @@
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
 import type { Derived, Field, LevelItem, NumberField } from '../rules'
-import { isBaseField, type Character, type Session } from '../session'
+import { isBaseField, MAX_TRAITS, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 export const fieldDomId = (charId: string, fieldId: string) => `f-${charId}-${fieldId}`
@@ -458,6 +458,72 @@ export function DerivedView(props: { session: Session; char: Character; oob?: bo
   )
 }
 
+const signed = (n: number) => (n === 0 ? '0' : n > 0 ? `+${n}` : String(n))
+
+/**
+ * Traits picked at creation (or later, if allowed): each nudges a bundle of abilities. The cost
+ * total vs. the GM's power level is shown for reference only — nothing here is enforced.
+ */
+export function TraitsSection(props: { session: Session; char: Character; oob?: boolean }) {
+  const { session, char } = props
+  const { rules } = session
+  if (rules.traits.length === 0) return null
+  const chosen = char.traits.flatMap((id) => rules.traits.filter((t) => t.id === id))
+  const sum = session.traitCost(char)
+  const target = session.powerLevel
+  const available = rules.traits.filter((t) => !char.traits.includes(t.id))
+  const canAddMore = char.traits.length < MAX_TRAITS
+  return (
+    <fieldset id={`traits-${char.id}`} class="traits" hx-swap-oob={oobAttr(props.oob)}>
+      <legend>Traits</legend>
+      <div class="trait-budget">
+        <span class={sum === target ? 'budget ok' : 'budget off'}>
+          {signed(sum)} / {signed(target)}
+        </span>
+      </div>
+      {chosen.length > 0 && (
+        <ul class="trait-list">
+          {chosen.map((t) => (
+            <li class="trait-block">
+              <div class="trait-block-head">
+                <span class="trait-title">{t.label}</span>
+                <b class={t.cost < 0 ? 'cost buff' : t.cost > 0 ? 'cost flaw' : 'cost neutral'}>{signed(t.cost)}</b>
+                <button
+                  type="button"
+                  class="small link"
+                  hx-post={`/c/${char.id}/trait/remove`}
+                  hx-vals={JSON.stringify({ trait: t.id })}
+                  hx-swap="none"
+                >
+                  remove
+                </button>
+              </div>
+              <p class="trait-desc">{t.description}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canAddMore && available.length > 0 ? (
+        <form class="add-trait" hx-post={`/c/${char.id}/trait/add`} hx-swap="none">
+          <select name="trait" required>
+            <option value="" disabled selected>
+              Add a trait…
+            </option>
+            {available.map((t) => (
+              <option value={t.id} title={t.description}>
+                {t.label} ({signed(t.cost)})
+              </option>
+            ))}
+          </select>
+          <button type="submit">Add</button>
+        </form>
+      ) : (
+        !canAddMore && <p class="muted small">Maximum {MAX_TRAITS} traits picked.</p>
+      )}
+    </fieldset>
+  )
+}
+
 const hasBaseFields = (session: Session) => [...session.rules.fields.values()].some(isBaseField)
 
 export function SheetHead(props: { session: Session; char: Character; oob?: boolean }) {
@@ -563,6 +629,8 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
           </button>
         </div>
       )}
+
+      <TraitsSection session={session} char={char} />
 
       {rules.sections.map((s) => (
         <fieldset>

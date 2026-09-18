@@ -50,6 +50,18 @@ export type SectionItem = Field | Derived | LevelItem
 export type Section = { label: string; fields: SectionItem[] }
 export type RollDef = { id: string; label: string; dice: string }
 
+/** base: value is fixed when the character is finished (untrained) or set by trained points. */
+export const isBaseField = (f: Field): f is NumberField => f.type === 'number' && f.base
+
+/**
+ * A bundle of stat adjustments a player can pick during character creation (or later, if the
+ * GM allows it). Cost balances against Rules.powerLevel: negative = buff, positive = flaw,
+ * 0 = a mix of both. Modifiers can only touch untrained base fields (abilities), since trained
+ * fields' value comes from spent skill points, not a stored number.
+ */
+export type TraitModifier = { field: string; delta: number }
+export type Trait = { id: string; label: string; cost: number; description: string; modifiers: TraitModifier[] }
+
 /**
  * Skill point training. Points are granted on finishing a character and on each level up
  * (the value of pointsStat), and spent on trained fields. Rank n needs thresholds[n-1] points.
@@ -65,6 +77,9 @@ export type Rules = {
   training?: Training
   /** The "level" row, if the sheet has one. */
   level?: LevelItem
+  traits: Trait[]
+  /** GM's default budget target for trait costs (usually 0); adjustable at runtime. */
+  powerLevel: number
 }
 
 export const RULES_PATH = join(import.meta.dir, '..', 'system', 'rules.yaml')
@@ -234,10 +249,59 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     return [{ id: r.id, label: String(r.label ?? r.id), dice }]
   })
 
+  // traits: { power_level: 0, list: [{ id, label, cost, description?, modifiers: [{field, delta}] }] }
+  const rawTraits = raw?.traits ?? {}
+  const powerLevel = Number(rawTraits.power_level ?? 0)
+  if (!Number.isFinite(powerLevel)) fail('traits.power_level: must be a number')
+
+  const traits: Trait[] = ((rawTraits.list ?? []) as any[]).flatMap((t: any, i: number) => {
+    const where = `traits.list[${i}]`
+    if (!checkId(t?.id, where)) return []
+    const cost = Number(t?.cost)
+    if (!Number.isInteger(cost) || cost < -2 || cost > 2) {
+      fail(`${where} "${t.id}": cost must be a whole number from -2 to 2`)
+      return []
+    }
+    const modifiers: TraitModifier[] = ((t?.modifiers ?? []) as any[]).flatMap((m: any, mi: number) => {
+      const mwhere = `${where}.modifiers[${mi}]`
+      const field = fields.get(m?.field)
+      if (!field) {
+        fail(`${mwhere}: unknown field "${m?.field}"`)
+        return []
+      }
+      if (!isBaseField(field) || field.trained) {
+        fail(`${mwhere}: "${m.field}" can't be modified by a trait (only untrained base fields, e.g. abilities)`)
+        return []
+      }
+      const delta = Number(m?.delta)
+      if (!Number.isInteger(delta) || delta === 0) {
+        fail(`${mwhere}: delta must be a non-zero whole number`)
+        return []
+      }
+      return [{ field: field.id, delta }]
+    })
+    if (!modifiers.length) {
+      fail(`${where} "${t.id}": needs at least one modifier`)
+      return []
+    }
+    const description = String(t.description ?? '').trim() || 'MISSING DESCRIPTION'
+    return [{ id: t.id, label: String(t.label ?? t.id), cost, description, modifiers }]
+  })
+
   if (errors.length) {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)
   }
-  return { name: String(raw?.name ?? 'Untitled system'), sections, derived, rolls, fields, training, level: levelItem }
+  return {
+    name: String(raw?.name ?? 'Untitled system'),
+    sections,
+    derived,
+    rolls,
+    fields,
+    training,
+    level: levelItem,
+    traits,
+    powerLevel,
+  }
 }
 
 /** WCAG relative luminance of a 6-digit hex colour (0 = black, 1 = white). */
