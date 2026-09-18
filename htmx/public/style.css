@@ -238,10 +238,13 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .power-level-card { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: 1rem; }
 .power-level-card form { display: flex; gap: 0.4rem; }
 .power-level-card input { width: 4.5rem; }
-.trait-budget { display: flex; justify-content: flex-end; }
+.trait-budget { text-align: right; }
 .trait-budget .budget { font-weight: 600; font-size: 0.85rem; }
 .trait-budget .budget.ok { color: #5cc27a; }
 .trait-budget .budget.off { color: var(--accent); }
+.trait-category { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--line); }
+.trait-category:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
+.trait-category-label { margin: 0 0 0.35rem; font-size: 0.8rem; font-weight: 600; color: var(--muted); }
 .trait-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
 .trait-block { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.6rem; }
 .trait-block-head { display: flex; align-items: center; gap: 0.5rem; }
@@ -252,5 +255,25 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .trait-block-head .cost.flaw { color: #5cc27a; }
 .trait-block-head .cost.neutral { color: var(--muted); }
 .trait-desc { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.85rem; }
-.add-trait { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
-.add-trait select { flex: 1; min-width: 0; }
+
+.trait-add { margin-top: 0.6rem; }
+.trait-dialog-backdrop { position: fixed; inset: 0; z-index: 20; background: #0009; }
+.trait-dialog {
+  position: fixed; z-index: 21; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 2rem)); max-height: min(70vh, 560px);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.8rem; display: flex; flex-direction: column;
+}
+.trait-dialog-step { display: flex; flex-direction: column; min-height: 0; }
+.trait-dialog-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+.trait-dialog-head span { font-weight: 600; }
+.trait-dialog-head .icon { margin-left: auto; }
+.trait-dialog-options { display: grid; gap: 0.4rem; overflow-y: auto; }
+.trait-dialog-options > button { text-align: left; width: 100%; }
+.trait-choice { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.55rem 0.7rem; }
+.trait-choice-head { display: flex; align-items: center; gap: 0.5rem; }
+.trait-choice-head em { margin-left: auto; font-style: normal; font-size: 0.85rem; }
+.trait-choice-head .cost.buff { color: var(--danger); }
+.trait-choice-head .cost.flaw { color: #5cc27a; }
+.trait-choice-head .cost.neutral { color: var(--muted); }
+.trait-choice-desc { color: var(--muted); font-size: 0.85rem; }

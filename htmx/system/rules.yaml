@@ -33,6 +33,10 @@
 # untrained base fields (abilities) — trained fields (Skills here) get their value from
 # spent skill points instead. "power_level" is the GM's default target; adjustable at
 # the table from the GM page without editing this file.
+#
+# Every trait belongs to one of "categories" (each gets its own "add" picker on the
+# sheet). "max" caps how many from that category can be picked at once (omit for no
+# cap) — once hit, that category's "add" picker is hidden, e.g. Origin: max 1.
 
 name: Sample System
 
@@ -63,13 +67,21 @@ training:
 
 traits:
   power_level: 0
+  categories:
+    - { id: basic,      label: Basic }
+    - { id: background, label: Background }
+    - { id: origin,     label: Origin, max: 1 }
+    - { id: physique,   label: Physique }
   list:
-    - { id: quick,       label: Quick,       cost: -1, description: "Fast on your feet, quicker to react.",       modifiers: [{ field: agility, delta: 1 }] }
-    - { id: sharp_eyed,  label: Sharp-eyed,  cost: -1, description: "You notice what others miss.",                modifiers: [{ field: perception, delta: 1 }] }
-    - { id: strong_arm,  label: Strong arm,  cost: -1, description: "Raw physical power.",                        modifiers: [{ field: strength, delta: 1 }] }
-    - { id: frail,       label: Frail,       cost: 1,  description: "Your body gives out sooner than most.",      modifiers: [{ field: endurance, delta: -1 }] }
-    - { id: clumsy,      label: Clumsy,      cost: 1,  description: "You trip over your own feet.",                modifiers: [{ field: agility, delta: -1 }] }
-    - { id: jack_of_all, label: Jack of all, cost: 0,  description: "Well-read, but never bulked up.",             modifiers: [{ field: knowledge, delta: 1 }, { field: strength, delta: -1 }] }
+    - { id: city_born,   label: City-born,   category: origin,     cost: -1, description: "Raised in the streets; sharp and street-smart.", modifiers: [{ field: perception, delta: 1 }] }
+    - { id: wilds_born,  label: Wilds-born,  category: origin,     cost: -1, description: "Raised far from town, living off the land.",      modifiers: [{ field: endurance, delta: 1 }] }
+    - { id: noble_born,  label: Noble-born,  category: origin,     cost: -1, description: "Raised with tutors and easy answers.",            modifiers: [{ field: knowledge, delta: 1 }] }
+    - { id: quick,       label: Quick,       category: physique,   cost: -1, description: "Fast on your feet, quicker to react.",            modifiers: [{ field: agility, delta: 1 }] }
+    - { id: strong_arm,  label: Strong arm,  category: physique,   cost: -1, description: "Raw physical power.",                             modifiers: [{ field: strength, delta: 1 }] }
+    - { id: frail,       label: Frail,       category: physique,   cost: 1,  description: "Your body gives out sooner than most.",           modifiers: [{ field: endurance, delta: -1 }] }
+    - { id: sharp_eyed,  label: Sharp-eyed,  category: basic,      cost: -1, description: "You notice what others miss.",                    modifiers: [{ field: perception, delta: 1 }] }
+    - { id: clumsy,      label: Clumsy,      category: basic,      cost: 1,  description: "You trip over your own feet.",                     modifiers: [{ field: agility, delta: -1 }] }
+    - { id: jack_of_all, label: Jack of all, category: background, cost: 0,  description: "Well-read, but never bulked up.",                  modifiers: [{ field: knowledge, delta: 1 }, { field: strength, delta: -1 }] }
 
 sections:
   - label: Bio

@@ -60,7 +60,9 @@ export const isBaseField = (f: Field): f is NumberField => f.type === 'number' &
  * fields' value comes from spent skill points, not a stored number.
  */
 export type TraitModifier = { field: string; delta: number }
-export type Trait = { id: string; label: string; cost: number; description: string; modifiers: TraitModifier[] }
+/** A group traits are picked from (e.g. Origin). max caps how many of that group can be picked. */
+export type TraitCategory = { id: string; label: string; max: number }
+export type Trait = { id: string; label: string; cost: number; description: string; category: string; modifiers: TraitModifier[] }
 
 /**
  * Skill point training. Points are granted on finishing a character and on each level up
@@ -78,6 +80,7 @@ export type Rules = {
   /** The "level" row, if the sheet has one. */
   level?: LevelItem
   traits: Trait[]
+  traitCategories: TraitCategory[]
   /** GM's default budget target for trait costs (usually 0); adjustable at runtime. */
   powerLevel: number
 }
@@ -249,14 +252,34 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     return [{ id: r.id, label: String(r.label ?? r.id), dice }]
   })
 
-  // traits: { power_level: 0, list: [{ id, label, cost, description?, modifiers: [{field, delta}] }] }
+  // traits: { power_level: 0, categories: [{id, label, max?}], list: [{ id, label, cost, category, description?, modifiers: [{field, delta}] }] }
   const rawTraits = raw?.traits ?? {}
   const powerLevel = Number(rawTraits.power_level ?? 0)
   if (!Number.isFinite(powerLevel)) fail('traits.power_level: must be a number')
 
+  const traitCategories: TraitCategory[] = ((rawTraits.categories ?? []) as any[]).flatMap((cat: any, i: number) => {
+    const where = `traits.categories[${i}]`
+    if (!checkId(cat?.id, where)) return []
+    let max = Infinity
+    if (cat?.max !== undefined) {
+      max = Number(cat.max)
+      if (!Number.isInteger(max) || max < 1) {
+        fail(`${where} "${cat.id}": max must be a whole number ≥ 1`)
+        return []
+      }
+    }
+    return [{ id: cat.id, label: String(cat.label ?? cat.id), max }]
+  })
+  const categoryIds = new Set(traitCategories.map((cat) => cat.id))
+
   const traits: Trait[] = ((rawTraits.list ?? []) as any[]).flatMap((t: any, i: number) => {
     const where = `traits.list[${i}]`
     if (!checkId(t?.id, where)) return []
+    const category = String(t?.category ?? '')
+    if (!categoryIds.has(category)) {
+      fail(`${where} "${t.id}": unknown category "${category}" (define it under traits.categories)`)
+      return []
+    }
     const cost = Number(t?.cost)
     if (!Number.isInteger(cost) || cost < -2 || cost > 2) {
       fail(`${where} "${t.id}": cost must be a whole number from -2 to 2`)
@@ -285,7 +308,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       return []
     }
     const description = String(t.description ?? '').trim() || 'MISSING DESCRIPTION'
-    return [{ id: t.id, label: String(t.label ?? t.id), cost, description, modifiers }]
+    return [{ id: t.id, label: String(t.label ?? t.id), cost, description, category, modifiers }]
   })
 
   if (errors.length) {
@@ -300,6 +323,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     training,
     level: levelItem,
     traits,
+    traitCategories,
     powerLevel,
   }
 }

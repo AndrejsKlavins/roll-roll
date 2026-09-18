@@ -11,7 +11,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
-import { isBaseField, type Field, type NumberField, type Rules } from './rules'
+import { isBaseField, type Field, type NumberField, type Rules, type Trait } from './rules'
 
 export { isBaseField }
 
@@ -488,11 +488,18 @@ export class Session {
     return c.traits.reduce((sum, id) => sum + (this.rules.traits.find((t) => t.id === id)?.cost ?? 0), 0)
   }
 
+  /** The character's picked traits belonging to one category. */
+  traitsInCategory(c: Character, categoryId: string): Trait[] {
+    return c.traits.flatMap((id) => this.rules.traits.filter((t) => t.id === id && t.category === categoryId))
+  }
+
   /** Picks a trait, nudging its modifiers' fields. Draft: not logged. Active: adjusts base values. */
   addTrait(charId: string, traitId: string, by: string) {
     const c = this.characters.get(charId)
     const trait = this.rules.traits.find((t) => t.id === traitId)
     if (!c || !trait || c.traits.includes(traitId) || c.traits.length >= MAX_TRAITS) return false
+    const category = this.rules.traitCategories.find((cat) => cat.id === trait.category)
+    if (category && this.traitsInCategory(c, category.id).length >= category.max) return false
     const changes = trait.modifiers.map((m) => {
       const f = this.rules.fields.get(m.field) as NumberField
       const from = c.status === 'draft' ? Number(c.values[f.id] ?? f.default) : this.baseOf(c, f)

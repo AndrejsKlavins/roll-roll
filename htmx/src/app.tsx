@@ -200,8 +200,12 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
-  const pushTraits = (char: Character) => {
-    const parts = html(<TraitsSection session={session} char={char} oob />) + html(<DerivedUpdates session={session} char={char} />)
+  /** fieldIds: the trait's modifier targets, so their steppers refresh along with derived stats. */
+  const pushTraits = (char: Character, fieldIds: string[]) => {
+    const parts =
+      fieldIds.map((id) => html(<FieldView session={session} char={char} field={rules.fields.get(id)!} oob />)).join('') +
+      html(<TraitsSection session={session} char={char} oob />) +
+      html(<DerivedUpdates session={session} char={char} />)
     hub.send(toOwnerAndGm(char.id), (client) =>
       client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
     )
@@ -211,7 +215,9 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
     const body = await form(c)
-    if (session.addTrait(char.id, body.trait ?? '', actorName(c))) pushTraits(char)
+    const trait = rules.traits.find((t) => t.id === body.trait)
+    if (trait && session.addTrait(char.id, trait.id, actorName(c)))
+      pushTraits(char, trait.modifiers.map((m) => m.field))
     return noContent(c)
   })
 
@@ -219,7 +225,9 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
     const body = await form(c)
-    if (session.removeTrait(char.id, body.trait ?? '', actorName(c))) pushTraits(char)
+    const trait = rules.traits.find((t) => t.id === body.trait)
+    if (trait && session.removeTrait(char.id, trait.id, actorName(c)))
+      pushTraits(char, trait.modifiers.map((m) => m.field))
     return noContent(c)
   })
 
@@ -230,7 +238,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
         (client) => client.role === 'gm',
         () => `<b id="power-level-value" hx-swap-oob="true">${session.powerLevel}</b>`,
       )
-      for (const char of session.characters.values()) pushTraits(char)
+      for (const char of session.characters.values()) pushTraits(char, [])
     }
     return noContent(c)
   })

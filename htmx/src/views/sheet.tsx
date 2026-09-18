@@ -9,7 +9,7 @@
 // open when the row itself is replaced by a live update.
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
-import type { Derived, Field, LevelItem, NumberField } from '../rules'
+import type { Derived, Field, LevelItem, NumberField, Trait, TraitCategory } from '../rules'
 import { isBaseField, MAX_TRAITS, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
@@ -460,66 +460,143 @@ export function DerivedView(props: { session: Session; char: Character; oob?: bo
 
 const signed = (n: number) => (n === 0 ? '0' : n > 0 ? `+${n}` : String(n))
 
+/** One picked trait: title, cost (right-aligned) and remove button, then its description. */
+function TraitBlock(props: { char: Character; trait: Trait }) {
+  const { char, trait: t } = props
+  return (
+    <li class="trait-block">
+      <div class="trait-block-head">
+        <span class="trait-title">{t.label}</span>
+        <b class={t.cost < 0 ? 'cost buff' : t.cost > 0 ? 'cost flaw' : 'cost neutral'}>{signed(t.cost)}</b>
+        <button
+          type="button"
+          class="small link"
+          hx-post={`/c/${char.id}/trait/remove`}
+          hx-vals={JSON.stringify({ trait: t.id })}
+          hx-swap="none"
+        >
+          remove
+        </button>
+      </div>
+      <p class="trait-desc">{t.description}</p>
+    </li>
+  )
+}
+
+/** One category's picked traits, shown only once it has at least one. */
+function TraitCategoryBlock(props: { session: Session; char: Character; category: TraitCategory }) {
+  const { session, char, category } = props
+  const chosen = session.traitsInCategory(char, category.id)
+  if (chosen.length === 0) return null
+  return (
+    <div class="trait-category">
+      <h4 class="trait-category-label">{category.label}</h4>
+      <ul class="trait-list">
+        {chosen.map((t) => (
+          <TraitBlock char={char} trait={t} />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 /**
- * Traits picked at creation (or later, if allowed): each nudges a bundle of abilities. The cost
- * total vs. the GM's power level is shown for reference only — nothing here is enforced.
+ * "Add Trait" opens a dialog: step 1 lists categories that still have room (as buttons), step 2
+ * lists that category's remaining traits (as buttons, with cost and description), or back.
+ * Picking one submits it; the dialog closes itself because the whole section, dialog included,
+ * gets replaced by the live update that follows (fresh Alpine state = closed).
+ */
+function AddTraitDialog(props: { session: Session; char: Character }) {
+  const { session, char } = props
+  const { rules } = session
+  if (char.traits.length >= MAX_TRAITS) return <p class="muted small">Maximum {MAX_TRAITS} traits picked.</p>
+  const addable = rules.traitCategories
+    .map((category) => ({
+      category,
+      options: rules.traits.filter((t) => t.category === category.id && !char.traits.includes(t.id)),
+    }))
+    .filter(({ category, options }) => options.length > 0 && session.traitsInCategory(char, category.id).length < category.max)
+  if (addable.length === 0) return null
+  return (
+    <div class="trait-add" x-data="{ open: false, cat: null }">
+      <button type="button" x-on:click="open = true; cat = null">
+        + Add Trait
+      </button>
+      <div class="trait-dialog-backdrop" x-show="open" x-cloak x-on:click="open = false"></div>
+      <div class="trait-dialog" x-show="open" x-cloak role="dialog" aria-modal="true" aria-label="Add a trait">
+        <div class="trait-dialog-step" x-show="!cat" x-cloak>
+          <div class="trait-dialog-head">
+            <span>Choose a category</span>
+            <button type="button" class="icon" x-on:click="open = false" aria-label="Close">
+              ✕
+            </button>
+          </div>
+          <div class="trait-dialog-options">
+            {addable.map(({ category }) => (
+              <button type="button" x-on:click={`cat = ${JSON.stringify(category.id)}`}>
+                {category.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {addable.map(({ category, options }) => (
+          <div class="trait-dialog-step" x-show={`cat === ${JSON.stringify(category.id)}`} x-cloak>
+            <div class="trait-dialog-head">
+              <button type="button" class="small link" x-on:click="cat = null">
+                ← Back
+              </button>
+              <span>{category.label}</span>
+              <button type="button" class="icon" x-on:click="open = false" aria-label="Close">
+                ✕
+              </button>
+            </div>
+            <div class="trait-dialog-options">
+              {options.map((t) => (
+                <button
+                  type="button"
+                  class="trait-choice"
+                  hx-post={`/c/${char.id}/trait/add`}
+                  hx-vals={JSON.stringify({ trait: t.id })}
+                  hx-swap="none"
+                >
+                  <span class="trait-choice-head">
+                    <b>{t.label}</b>
+                    <em class={t.cost < 0 ? 'cost buff' : t.cost > 0 ? 'cost flaw' : 'cost neutral'}>{signed(t.cost)}</em>
+                  </span>
+                  <span class="trait-choice-desc">{t.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Traits picked at creation (or later, if allowed): each nudges a bundle of abilities, grouped
+ * by category. The cost total vs. the GM's power level is shown for reference only — nothing
+ * here is enforced (category and overall picks caps are, via AddTraitDialog).
  */
 export function TraitsSection(props: { session: Session; char: Character; oob?: boolean }) {
   const { session, char } = props
   const { rules } = session
   if (rules.traits.length === 0) return null
-  const chosen = char.traits.flatMap((id) => rules.traits.filter((t) => t.id === id))
   const sum = session.traitCost(char)
   const target = session.powerLevel
-  const available = rules.traits.filter((t) => !char.traits.includes(t.id))
-  const canAddMore = char.traits.length < MAX_TRAITS
   return (
     <fieldset id={`traits-${char.id}`} class="traits" hx-swap-oob={oobAttr(props.oob)}>
       <legend>Traits</legend>
       <div class="trait-budget">
         <span class={sum === target ? 'budget ok' : 'budget off'}>
-          {signed(sum)} / {signed(target)}
+          Selected trait total value {signed(sum)} / Required trait total value {signed(target)}
         </span>
       </div>
-      {chosen.length > 0 && (
-        <ul class="trait-list">
-          {chosen.map((t) => (
-            <li class="trait-block">
-              <div class="trait-block-head">
-                <span class="trait-title">{t.label}</span>
-                <b class={t.cost < 0 ? 'cost buff' : t.cost > 0 ? 'cost flaw' : 'cost neutral'}>{signed(t.cost)}</b>
-                <button
-                  type="button"
-                  class="small link"
-                  hx-post={`/c/${char.id}/trait/remove`}
-                  hx-vals={JSON.stringify({ trait: t.id })}
-                  hx-swap="none"
-                >
-                  remove
-                </button>
-              </div>
-              <p class="trait-desc">{t.description}</p>
-            </li>
-          ))}
-        </ul>
-      )}
-      {canAddMore && available.length > 0 ? (
-        <form class="add-trait" hx-post={`/c/${char.id}/trait/add`} hx-swap="none">
-          <select name="trait" required>
-            <option value="" disabled selected>
-              Add a trait…
-            </option>
-            {available.map((t) => (
-              <option value={t.id} title={t.description}>
-                {t.label} ({signed(t.cost)})
-              </option>
-            ))}
-          </select>
-          <button type="submit">Add</button>
-        </form>
-      ) : (
-        !canAddMore && <p class="muted small">Maximum {MAX_TRAITS} traits picked.</p>
-      )}
+      {rules.traitCategories.map((cat) => (
+        <TraitCategoryBlock session={session} char={char} category={cat} />
+      ))}
+      <AddTraitDialog session={session} char={char} />
     </fieldset>
   )
 }
