@@ -83,7 +83,7 @@ describe('character stages', () => {
     expect(s.baseOf(c, strength)).toBe(5)
     expect(s.valueOf(c, strength)).toBe(4)
 
-    // Base stays within creation range; current may exceed it.
+    // Base stays within its declared range; current may still be buffed past it.
     expect(s.adjustBase(c.id, 'strength', 1, 'GM')).toBe(false)
     s.setField(c.id, 'strength', 7, 'Mara')
     expect(s.valueOf(c, strength)).toBe(7)
@@ -113,14 +113,28 @@ describe('character stages', () => {
     expect(s.valueOf(c, strength)).toBe(3)
   })
 
-  test('draft changes cannot touch base; active base fields cannot go below 0', async () => {
+  test('draft changes cannot touch base; active base fields floor at their own min', async () => {
     const { open } = await setup()
     const s = open()
     const c = s.createCharacter('Mara')
     expect(s.adjustBase(c.id, 'strength', 1, 'Mara')).toBe(false)
     s.finalizeCharacter(c.id, 'Mara')
     s.setField(c.id, 'strength', -5, 'Mara')
-    expect(s.valueOf(c, s.rules.fields.get('strength') as NumberField)).toBe(0)
+    expect(s.valueOf(c, s.rules.fields.get('strength') as NumberField)).toBe(1) // field min is 1
+
+    // A field with no declared min/max scales indefinitely, in play and as a base value.
+    const { open: openUnbounded } = await setup(RULES.replace(
+      '{ id: strength, label: Strength, type: number, min: 1, max: 5, default: 3 }',
+      '{ id: strength, label: Strength, type: number, default: 3 }',
+    ))
+    const u = openUnbounded()
+    const uc = u.createCharacter('Finn')
+    u.finalizeCharacter(uc.id, 'Finn')
+    u.setField(uc.id, 'strength', -5, 'Finn')
+    expect(u.valueOf(uc, u.rules.fields.get('strength') as NumberField)).toBe(-5)
+    u.setField(uc.id, 'strength', 42, 'Finn')
+    expect(u.valueOf(uc, u.rules.fields.get('strength') as NumberField)).toBe(42)
+    expect(u.adjustBase(uc.id, 'strength', 100, 'GM')).toBe(true)
   })
 })
 

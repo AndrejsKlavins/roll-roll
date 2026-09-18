@@ -178,11 +178,14 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       let field: Field
       switch (f.type) {
         case 'number': {
-          const min = Number(f.min ?? 0)
-          const max = Number(f.max ?? 10)
+          // Omit min/max for a field that scales without a hard ceiling/floor (e.g. an ability
+          // pushed past its scale's own top or bottom step just clamps to that step's word).
+          const min = f.min !== undefined ? Number(f.min) : -Infinity
+          const max = f.max !== undefined ? Number(f.max) : Infinity
           const trained = Boolean(f.trained ?? s?.trained ?? false)
           const base = trained || Boolean(f.base ?? s?.base ?? false)
-          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? min), base, trained }
+          const fallbackDefault = Number.isFinite(min) ? min : 0
+          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? fallbackDefault), base, trained }
           const scaleName = f.scale ?? s?.scale
           if (scaleName !== undefined && scaleName !== null) {
             const scale = scales.get(String(scaleName))

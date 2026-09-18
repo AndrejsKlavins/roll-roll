@@ -98,22 +98,24 @@ sections:
       # Level counter + "Level up" button (each level up grants Max skill points).
       - { id: level,      label: Level,      type: level }
 
+  # No min/max: abilities scale indefinitely either way. The "rating" scale's own top and
+  # bottom step (excellent/epic... abysmal) is used for anything beyond its defined range.
   - label: Core Abilities
     base: true
     scale: rating
     fields:
-      - { id: strength,   label: Strength,   type: number, min: 1, max: 5, default: 3, icon: strength.svg,   color: "#c74446" }
-      - { id: agility,    label: Agility,    type: number, min: 1, max: 5, default: 3, icon: agility.svg,    color: "#a7a758" }
-      - { id: perception, label: Perception, type: number, min: 1, max: 5, default: 3, icon: perception.svg, color: "#ebac4d" }
-      - { id: knowledge,  label: Knowledge,  type: number, min: 1, max: 5, default: 3, icon: knowledge.svg,  color: "#7dadc8" }
-      - { id: intuition,  label: Intuition,  type: number, min: 1, max: 5, default: 3, icon: intuition.svg,  color: "#af6d77" }
+      - { id: strength,   label: Strength,   type: number, default: 3, icon: strength.svg,   color: "#c74446" }
+      - { id: agility,    label: Agility,    type: number, default: 3, icon: agility.svg,    color: "#a7a758" }
+      - { id: perception, label: Perception, type: number, default: 3, icon: perception.svg, color: "#ebac4d" }
+      - { id: knowledge,  label: Knowledge,  type: number, default: 3, icon: knowledge.svg,  color: "#7dadc8" }
+      - { id: intuition,  label: Intuition,  type: number, default: 3, icon: intuition.svg,  color: "#af6d77" }
 
   - label: Supporting Abilities
     base: true
     scale: rating
     fields:
-      - { id: endurance, label: Endurance, type: number, min: 1, max: 5, default: 3, icon: endurance.svg, color: "#975638" }
-      - { id: resolve,   label: Resolve,   type: number, min: 1, max: 5, default: 3, icon: resolve.svg,   color: "#556a97" }
+      - { id: endurance, label: Endurance, type: number, default: 3, icon: endurance.svg, color: "#975638" }
+      - { id: resolve,   label: Resolve,   type: number, default: 3, icon: resolve.svg,   color: "#556a97" }
 
   # Calculated stats (type: derived) — read-only numbers worked out from the formula.
   - label: Body

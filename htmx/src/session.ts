@@ -105,7 +105,8 @@ const CHANGE_TYPES = new Set<EventData['type']>([
   'session_started',
 ])
 
-/** In play a modified base field may leave its creation range (e.g. a 5 buffed to 6), but not go below 0. */
+/** In play a modified base field may leave its declared max (e.g. a 5 buffed to 6); a field's own
+ *  min still applies (-Infinity if it has none — see rules.ts), so this only raises the ceiling. */
 export const PLAY_MAX = 99
 
 /** Traits a character may pick (during creation or, if the GM allows it, later). */
@@ -339,10 +340,18 @@ export class Session {
     return stat ? Math.max(0, Math.round(this.scope(c.id, { base: true })[stat] ?? 0)) : 0
   }
 
+  /** A based field's play ceiling: its own max, or PLAY_MAX if that's higher (room to be buffed). */
+  private playMax(f: NumberField) {
+    return Math.max(f.max, PLAY_MAX)
+  }
+
   /** The value shown on the sheet and used by formulas. */
   valueOf(c: Character, f: Field): number | string {
     if (f.type === 'text') return String(c.values[f.id] ?? f.default)
-    if (isBaseField(f) && c.status === 'active') return Math.max(0, this.baseOf(c, f) + (c.adj[f.id] ?? 0))
+    if (isBaseField(f) && c.status === 'active') {
+      const current = this.baseOf(c, f) + (c.adj[f.id] ?? 0)
+      return Math.min(this.playMax(f), Math.max(f.min, current))
+    }
     if (isBaseField(f) && f.trained) return this.baseOf(c, f) // draft: untrained
     return Number(c.values[f.id] ?? f.default)
   }
@@ -485,7 +494,11 @@ export class Session {
       const n = Math.round(Number(raw))
       if (!Number.isFinite(n)) return false
       const [min, max] =
-        f.type === 'track' ? [0, f.max] : isBaseField(f) && c.status === 'active' ? [0, PLAY_MAX] : [f.min, f.max]
+        f.type === 'track'
+          ? [0, f.max]
+          : isBaseField(f) && c.status === 'active'
+            ? [f.min, this.playMax(f)]
+            : [f.min, f.max]
       to = Math.min(max, Math.max(min, n))
     }
     if (to === from) return false

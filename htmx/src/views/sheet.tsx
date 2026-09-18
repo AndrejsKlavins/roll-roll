@@ -10,7 +10,7 @@
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
 import type { Derived, Field, LevelItem, NumberField, Trait, TraitCategory } from '../rules'
-import { isBaseField, MAX_TRAITS, type Character, type Session } from '../session'
+import { isBaseField, MAX_TRAITS, PLAY_MAX, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 export const fieldDomId = (charId: string, fieldId: string) => `f-${charId}-${fieldId}`
@@ -34,14 +34,27 @@ function FieldName(props: { field: Field | Derived | LevelItem; children?: Child
   )
 }
 
+/**
+ * A field's value may scale past its scale's own entries (e.g. an ability boosted beyond 5, or
+ * dropped below 1): clamp to the lowest/highest defined step so it still reads as a word
+ * ("abysmal", "epic") instead of falling back to a bare number.
+ */
+function scaleWordAt(scale: Record<number, string>, value: number): string {
+  const keys = Object.keys(scale).map(Number)
+  const clamped = Math.max(Math.min(...keys), Math.min(Math.max(...keys), value))
+  return scale[clamped] ?? String(value)
+}
+
 /** Shown value of a number field: word + dots for fields with a scale, otherwise the number. */
 function ValueDisplay(props: { field: NumberField; value: number }) {
   const { field: f, value } = props
   if (!f.scale) return <>{String(value)}</> // a bare 0 child would render as nothing
   const dots = Math.max(0, Math.min(value, 10))
+  // Declutter untrained (0) skills in the closed row; an ability at/below 0 still names itself.
+  const hideWord = f.trained && value === 0
   return (
-    <span class={value === 0 ? 'rating zero' : 'rating'}>
-      <span class="rating-word">{f.scale[value] ?? String(value)}</span>
+    <span class={hideWord ? 'rating zero' : 'rating'}>
+      <span class="rating-word">{scaleWordAt(f.scale, value)}</span>
       <span class="dots" aria-hidden="true">
         {Array.from({ length: dots }, () => (
           <i></i>
@@ -51,7 +64,7 @@ function ValueDisplay(props: { field: NumberField; value: number }) {
   )
 }
 
-const scaleWord = (f: NumberField, value: number) => f.scale?.[value] ?? String(value)
+const scaleWord = (f: NumberField, value: number) => (f.scale ? scaleWordAt(f.scale, value) : String(value))
 
 function Stepper(props: {
   class: string
@@ -244,7 +257,7 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
         <output class="value">
           <ValueDisplay field={f} value={current} />
         </output>
-        <Stepper class="play" url={`${post}/adjust`} field={f} value={current} min={0} max={Infinity} />
+        <Stepper class="play" url={`${post}/adjust`} field={f} value={current} min={f.min} max={Math.max(f.max, PLAY_MAX)} />
         {!f.trained && (
           <Stepper class="base-edit" url={`${post}/adjust-base`} field={f} value={base} min={f.min} max={f.max} />
         )}
