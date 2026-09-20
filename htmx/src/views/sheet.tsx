@@ -527,9 +527,12 @@ function AddTraitDialog(props: { session: Session; char: Character }) {
   const addable = rules.traitCategories
     .map((category) => ({
       category,
-      options: rules.traits.filter(
-        (t) => t.category === category.id && !char.traits.includes(t.id) && !t.tags.some((tag) => pickedTags.has(tag)),
-      ),
+      options: (() => {
+        const options = rules.traits.filter(
+          (t) => t.category === category.id && !char.traits.includes(t.id) && !t.tags.some((tag) => pickedTags.has(tag)),
+        )
+        return category.sortAlpha ? options.sort((a, b) => a.label.localeCompare(b.label)) : options
+      })(),
     }))
     .filter(({ category, options }) => options.length > 0 && session.traitsInCategory(char, category.id).length < category.max)
   if (addable.length === 0) return null

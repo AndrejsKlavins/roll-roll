@@ -65,8 +65,12 @@ export type AbilityModifier = { kind: 'ability'; field: string; delta: number }
 export type SkillPointsModifier = { kind: 'skill_points'; field: string; points: number }
 export type StatBonusModifier = { kind: 'stat_bonus'; stat: string; delta: number }
 export type TraitModifier = AbilityModifier | SkillPointsModifier | StatBonusModifier
-/** A group traits are picked from (e.g. Origin). max caps how many of that group can be picked. */
-export type TraitCategory = { id: string; label: string; max: number }
+/**
+ * A group traits are picked from (e.g. Origin). max caps how many of that group can be picked.
+ * sortAlpha: offer its traits alphabetically ("sort: alpha" in rules.yaml) — otherwise they're
+ * offered in rules.yaml list order (e.g. Basic follows the ability order on the sheet).
+ */
+export type TraitCategory = { id: string; label: string; max: number; sortAlpha: boolean }
 /**
  * "tags" mark a trait as mutually exclusive with any other trait sharing a tag (e.g. a whole
  * ability's +1/+2/-1/-2 variants tagged "base_strength" so only one can ever be picked).
@@ -288,7 +292,11 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
         return []
       }
     }
-    return [{ id: cat.id, label: String(cat.label ?? cat.id), max }]
+    if (cat?.sort !== undefined && cat.sort !== 'alpha') {
+      fail(`${where} "${cat.id}": sort must be "alpha" (or omitted)`)
+      return []
+    }
+    return [{ id: cat.id, label: String(cat.label ?? cat.id), max, sortAlpha: cat?.sort === 'alpha' }]
   })
   const categoryIds = new Set(traitCategories.map((cat) => cat.id))
 

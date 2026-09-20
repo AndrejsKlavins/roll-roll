@@ -38,7 +38,9 @@
 #
 # Every trait belongs to one of "categories" (each gets its own "add" picker on the
 # sheet). "max" caps how many from that category can be picked at once (omit for no
-# cap) — once hit, that category's "add" picker is hidden, e.g. Origin: max 1.
+# cap) — once hit, that category's "add" picker is hidden, e.g. Origin: max 1. Traits
+# are offered in rules.yaml list order by default (e.g. Basic follows the abilities'
+# order on the sheet) — add "sort: alpha" to a category to offer its traits A-Z instead.
 #
 # "tags" (optional) make traits mutually exclusive: picking one hides every other trait
 # sharing any of its tags, e.g. Strong/Very strong/Weak/Very weak all tagged "base_strength"
@@ -76,12 +78,39 @@ traits:
   categories:
     - { id: basic,      label: Basic }
     - { id: background, label: Background }
-    - { id: origin,     label: Origin, max: 1 }
+    - { id: origin,     label: Origin, max: 1, sort: alpha }
     - { id: physique,   label: Physique }
   list:
-    - { id: city_born,   label: City-born,   category: origin,     cost: -1, description: "Raised in the streets; sharp and street-smart.", modifiers: [{ field: perception, delta: 1 }] }
-    - { id: wilds_born,  label: Wilds-born,  category: origin,     cost: -1, description: "Raised far from town, living off the land.",      modifiers: [{ field: endurance, delta: 1 }] }
-    - { id: noble_born,  label: Noble-born,  category: origin,     cost: -1, description: "Raised with tutors and easy answers.",            modifiers: [{ field: knowledge, delta: 1 }] }
+    - { id: raised_in_wilds,     label: Raised in Wilds,     category: origin, cost: 0,
+        description: "+1 Perception, +1 Agility, -2 Knowledge, -1 Manipulation, +4 skill points to Outdoorsman.",
+        modifiers: [{ field: perception, delta: 1 }, { field: agility, delta: 1 }, { field: knowledge, delta: -2 }, { field: manipulation, skill_points: -1 }, { field: outdoorsman, skill_points: 4 }] }
+    - { id: nobility,            label: Nobility,            category: origin, cost: -1,
+        description: "+1 Intuition, +1 Knowledge, +4 skill points to Melee combat, +4 skill points to Manipulation, -1 Resolve, -1 Perception, -1 Endurance.",
+        modifiers: [{ field: intuition, delta: 1 }, { field: knowledge, delta: 1 }, { field: melee_combat, skill_points: 4 }, { field: manipulation, skill_points: 4 }, { field: resolve, delta: -1 }, { field: perception, delta: -1 }, { field: endurance, delta: -1 }] }
+    - { id: street_urchin,       label: Street urchin,       category: origin, cost: -1,
+        description: "+1 Perception, +1 Agility, -2 Knowledge, +4 skill points to Thieving, +4 skill points to Stealth, +1 Evasion.",
+        modifiers: [{ field: perception, delta: 1 }, { field: agility, delta: 1 }, { field: knowledge, delta: -2 }, { field: thieving, skill_points: 4 }, { field: stealth, skill_points: 4 }, { field: evasion, delta: 1 }] }
+    - { id: raised_by_monks,     label: Raised by monks,     category: origin, cost: 0,
+        description: "+1 Resolve, +1 Endurance, -1 Intuition.",
+        modifiers: [{ field: resolve, delta: 1 }, { field: endurance, delta: 1 }, { field: intuition, delta: -1 }] }
+    - { id: brawler,             label: Brawler,             category: origin, cost: 0,
+        description: "+1 Strength, -1 Knowledge, -1 Intuition, +4 skill points to Melee combat, +1 Health.",
+        modifiers: [{ field: strength, delta: 1 }, { field: knowledge, delta: -1 }, { field: intuition, delta: -1 }, { field: melee_combat, skill_points: 4 }, { field: health, delta: 1 }] }
+    - { id: gang_leader,         label: Gang leader,         category: origin, cost: 0,
+        description: "+1 Intuition, -1 Endurance, -1 Strength, +4 skill points to Manipulation, +4 skill points to Melee combat.",
+        modifiers: [{ field: intuition, delta: 1 }, { field: endurance, delta: -1 }, { field: strength, delta: -1 }, { field: manipulation, skill_points: 4 }, { field: melee_combat, skill_points: 4 }] }
+    - { id: raised_by_performers, label: Raised by performers, category: origin, cost: 0,
+        description: "+1 Agility, -2 Knowledge, +4 skill points to Acrobatics, +4 skill points to Performance, +1 Evasion.",
+        modifiers: [{ field: agility, delta: 1 }, { field: knowledge, delta: -2 }, { field: acrobatics, skill_points: 4 }, { field: performance, skill_points: 4 }, { field: evasion, delta: 1 }] }
+    - { id: spoiled_child,       label: Spoiled Child,       category: origin, cost: 1,
+        description: "-1 Stamina, -1 Willpower, -1 Health, -1 Mind.",
+        modifiers: [{ field: stamina, delta: -1 }, { field: willpower, delta: -1 }, { field: health, delta: -1 }, { field: mind, delta: -1 }] }
+    - { id: bookworm,            label: Bookworm,            category: origin, cost: 0,
+        description: "+2 Knowledge, -1 Strength, -1 Agility, -1 Endurance, +4 skill points to Medicine, +4 skill points to Theory.",
+        modifiers: [{ field: knowledge, delta: 2 }, { field: strength, delta: -1 }, { field: agility, delta: -1 }, { field: endurance, delta: -1 }, { field: medicine, skill_points: 4 }, { field: theory, skill_points: 4 }] }
+    - { id: abusive_parents,     label: Abusive parents,     category: origin, cost: 0,
+        description: "+1 Resolve, +1 Endurance, -2 Mind, -2 Health.",
+        modifiers: [{ field: resolve, delta: 1 }, { field: endurance, delta: 1 }, { field: mind, delta: -2 }, { field: health, delta: -2 }] }
     # Stealth (Big/Small) and the performance/manipulation roll bonus (Beautiful/Ugly) are
     # situational, not a stat we can automate yet (no roll system, no per-roll modifiers) — kept
     # in the description only, for whoever resolves the roll to apply by hand.
@@ -113,8 +142,26 @@ traits:
     - { id: very_intuitive,       label: Very intuitive,       category: basic, tags: [base_intuition],  cost: -2, description: "+2 Intuition",  modifiers: [{ field: intuition, delta: 2 }] }
     - { id: unintuitive,          label: Unintuitive,          category: basic, tags: [base_intuition],  cost: 1,  description: "-1 Intuition",  modifiers: [{ field: intuition, delta: -1 }] }
     - { id: very_unintuitive,     label: Very unintuitive,     category: basic, tags: [base_intuition],  cost: 2,  description: "-2 Intuition",  modifiers: [{ field: intuition, delta: -2 }] }
-    - { id: jack_of_all, label: Jack of all, category: background, cost: 0,  description: "Well-read, but never bulked up.",                  modifiers: [{ field: knowledge, delta: 1 }, { field: strength, delta: -1 }] }
-    - { id: hunter_background, label: Hunter background, category: background, cost: -2, description: "Grew up hunting and living off the land.", modifiers: [{ field: outdoorsman, skill_points: 4 }, { field: ranged_combat, skill_points: 4 }] }
+    # "starts with gear/money" isn't tracked by anything in the system yet (no inventory/money
+    # mechanic) — kept in the description only, same treatment as other not-yet-automatable bits.
+    - { id: military, label: Military, category: background, cost: -1,
+        description: "+4 skill points to Melee combat, +4 skill points to Ranged combat. Starts with basic combat gear.",
+        modifiers: [{ field: melee_combat, skill_points: 4 }, { field: ranged_combat, skill_points: 4 }] }
+    - { id: merchant, label: Merchant, category: background, cost: -1,
+        description: "+4 skill points to Manipulation, +4 skill points to Performance. Starts the game with 50% more money than others.",
+        modifiers: [{ field: manipulation, skill_points: 4 }, { field: performance, skill_points: 4 }] }
+    - { id: thief, label: Thief, category: background, cost: -1,
+        description: "+4 skill points to Thieving, +4 skill points to Stealth. Starts with basic thieving gear.",
+        modifiers: [{ field: thieving, skill_points: 4 }, { field: stealth, skill_points: 4 }] }
+    - { id: healer, label: Healer, category: background, cost: -1,
+        description: "+4 skill points to Medicine, +4 skill points to Theory. Starts with basic medic gear.",
+        modifiers: [{ field: medicine, skill_points: 4 }, { field: theory, skill_points: 4 }] }
+    - { id: academy, label: Academy, category: background, cost: -1,
+        description: "+4 skill points to Theory, +4 skill points to Stealth. Starts with one knowledge book.",
+        modifiers: [{ field: theory, skill_points: 4 }, { field: stealth, skill_points: 4 }] }
+    - { id: hunter, label: Hunter, category: background, cost: -1,
+        description: "+4 skill points to Ranged combat, +4 skill points to Outdoorsman. Starts with basic hunter gear.",
+        modifiers: [{ field: ranged_combat, skill_points: 4 }, { field: outdoorsman, skill_points: 4 }] }
 
 sections:
   - label: Bio
