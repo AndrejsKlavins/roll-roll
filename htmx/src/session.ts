@@ -9,13 +9,64 @@
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { evaluate } from './engine/expr'
+import { cryptoRng, evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
 import { isBaseField, type Field, type NumberField, type Rules, type Trait } from './rules'
 
 export { isBaseField }
 
 export type Visibility = 'public' | 'gm' | 'hidden'
+
+export type ChallengeStakes = 'low' | 'normal' | 'high'
+/** One ability's roll: two d6, each shifted by (rank − 3) — see rollChallengeSide(). */
+export type ChallengeSide = { dice: [number, number]; sum: number }
+export type Challenge = {
+  id: string
+  mainAbility: string
+  supportAbility: string
+  mainDifficulty: number
+  supportDifficulty: number
+  stakes: ChallengeStakes
+  charId: string | null
+  approach: string | null
+  /** A trained skill whose rank is split between the two sides (see the skillPoints fields). */
+  skill: string | null
+  mainSkillPoints: number
+  supportSkillPoints: number
+  /** null until rolled. Once rolled, skill points can still change (see setChallengeSkillPoints). */
+  main: ChallengeSide | null
+  support: ChallengeSide | null
+  by: string
+}
+/** One side's result against its target: difference, pass/fail, and stakes-scaled degrees
+ *  (positive = boons, negative = complications; see outcomeFor()). */
+export type SideOutcome = { sum: number; target: number; difference: number; success: boolean; degrees: number }
+export type ChallengeOutcome = { main: SideOutcome; support: SideOutcome; success: boolean }
+
+/**
+ * Rolls one side: 2 d6, each face shifted by (rank − 3) — average (rank 3) is a plain d6, each
+ * rank above/below shifts every face up/down by 1 (faces can go to 0 or below; abilities have
+ * no fixed floor, see rules.ts). rank is rounded to the nearest whole number first.
+ */
+export function rollChallengeSide(rank: number, rng: () => number = () => cryptoRng(6)): ChallengeSide {
+  const shift = Math.round(rank) - 3
+  const dice: [number, number] = [rng() + shift, rng() + shift]
+  return { dice, sum: dice[0] + dice[1] }
+}
+
+/**
+ * One side's outcome against its target. Degrees scale with stakes: low never generates one;
+ * normal grants exactly one (boon if the difference is +3 or more, complication if −3 or less);
+ * high grants one per full 3 points beyond the target, in either direction.
+ */
+export function outcomeFor(sum: number, target: number, stakes: ChallengeStakes): SideOutcome {
+  const difference = sum - target
+  const success = difference >= 0
+  let degrees = 0
+  if (stakes === 'normal') degrees = Math.abs(difference) >= 3 ? Math.sign(difference) : 0
+  else if (stakes === 'high') degrees = Math.sign(difference) * Math.floor(Math.abs(difference) / 3)
+  return { sum, target, difference, success, degrees }
+}
 
 export type EventData =
   | { type: 'character_created'; charId: string; name: string }
@@ -61,6 +112,21 @@ export type EventData =
   | { type: 'skill_points_granted'; charId: string; amount: number; reason: 'creation' | 'level' | 'gm'; by: string }
   // Training: points assigned to a trained field (from/to are point totals).
   | { type: 'skill_trained'; charId: string; skill: string; from: number; to: number; by: string }
+  // Challenges (public-screen board): starting one, a player joining it (charId/approach/skill
+  // all set together, any may be null), rolling it, then optionally re-splitting skill points.
+  | {
+      type: 'challenge_started'
+      challengeId: string
+      mainAbility: string
+      supportAbility: string
+      mainDifficulty: number
+      supportDifficulty: number
+      stakes: ChallengeStakes
+      by: string
+    }
+  | { type: 'challenge_player_set'; challengeId: string; charId: string | null; approach: string | null; skill: string | null; by: string }
+  | { type: 'challenge_rolled'; challengeId: string; main: ChallengeSide; support: ChallengeSide; by: string }
+  | { type: 'challenge_skill_points_set'; challengeId: string; mainSkillPoints: number; supportSkillPoints: number; by: string }
   | { type: 'undo'; target: number; by: string }
   | { type: 'session_started'; by: string }
 
@@ -131,6 +197,8 @@ export class Session {
   readonly names = new Map<string, string>()
   /** GM's current budget target for trait costs; starts at the rules.yaml default. */
   powerLevel: number
+  /** All challenges ever started, in order. The last one (if any) is the "current" one. */
+  readonly challenges: Challenge[] = []
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
@@ -208,6 +276,7 @@ export class Session {
     this.characters.clear()
     this.names.clear()
     this.undone.clear()
+    this.challenges.length = 0
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
     for (const e of this.events) this.apply(e)
     // Draft edits aren't events; layer the saved draft on top.
@@ -313,6 +382,39 @@ export class Session {
         if (!c || !f) break
         if (isBaseField(f) && c.status === 'active') c.adj[f.id] = Number(e.to) - this.baseOf(c, f)
         else c.values[f.id] = e.to
+        break
+      }
+      case 'challenge_started':
+        this.challenges.push({
+          id: e.challengeId,
+          mainAbility: e.mainAbility,
+          supportAbility: e.supportAbility,
+          mainDifficulty: e.mainDifficulty,
+          supportDifficulty: e.supportDifficulty,
+          stakes: e.stakes,
+          charId: null,
+          approach: null,
+          skill: null,
+          mainSkillPoints: 0,
+          supportSkillPoints: 0,
+          main: null,
+          support: null,
+          by: e.by,
+        })
+        break
+      case 'challenge_player_set': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (ch) Object.assign(ch, { charId: e.charId, approach: e.approach, skill: e.skill })
+        break
+      }
+      case 'challenge_rolled': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (ch) Object.assign(ch, { main: e.main, support: e.support })
+        break
+      }
+      case 'challenge_skill_points_set': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (ch) Object.assign(ch, { mainSkillPoints: e.mainSkillPoints, supportSkillPoints: e.supportSkillPoints })
         break
       }
     }
@@ -666,6 +768,98 @@ export class Session {
       }
     }
     return null
+  }
+
+  /** The challenge currently on the public board, if any — always the most recently started. */
+  currentChallenge(): Challenge | null {
+    return this.challenges.at(-1) ?? null
+  }
+
+  private isAbilityField(id: string): id is string {
+    const f = this.rules.fields.get(id)
+    return !!f && isBaseField(f) && !f.trained
+  }
+
+  /** Starts a new challenge, becoming the current one (any previous one falls into history). */
+  startChallenge(
+    opts: {
+      mainAbility: string
+      supportAbility: string
+      mainDifficulty: number
+      supportDifficulty: number
+      stakes: ChallengeStakes
+    },
+    by: string,
+  ) {
+    if (!this.isAbilityField(opts.mainAbility) || !this.isAbilityField(opts.supportAbility)) return null
+    if (!Number.isFinite(opts.mainDifficulty) || !Number.isFinite(opts.supportDifficulty)) return null
+    const challengeId = crypto.randomUUID().slice(0, 8)
+    return this.append({
+      type: 'challenge_started',
+      challengeId,
+      mainAbility: opts.mainAbility,
+      supportAbility: opts.supportAbility,
+      mainDifficulty: Math.round(opts.mainDifficulty),
+      supportDifficulty: Math.round(opts.supportDifficulty),
+      stakes: opts.stakes,
+      by,
+    })
+  }
+
+  /** Sets who's rolling and their approach/skill. Any of the three may be cleared with null. */
+  setChallengePlayer(challengeId: string, charId: string | null, approach: string | null, skill: string | null, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    if (!ch) return null
+    if (charId !== null && !this.characters.has(charId)) return null
+    if (approach !== null && !this.rules.challenges.approaches.some((a) => a.id === approach)) return null
+    if (skill !== null) {
+      const f = this.rules.fields.get(skill)
+      if (!f || f.type !== 'number' || !f.trained) return null
+    }
+    return this.append({ type: 'challenge_player_set', challengeId, charId, approach, skill, by })
+  }
+
+  /** Rolls both sides for the joined player's current ability values. Once per challenge. */
+  rollChallenge(challengeId: string, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    if (!ch || !ch.charId || ch.main) return null
+    const char = this.characters.get(ch.charId)
+    if (!char) return null
+    const mainRank = Number(this.valueOf(char, this.rules.fields.get(ch.mainAbility) as NumberField))
+    const supportRank = Number(this.valueOf(char, this.rules.fields.get(ch.supportAbility) as NumberField))
+    return this.append({
+      type: 'challenge_rolled',
+      challengeId,
+      main: rollChallengeSide(mainRank),
+      support: rollChallengeSide(supportRank),
+      by,
+    })
+  }
+
+  /** Re-splits the declared skill's rank between the two sides (each clamped to 0..rank). */
+  setChallengeSkillPoints(challengeId: string, mainPoints: number, supportPoints: number, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    if (!ch || !ch.main || !ch.skill || !ch.charId) return null
+    const char = this.characters.get(ch.charId)
+    const skillField = this.rules.fields.get(ch.skill) as NumberField | undefined
+    if (!char || !skillField) return null
+    const rank = Math.round(Number(this.baseOf(char, skillField)))
+    const clamp = (n: number) => Math.max(0, Math.min(rank, Math.round(Number(n) || 0)))
+    return this.append({
+      type: 'challenge_skill_points_set',
+      challengeId,
+      mainSkillPoints: clamp(mainPoints),
+      supportSkillPoints: clamp(supportPoints),
+      by,
+    })
+  }
+
+  /** Full outcome (both sides + overall success) for a rolled challenge; null until rolled. */
+  challengeOutcome(ch: Challenge): ChallengeOutcome | null {
+    if (!ch.main || !ch.support) return null
+    const main = outcomeFor(ch.main.sum + ch.mainSkillPoints, ch.mainDifficulty, ch.stakes)
+    const support = outcomeFor(ch.support.sum + ch.supportSkillPoints, ch.supportDifficulty, ch.stakes)
+    return { main, support, success: main.success && support.success }
   }
 
   roll(opts: {

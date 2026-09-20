@@ -4,9 +4,10 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
 import { hub } from './hub'
-import type { Character, RollEvent, Session, Visibility } from './session'
+import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
+import { ChallengeBoard } from './views/challenge'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
-import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, WhoLink } from './views/pages'
+import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
 import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar, TraitsSection } from './views/sheet'
 
 const CHAR_COOKIE = 'char'
@@ -27,11 +28,12 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   app.use('/system/icons/*', serveStatic({ root: './' })) // PNG/WebP icons (SVGs are inlined)
 
   // ---- push helpers -------------------------------------------------------
+  // The table screen has no #feed (its own challenge log covers it) — skip it here.
   const pushRoll = (roll: RollEvent) =>
     hub.send(
-      () => true,
+      (client) => client.role !== 'table',
       (client) => {
-        const entry = RollEntry({ roll, viewer: client.role })
+        const entry = RollEntry({ roll, viewer: client.role as 'player' | 'gm' })
         return entry ? `<div hx-swap-oob="afterbegin:#feed">${html(entry)}</div>` : ''
       },
     )
@@ -107,6 +109,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   })
 
   app.get('/gm', (c) => c.html(<GmPage session={session} playerUrls={opts.playerUrls} qrSvg={opts.qrSvg} />))
+
+  app.get('/table', (c) => c.html(<TablePage session={session} />))
 
   // ---- character actions --------------------------------------------------
   app.post('/c/:id/set', async (c) => {
@@ -245,6 +249,68 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // ---- challenges (public table screen) ------------------------------------
+  // Every action re-renders the whole board, per role, to gm + player + table clients.
+  const pushChallenge = () =>
+    hub.send(
+      () => true,
+      (client) =>
+        html(<ChallengeBoard session={session} role={client.role} viewerCharId={client.charId ?? undefined} oob />),
+    )
+
+  app.post('/gm/challenge/start', async (c) => {
+    const body = await form(c)
+    const stakes: ChallengeStakes = body.stakes === 'low' || body.stakes === 'high' ? body.stakes : 'normal'
+    const started = session.startChallenge(
+      {
+        mainAbility: body.main_ability ?? '',
+        supportAbility: body.support_ability ?? '',
+        mainDifficulty: Number(body.main_difficulty),
+        supportDifficulty: Number(body.support_difficulty),
+        stakes,
+      },
+      actorName(c),
+    )
+    if (started) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/join', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    if (session.setChallengePlayer(ch.id, char.id, ch.approach, ch.skill, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/setup', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch || ch.charId !== char.id) return c.notFound()
+    const body = await form(c)
+    const approach = body.approach || ch.approach
+    const skill = 'skill' in body ? body.skill || null : ch.skill
+    if (session.setChallengePlayer(ch.id, char.id, approach, skill, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/roll', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch || ch.charId !== char.id) return c.notFound()
+    if (session.rollChallenge(ch.id, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/skill-points', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch || ch.charId !== char.id) return c.notFound()
+    const body = await form(c)
+    if (session.setChallengeSkillPoints(ch.id, Number(body.main), Number(body.support), actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
   app.post('/c/:id/finalize', (c) => {
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
@@ -337,7 +403,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   app.get(
     '/ws',
     upgradeWebSocket((c) => {
-      const role = c.req.query('gm') === '1' ? 'gm' : 'player'
+      const role = c.req.query('gm') === '1' ? 'gm' : c.req.query('table') === '1' ? 'table' : 'player'
       const charId = c.req.query('char') ?? null
       return {
         onOpen: (_event, ws) => hub.add({ ws, role, charId }),

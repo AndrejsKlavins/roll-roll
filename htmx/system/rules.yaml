@@ -73,6 +73,21 @@ training:
   points_stat: skill_points
   rank_costs: [4, 5, 6, 7, 8]
 
+# Challenges (public-screen board, /table): a difficulty ladder the GM picks a starting number
+# from (then hand-adjusts, e.g. to add an opposing ability), and the named approaches offered
+# to the rolling player. Tweak "value" freely — nothing else depends on the exact numbers.
+challenges:
+  difficulties:
+    - { id: trivial,     label: Trivial,     value: 2 }
+    - { id: easy,        label: Easy,        value: 4 }
+    - { id: challenging, label: Challenging, value: 7 }
+    - { id: hard,        label: Hard,        value: 11 }
+    - { id: extreme,     label: Extreme,     value: 16 }
+  approaches:
+    - { id: unbreakable, label: Unbreakable }
+    - { id: exquisite,   label: Exquisite }
+    - { id: limitless,   label: Limitless }
+
 traits:
   power_level: 0
   categories:

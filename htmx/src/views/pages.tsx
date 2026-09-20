@@ -1,5 +1,6 @@
 import { raw } from 'hono/html'
 import type { Character, Session } from '../session'
+import { ChallengeBoard } from './challenge'
 import { ChangeLog, Feed } from './feed'
 import { Layout } from './layout'
 import { Sheet } from './sheet'
@@ -58,9 +59,22 @@ export function PlayerPage(props: { session: Session; charId: string }) {
       <main id="main" class="player-grid">
         <Sheet session={session} char={char} />
         <aside>
+          <ChallengeBoard session={session} role="player" viewerCharId={charId} />
           <h3>Rolls</h3>
           <Feed session={session} viewer="player" />
         </aside>
+      </main>
+    </Layout>
+  )
+}
+
+/** The shared screen — no character, no interaction. Meant to sit on a TV/monitor at the table. */
+export function TablePage(props: { session: Session }) {
+  const { session } = props
+  return (
+    <Layout title="Table" system={session.rules.name} wsUrl="/ws?table=1">
+      <main class="table-screen">
+        <ChallengeBoard session={session} role="table" />
       </main>
     </Layout>
   )
@@ -115,6 +129,11 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
               </form>
             </div>
           )}
+
+          <a class="button" href="/table" target="_blank" rel="noopener">
+            Open public table screen ↗
+          </a>
+          <ChallengeBoard session={session} role="gm" />
 
           <form
             class="card gm-roll"

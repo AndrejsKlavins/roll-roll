@@ -91,6 +91,17 @@ export type Trait = {
  */
 export type Training = { pointsStat: string; rankCosts: number[]; thresholds: number[]; maxPoints: number }
 
+/** One rung of the challenge difficulty ladder — a GM-facing starting point, not a hard rule. */
+export type Difficulty = { id: string; label: string; value: number }
+/** A named approach offered to the rolling player (mechanically inert for now). */
+export type Approach = { id: string; label: string }
+export type ChallengesConfig = {
+  difficulties: Difficulty[]
+  approaches: Approach[]
+  /** Average gap between consecutive difficulties — used to suggest "2 ranks below" for support. */
+  rankStep: number
+}
+
 export type Rules = {
   name: string
   sections: Section[]
@@ -104,6 +115,7 @@ export type Rules = {
   traitCategories: TraitCategory[]
   /** GM's default budget target for trait costs (usually 0); adjustable at runtime. */
   powerLevel: number
+  challenges: ChallengesConfig
 }
 
 export const RULES_PATH = join(import.meta.dir, '..', 'system', 'rules.yaml')
@@ -357,6 +369,27 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     return [{ id: t.id, label: String(t.label ?? t.id), cost, description, category, tags, modifiers }]
   })
 
+  // challenges: { difficulties: [{id, label, value}], approaches: [{id, label}] }
+  const rawChallenges = raw?.challenges ?? {}
+  const difficulties: Difficulty[] = ((rawChallenges.difficulties ?? []) as any[]).flatMap((d: any, i: number) => {
+    const where = `challenges.difficulties[${i}]`
+    if (!checkId(d?.id, where)) return []
+    const value = Number(d?.value)
+    if (!Number.isFinite(value)) {
+      fail(`${where} "${d.id}": value must be a number`)
+      return []
+    }
+    return [{ id: d.id, label: String(d.label ?? d.id), value }]
+  })
+  const approaches: Approach[] = ((rawChallenges.approaches ?? []) as any[]).flatMap((a: any, i: number) => {
+    const where = `challenges.approaches[${i}]`
+    if (!checkId(a?.id, where)) return []
+    return [{ id: a.id, label: String(a.label ?? a.id) }]
+  })
+  const sortedValues = difficulties.map((d) => d.value).sort((a, b) => a - b)
+  const gaps = sortedValues.slice(1).map((v, i) => v - sortedValues[i]!)
+  const rankStep = gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : 3
+
   if (errors.length) {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)
   }
@@ -371,6 +404,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     traits,
     traitCategories,
     powerLevel,
+    challenges: { difficulties, approaches, rankStep },
   }
 }
 

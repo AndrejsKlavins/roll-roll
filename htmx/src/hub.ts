@@ -1,7 +1,7 @@
 // Connected devices and helpers to push HTML fragments to them over WebSocket.
 import type { WSContext } from 'hono/ws'
 
-export type Client = { ws: WSContext; role: 'player' | 'gm'; charId: string | null }
+export type Client = { ws: WSContext; role: 'player' | 'gm' | 'table'; charId: string | null }
 
 // Kept on globalThis so `bun --hot` reloads don't forget connected devices
 // or start a second heartbeat.
