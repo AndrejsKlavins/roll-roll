@@ -56,15 +56,30 @@ export const isBaseField = (f: Field): f is NumberField => f.type === 'number' &
 /**
  * A bundle of stat adjustments a player can pick during character creation (or later, if the
  * GM allows it). Cost balances against Rules.powerLevel: negative = buff, positive = flaw,
- * 0 = a mix of both. Modifiers touch either an untrained base field (ability), nudged by
- * "delta", or a trained field (skill), pre-loaded with "skill_points" (may push its rank up).
+ * 0 = a mix of both. A modifier's "field" is looked up as an ability/skill first, then as a
+ * derived stat: an untrained base field (ability) is nudged by "delta"; a trained field (skill)
+ * is pre-loaded with "skill_points" (may push its rank up); a derived stat (e.g. Evasion) is
+ * permanently shifted by "delta", on top of whatever its formula computes.
  */
 export type AbilityModifier = { kind: 'ability'; field: string; delta: number }
 export type SkillPointsModifier = { kind: 'skill_points'; field: string; points: number }
-export type TraitModifier = AbilityModifier | SkillPointsModifier
+export type StatBonusModifier = { kind: 'stat_bonus'; stat: string; delta: number }
+export type TraitModifier = AbilityModifier | SkillPointsModifier | StatBonusModifier
 /** A group traits are picked from (e.g. Origin). max caps how many of that group can be picked. */
 export type TraitCategory = { id: string; label: string; max: number }
-export type Trait = { id: string; label: string; cost: number; description: string; category: string; modifiers: TraitModifier[] }
+/**
+ * "tags" mark a trait as mutually exclusive with any other trait sharing a tag (e.g. a whole
+ * ability's +1/+2/-1/-2 variants tagged "base_strength" so only one can ever be picked).
+ */
+export type Trait = {
+  id: string
+  label: string
+  cost: number
+  description: string
+  category: string
+  tags: string[]
+  modifiers: TraitModifier[]
+}
 
 /**
  * Skill point training. Points are granted on finishing a character and on each level up
@@ -257,7 +272,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     return [{ id: r.id, label: String(r.label ?? r.id), dice }]
   })
 
-  // traits: { power_level: 0, categories: [{id, label, max?}], list: [{ id, label, cost, category, description?, modifiers: [{field, delta}] }] }
+  // traits: { power_level: 0, categories: [{id, label, max?}], list: [{ id, label, cost, category, tags?, description?, modifiers: [{field, delta}] }] }
   const rawTraits = raw?.traits ?? {}
   const powerLevel = Number(rawTraits.power_level ?? 0)
   if (!Number.isFinite(powerLevel)) fail('traits.power_level: must be a number')
@@ -293,31 +308,45 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     const modifiers: TraitModifier[] = ((t?.modifiers ?? []) as any[]).flatMap((m: any, mi: number): TraitModifier[] => {
       const mwhere = `${where}.modifiers[${mi}]`
       const field = fields.get(m?.field)
-      if (!field || !isBaseField(field)) {
-        fail(`${mwhere}: "${m?.field}" can't be modified by a trait (must be an ability or a trained skill)`)
+      const stat = derived.find((d) => d.id === m?.field)
+      if (!field && !stat) {
+        fail(`${mwhere}: unknown field "${m?.field}" (not an ability, a trained skill, or a derived stat)`)
         return []
       }
-      if (field.trained) {
+      if (stat) {
+        const delta = Number(m?.delta)
+        if (!Number.isInteger(delta) || delta === 0) {
+          fail(`${mwhere}: delta must be a non-zero whole number`)
+          return []
+        }
+        return [{ kind: 'stat_bonus', stat: stat.id, delta } satisfies TraitModifier]
+      }
+      if (!isBaseField(field!)) {
+        fail(`${mwhere}: "${m.field}" can't be modified by a trait (must be an ability, a trained skill, or a derived stat)`)
+        return []
+      }
+      if (field!.trained) {
         const points = Number(m?.skill_points)
         if (!Number.isInteger(points) || points === 0) {
           fail(`${mwhere}: "${m.field}" is a trained skill — give "skill_points" (a non-zero whole number)`)
           return []
         }
-        return [{ kind: 'skill_points', field: field.id, points } satisfies TraitModifier]
+        return [{ kind: 'skill_points', field: field!.id, points } satisfies TraitModifier]
       }
       const delta = Number(m?.delta)
       if (!Number.isInteger(delta) || delta === 0) {
         fail(`${mwhere}: delta must be a non-zero whole number`)
         return []
       }
-      return [{ kind: 'ability', field: field.id, delta } satisfies TraitModifier]
+      return [{ kind: 'ability', field: field!.id, delta } satisfies TraitModifier]
     })
     if (!modifiers.length) {
       fail(`${where} "${t.id}": needs at least one modifier`)
       return []
     }
     const description = String(t.description ?? '').trim() || 'MISSING DESCRIPTION'
-    return [{ id: t.id, label: String(t.label ?? t.id), cost, description, category, modifiers }]
+    const tags = Array.isArray(t?.tags) ? t.tags.map((tag: unknown) => String(tag)) : []
+    return [{ id: t.id, label: String(t.label ?? t.id), cost, description, category, tags, modifiers }]
   })
 
   if (errors.length) {

@@ -211,13 +211,16 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     )
   }
 
+  // Fields (not derived stats — those refresh via the unconditional DerivedUpdates in pushTraits).
+  const traitFieldIds = (t: (typeof rules.traits)[number]) =>
+    t.modifiers.flatMap((m) => (m.kind === 'stat_bonus' ? [] : [m.field]))
+
   app.post('/c/:id/trait/add', async (c) => {
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
     const body = await form(c)
     const trait = rules.traits.find((t) => t.id === body.trait)
-    if (trait && session.addTrait(char.id, trait.id, actorName(c)))
-      pushTraits(char, trait.modifiers.map((m) => m.field))
+    if (trait && session.addTrait(char.id, trait.id, actorName(c))) pushTraits(char, traitFieldIds(trait))
     return noContent(c)
   })
 
@@ -226,8 +229,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     if (!char) return c.notFound()
     const body = await form(c)
     const trait = rules.traits.find((t) => t.id === body.trait)
-    if (trait && session.removeTrait(char.id, trait.id, actorName(c)))
-      pushTraits(char, trait.modifiers.map((m) => m.field))
+    if (trait && session.removeTrait(char.id, trait.id, actorName(c))) pushTraits(char, traitFieldIds(trait))
     return noContent(c)
   })
 

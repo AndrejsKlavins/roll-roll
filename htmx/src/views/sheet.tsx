@@ -523,10 +523,13 @@ function AddTraitDialog(props: { session: Session; char: Character }) {
   const { session, char } = props
   const { rules } = session
   if (char.traits.length >= MAX_TRAITS) return <p class="muted small">Maximum {MAX_TRAITS} traits picked.</p>
+  const pickedTags = session.pickedTags(char)
   const addable = rules.traitCategories
     .map((category) => ({
       category,
-      options: rules.traits.filter((t) => t.category === category.id && !char.traits.includes(t.id)),
+      options: rules.traits.filter(
+        (t) => t.category === category.id && !char.traits.includes(t.id) && !t.tags.some((tag) => pickedTags.has(tag)),
+      ),
     }))
     .filter(({ category, options }) => options.length > 0 && session.traitsInCategory(char, category.id).length < category.max)
   if (addable.length === 0) return null

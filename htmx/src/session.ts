@@ -79,6 +79,8 @@ export type Character = {
   adj: Record<string, number>
   /** Active only: change applied to calculated stats (pools: negative = spent). */
   statAdj: Record<string, number>
+  /** Permanent trait-driven shift to a derived stat's formula result (survives status changes). */
+  statBonus: Record<string, number>
   /** Skill points assigned per trained field. */
   skillPoints: Record<string, number>
   /** Total skill points ever granted (available = granted − assigned). */
@@ -114,7 +116,13 @@ export const MAX_TRAITS = 8
 
 export const cleanName = (name: string) => name.trim().replace(/\s+/g, ' ').slice(0, 40)
 
-type DraftData = { values: Values; traits: string[]; skillPoints: Record<string, number>; pointsGranted: number }
+type DraftData = {
+  values: Values
+  traits: string[]
+  skillPoints: Record<string, number>
+  pointsGranted: number
+  statBonus: Record<string, number>
+}
 
 export class Session {
   readonly events: LoggedEvent[] = []
@@ -154,8 +162,8 @@ export class Session {
       const parsed = JSON.parse(row.data)
       // Older drafts (before trait picking existed) stored the values object directly.
       const data: DraftData = parsed.values
-        ? { skillPoints: {}, pointsGranted: 0, ...parsed }
-        : { values: parsed, traits: [], skillPoints: {}, pointsGranted: 0 }
+        ? { skillPoints: {}, pointsGranted: 0, statBonus: {}, ...parsed }
+        : { values: parsed, traits: [], skillPoints: {}, pointsGranted: 0, statBonus: {} }
       this.drafts.set(row.char_id, data)
     }
     this.rebuild()
@@ -171,6 +179,7 @@ export class Session {
       traits: [...c.traits],
       skillPoints: { ...c.skillPoints },
       pointsGranted: c.pointsGranted,
+      statBonus: { ...c.statBonus },
     }
     this.drafts.set(c.id, data)
     this.db
@@ -209,6 +218,7 @@ export class Session {
         c.traits = [...draft.traits]
         c.skillPoints = { ...draft.skillPoints }
         c.pointsGranted = draft.pointsGranted
+        c.statBonus = { ...draft.statBonus }
       }
     }
   }
@@ -225,6 +235,7 @@ export class Session {
           base: {},
           adj: {},
           statAdj: {},
+          statBonus: {},
           skillPoints: {},
           pointsGranted: 0,
           level: 1,
@@ -307,10 +318,11 @@ export class Session {
     }
   }
 
-  /** trait_added/trait_removed: a change targets base (ability) or skillPoints (trained skill). */
+  /** trait_added/trait_removed: a change targets base (ability), skillPoints (skill) or statBonus (derived). */
   private applyTraitChange(c: Character, ch: { field: string; to: number }) {
     const f = this.rules.fields.get(ch.field)
-    if (f && (f as NumberField).trained) c.skillPoints[ch.field] = ch.to
+    if (!f) c.statBonus[ch.field] = ch.to
+    else if ((f as NumberField).trained) c.skillPoints[ch.field] = ch.to
     else c.base[ch.field] = ch.to
   }
 
@@ -368,14 +380,16 @@ export class Session {
   }
 
   /**
-   * A calculated stat: `normal` is the formula result (a pool's maximum), `current` includes play
-   * changes. Formulas and rolls use the formula results, not the play-adjusted values.
+   * A calculated stat: `normal` is the formula result plus any permanent trait bonus (a pool's
+   * maximum), `current` also includes temporary play changes. Formulas/rolls (scope()) use the
+   * bare formula result, ignoring both — trait bonuses aren't wired into the formula engine yet,
+   * so a derived stat referencing another one via a formula won't see its trait bonus.
    */
   statOf(c: Character, statId: string): { normal: number; current: number } | null {
     const d = this.rules.derived.find((x) => x.id === statId)
     if (!d) return null
     const raw = this.scope(c.id, { base: d.useBase })[statId] ?? NaN
-    const normal = Number.isFinite(raw) ? raw : 0
+    const normal = (Number.isFinite(raw) ? raw : 0) + (c.statBonus[statId] ?? 0)
     const shifted = normal + (c.status === 'active' && !d.useBase ? (c.statAdj[statId] ?? 0) : 0)
     const current = d.pool ? Math.min(normal, Math.max(0, shifted)) : Math.min(PLAY_MAX, Math.max(0, shifted))
     return { normal, current }
@@ -540,11 +554,23 @@ export class Session {
     return c.traits.flatMap((id) => this.rules.traits.filter((t) => t.id === id && t.category === categoryId))
   }
 
+  /** Union of tags across the character's currently picked traits. */
+  pickedTags(c: Character): Set<string> {
+    const tags = new Set<string>()
+    for (const id of c.traits) {
+      const t = this.rules.traits.find((tr) => tr.id === id)
+      if (t) for (const tag of t.tags) tags.add(tag)
+    }
+    return tags
+  }
+
   /**
    * A trait's modifiers as {field, from, to} changes, in the given direction (+1 add, -1 remove).
    * An ability modifier targets c.values (draft) or the base value (active); a skill_points
-   * modifier always targets c.skillPoints directly. grantedPoints is the actual (post-clamp)
-   * sum of skillPoints deltas, so pointsGranted can move with it and the pool stays balanced.
+   * modifier always targets c.skillPoints directly; a stat_bonus modifier always targets
+   * c.statBonus directly (unclamped — a derived stat has no declared range of its own).
+   * grantedPoints is the actual (post-clamp) sum of skillPoints deltas, so pointsGranted can
+   * move with it and the pool stays balanced.
    */
   private traitChanges(c: Character, trait: Trait, sign: 1 | -1) {
     const maxPoints = this.rules.training?.maxPoints ?? 0
@@ -555,6 +581,10 @@ export class Session {
         const to = Math.min(maxPoints, Math.max(0, from + sign * m.points))
         grantedPoints += to - from
         return { field: m.field, from, to }
+      }
+      if (m.kind === 'stat_bonus') {
+        const from = c.statBonus[m.stat] ?? 0
+        return { field: m.stat, from, to: from + sign * m.delta }
       }
       const f = this.rules.fields.get(m.field) as NumberField
       const from = c.status === 'draft' ? Number(c.values[f.id] ?? f.default) : this.baseOf(c, f)
@@ -567,8 +597,9 @@ export class Session {
   /** Draft equivalent of applyTraitChange: writes straight into values/skillPoints, not logged. */
   private applyDraftTraitChanges(c: Character, changes: { field: string; to: number }[], grantedPoints: number) {
     for (const ch of changes) {
-      const f = this.rules.fields.get(ch.field) as NumberField
-      if (f.trained) c.skillPoints[ch.field] = ch.to
+      const f = this.rules.fields.get(ch.field) as NumberField | undefined
+      if (!f) c.statBonus[ch.field] = ch.to
+      else if (f.trained) c.skillPoints[ch.field] = ch.to
       else c.values[ch.field] = ch.to
     }
     c.pointsGranted += grantedPoints
@@ -581,6 +612,7 @@ export class Session {
     if (!c || !trait || c.traits.includes(traitId) || c.traits.length >= MAX_TRAITS) return false
     const category = this.rules.traitCategories.find((cat) => cat.id === trait.category)
     if (category && this.traitsInCategory(c, category.id).length >= category.max) return false
+    if (trait.tags.some((tag) => this.pickedTags(c).has(tag))) return false
     const { changes, grantedPoints } = this.traitChanges(c, trait, 1)
     if (c.status === 'draft') {
       this.applyDraftTraitChanges(c, changes, grantedPoints)

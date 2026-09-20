@@ -39,6 +39,10 @@
 # Every trait belongs to one of "categories" (each gets its own "add" picker on the
 # sheet). "max" caps how many from that category can be picked at once (omit for no
 # cap) — once hit, that category's "add" picker is hidden, e.g. Origin: max 1.
+#
+# "tags" (optional) make traits mutually exclusive: picking one hides every other trait
+# sharing any of its tags, e.g. Strong/Very strong/Weak/Very weak all tagged "base_strength"
+# so only one Strength-affecting basic trait can ever be picked at once.
 
 name: Sample System
 
@@ -78,11 +82,37 @@ traits:
     - { id: city_born,   label: City-born,   category: origin,     cost: -1, description: "Raised in the streets; sharp and street-smart.", modifiers: [{ field: perception, delta: 1 }] }
     - { id: wilds_born,  label: Wilds-born,  category: origin,     cost: -1, description: "Raised far from town, living off the land.",      modifiers: [{ field: endurance, delta: 1 }] }
     - { id: noble_born,  label: Noble-born,  category: origin,     cost: -1, description: "Raised with tutors and easy answers.",            modifiers: [{ field: knowledge, delta: 1 }] }
-    - { id: quick,       label: Quick,       category: physique,   cost: -1, description: "Fast on your feet, quicker to react.",            modifiers: [{ field: agility, delta: 1 }] }
-    - { id: strong_arm,  label: Strong arm,  category: physique,   cost: -1, description: "Raw physical power.",                             modifiers: [{ field: strength, delta: 1 }] }
-    - { id: frail,       label: Frail,       category: physique,   cost: 1,  description: "Your body gives out sooner than most.",           modifiers: [{ field: endurance, delta: -1 }] }
-    - { id: sharp_eyed,  label: Sharp-eyed,  category: basic,      cost: -1, description: "You notice what others miss.",                    modifiers: [{ field: perception, delta: 1 }] }
-    - { id: clumsy,      label: Clumsy,      category: basic,      cost: 1,  description: "You trip over your own feet.",                     modifiers: [{ field: agility, delta: -1 }] }
+    # Stealth (Big/Small) and the performance/manipulation roll bonus (Beautiful/Ugly) are
+    # situational, not a stat we can automate yet (no roll system, no per-roll modifiers) — kept
+    # in the description only, for whoever resolves the roll to apply by hand.
+    - { id: big,       label: Big,       category: physique, cost: -1, description: "+1 Strength, +1 Endurance, -1 Evasion, -1 Speed, -2 Stealth.", modifiers: [{ field: strength, delta: 1 }, { field: endurance, delta: 1 }, { field: evasion, delta: -1 }, { field: speed, delta: -1 }] }
+    - { id: thin,      label: Thin,      category: physique, cost: 0,  description: "+1 Agility, +1 Evasion, -1 Strength, -1 Physical resistance.", modifiers: [{ field: agility, delta: 1 }, { field: evasion, delta: 1 }, { field: strength, delta: -1 }, { field: physical_resistance, delta: -1 }] }
+    - { id: small,     label: Small,     category: physique, cost: 1,  description: "-1 Strength, -1 Endurance, +1 Evasion, +1 Speed, +2 Stealth.", modifiers: [{ field: strength, delta: -1 }, { field: endurance, delta: -1 }, { field: evasion, delta: 1 }, { field: speed, delta: 1 }] }
+    - { id: fat,       label: Fat,       category: physique, cost: 0,  description: "-1 Agility, -1 Evasion, +1 Strength, +1 Physical resistance.", modifiers: [{ field: agility, delta: -1 }, { field: evasion, delta: -1 }, { field: strength, delta: 1 }, { field: physical_resistance, delta: 1 }] }
+    - { id: stocky,    label: Stocky,    category: physique, cost: -1, description: "+1 Endurance, +1 Physical resistance.",                        modifiers: [{ field: endurance, delta: 1 }, { field: physical_resistance, delta: 1 }] }
+    - { id: delicate,  label: Delicate,  category: physique, cost: 1,  description: "-1 Endurance, -1 Physical resistance.",                        modifiers: [{ field: endurance, delta: -1 }, { field: physical_resistance, delta: -1 }] }
+    - { id: beautiful, label: Beautiful, category: physique, cost: 0,  description: "+2 to relevant performance and manipulation rolls, -1 Resolve.", modifiers: [{ field: resolve, delta: -1 }] }
+    - { id: ugly,      label: Ugly,      category: physique, cost: 0,  description: "-2 to relevant performance and manipulation rolls, +1 Resolve.", modifiers: [{ field: resolve, delta: 1 }] }
+    - { id: strong,               label: Strong,               category: basic, tags: [base_strength],   cost: -1, description: "+1 Strength",   modifiers: [{ field: strength, delta: 1 }] }
+    - { id: very_strong,          label: Very strong,          category: basic, tags: [base_strength],   cost: -2, description: "+2 Strength",   modifiers: [{ field: strength, delta: 2 }] }
+    - { id: weak,                 label: Weak,                 category: basic, tags: [base_strength],   cost: 1,  description: "-1 Strength",   modifiers: [{ field: strength, delta: -1 }] }
+    - { id: very_weak,            label: Very weak,            category: basic, tags: [base_strength],   cost: 2,  description: "-2 Strength",   modifiers: [{ field: strength, delta: -2 }] }
+    - { id: agile,                label: Agile,                category: basic, tags: [base_agility],    cost: -1, description: "+1 Agility",    modifiers: [{ field: agility, delta: 1 }] }
+    - { id: very_agile,           label: Very agile,           category: basic, tags: [base_agility],    cost: -2, description: "+2 Agility",    modifiers: [{ field: agility, delta: 2 }] }
+    - { id: clumsy,               label: Clumsy,               category: basic, tags: [base_agility],    cost: 1,  description: "-1 Agility",    modifiers: [{ field: agility, delta: -1 }] }
+    - { id: very_clumsy,          label: Very clumsy,          category: basic, tags: [base_agility],    cost: 2,  description: "-2 Agility",    modifiers: [{ field: agility, delta: -2 }] }
+    - { id: perceptive,           label: Perceptive,           category: basic, tags: [base_perception], cost: -1, description: "+1 Perception", modifiers: [{ field: perception, delta: 1 }] }
+    - { id: very_perceptive,      label: Very perceptive,      category: basic, tags: [base_perception], cost: -2, description: "+2 Perception", modifiers: [{ field: perception, delta: 2 }] }
+    - { id: imperceptive,         label: Imperceptive,         category: basic, tags: [base_perception], cost: 1,  description: "-1 Perception", modifiers: [{ field: perception, delta: -1 }] }
+    - { id: very_imperceptive,    label: Very imperceptive,    category: basic, tags: [base_perception], cost: 2,  description: "-2 Perception", modifiers: [{ field: perception, delta: -2 }] }
+    - { id: knowledgeable,        label: Knowledgable,         category: basic, tags: [base_knowledge],  cost: -1, description: "+1 Knowledge",  modifiers: [{ field: knowledge, delta: 1 }] }
+    - { id: very_knowledgeable,   label: Very knowledgable,    category: basic, tags: [base_knowledge],  cost: -2, description: "+2 Knowledge",  modifiers: [{ field: knowledge, delta: 2 }] }
+    - { id: unschooled,           label: Unschooled,           category: basic, tags: [base_knowledge],  cost: 1,  description: "-1 Knowledge",  modifiers: [{ field: knowledge, delta: -1 }] }
+    - { id: very_unschooled,      label: Very unschooled,      category: basic, tags: [base_knowledge],  cost: 2,  description: "-2 Knowledge",  modifiers: [{ field: knowledge, delta: -2 }] }
+    - { id: intuitive,            label: Intuitive,            category: basic, tags: [base_intuition],  cost: -1, description: "+1 Intuition",  modifiers: [{ field: intuition, delta: 1 }] }
+    - { id: very_intuitive,       label: Very intuitive,       category: basic, tags: [base_intuition],  cost: -2, description: "+2 Intuition",  modifiers: [{ field: intuition, delta: 2 }] }
+    - { id: unintuitive,          label: Unintuitive,          category: basic, tags: [base_intuition],  cost: 1,  description: "-1 Intuition",  modifiers: [{ field: intuition, delta: -1 }] }
+    - { id: very_unintuitive,     label: Very unintuitive,     category: basic, tags: [base_intuition],  cost: 2,  description: "-2 Intuition",  modifiers: [{ field: intuition, delta: -2 }] }
     - { id: jack_of_all, label: Jack of all, category: background, cost: 0,  description: "Well-read, but never bulked up.",                  modifiers: [{ field: knowledge, delta: 1 }, { field: strength, delta: -1 }] }
     - { id: hunter_background, label: Hunter background, category: background, cost: -2, description: "Grew up hunting and living off the land.", modifiers: [{ field: outdoorsman, skill_points: 4 }, { field: ranged_combat, skill_points: 4 }] }
 

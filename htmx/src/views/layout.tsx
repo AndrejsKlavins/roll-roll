@@ -14,7 +14,9 @@ export function Layout(props: {
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{props.title}</title>
-        <link rel="stylesheet" href="/public/style.css" />
+        {/* Cache-busted: static/no-cache-header assets otherwise stick in the browser cache
+            across edits, so a CSS fix can look like it "didn't take" without a hard refresh. */}
+        <link rel="stylesheet" href={`/public/style.css?v=${Date.now()}`} />
         <script src="/vendor/htmx.min.js"></script>
         <script src="/vendor/ws.min.js"></script>
         <script src="/public/app.js" defer></script>

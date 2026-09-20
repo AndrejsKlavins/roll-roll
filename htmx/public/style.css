@@ -268,12 +268,23 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .trait-dialog-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
 .trait-dialog-head span { font-weight: 600; }
 .trait-dialog-head .icon { margin-left: auto; }
-.trait-dialog-options { display: grid; gap: 0.4rem; overflow-y: auto; }
-.trait-dialog-options > button { text-align: left; width: 100%; }
-.trait-choice { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.55rem 0.7rem; }
-.trait-choice-head { display: flex; align-items: center; gap: 0.5rem; }
-.trait-choice-head em { margin-left: auto; font-style: normal; font-size: 0.85rem; }
+.trait-dialog-options { display: flex; flex-direction: column; gap: 0.5rem; overflow-y: auto; }
+/* flex-shrink: 0 is the actual fix here: with the default shrink:1, a long list (e.g. 20 Basic
+   traits) that doesn't fit the dialog's available height was compressing every button down to a
+   fraction of its needed size instead of overflowing into the scrollable area — 20 buttons all
+   squashed to ~24px each was flexbox fitting them into the container's height, not a sizing bug
+   in the button itself. min-width: 0 additionally lets long text wrap instead of overflowing
+   sideways. */
+.trait-dialog-options > button { text-align: left; width: 100%; min-width: 0; flex-shrink: 0; }
+/* Plain block stacking, not flex column — a flex column here (title row over description)
+   was mis-sizing to a fixed ~24px regardless of actual content, cutting the description off
+   under the next button. Block stacking has no such ambiguity: height is just content height. */
+.trait-choice { display: block; min-height: 0; padding: 0.7rem 0.9rem; }
+.trait-choice-desc { display: block; margin-top: 0.3rem; }
+.trait-choice-head { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.trait-choice-head b { overflow-wrap: anywhere; }
+.trait-choice-head em { margin-left: auto; flex: none; font-style: normal; font-size: 0.85rem; }
 .trait-choice-head .cost.buff { color: var(--danger); }
 .trait-choice-head .cost.flaw { color: #5cc27a; }
 .trait-choice-head .cost.neutral { color: var(--muted); }
-.trait-choice-desc { color: var(--muted); font-size: 0.85rem; }
+.trait-choice-desc { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
