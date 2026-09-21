@@ -95,9 +95,16 @@ export type Training = { pointsStat: string; rankCosts: number[]; thresholds: nu
 export type Difficulty = { id: string; label: string; value: number }
 /** A named approach offered to the rolling player (mechanically inert for now). */
 export type Approach = { id: string; label: string }
+/** What a rolled die face is called, and the colour it reads in (red → green). */
+export type FaceName = { value: number; label: string; color: string; ink: string }
+
 export type ChallengesConfig = {
   difficulties: Difficulty[]
   approaches: Approach[]
+  /** Names/colours per die face, sorted by value; faces outside the list clamp to the ends. */
+  faces: FaceName[]
+  /** Pool stats a player may burn for exertion during a challenge (e.g. stamina, willpower). */
+  exertionSources: string[]
   /** Average gap between consecutive difficulties — used to suggest "2 ranks below" for support. */
   rankStep: number
 }
@@ -386,6 +393,30 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     if (!checkId(a?.id, where)) return []
     return [{ id: a.id, label: String(a.label ?? a.id) }]
   })
+  // challenges.faces: [{ value, label, color }] — names for rolled die faces.
+  const faces: FaceName[] = ((rawChallenges.faces ?? []) as any[])
+    .flatMap((f: any, i: number) => {
+      const where = `challenges.faces[${i}]`
+      const value = Number(f?.value)
+      if (!Number.isFinite(value)) {
+        fail(`${where}: value must be a number`)
+        return []
+      }
+      const look = parseLook(f, where)
+      return [{ value, label: String(f?.label ?? value), color: look.color ?? '', ink: look.ink ?? '#ffffff' }]
+    })
+    .sort((a, b) => a.value - b.value)
+
+  // challenges.exertion_sources: [stamina, willpower] — must be pool stats (spend 1, gain exertion).
+  const exertionSources: string[] = ((rawChallenges.exertion_sources ?? []) as any[]).flatMap((id: any, i: number) => {
+    const statId = String(id)
+    const stat = derived.find((d) => d.id === statId)
+    if (!stat) fail(`challenges.exertion_sources[${i}]: no derived value "${statId}"`)
+    else if (!stat.pool) fail(`challenges.exertion_sources[${i}]: "${statId}" must be a pool (pool: true)`)
+    else return [statId]
+    return []
+  })
+
   const sortedValues = difficulties.map((d) => d.value).sort((a, b) => a - b)
   const gaps = sortedValues.slice(1).map((v, i) => v - sortedValues[i]!)
   const rankStep = gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : 3
@@ -404,7 +435,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     traits,
     traitCategories,
     powerLevel,
-    challenges: { difficulties, approaches, rankStep },
+    challenges: { difficulties, approaches, faces, exertionSources, rankStep },
   }
 }
 

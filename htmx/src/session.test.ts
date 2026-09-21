@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadRules, type NumberField } from './rules'
-import { Session } from './session'
+import { rollChallengeSide, Session } from './session'
 
 const RULES = `
 name: Test
@@ -273,5 +273,158 @@ describe('skill point training', () => {
     s.undoLast(id, 'Mara')
     expect(s.characters.get(id)!.level).toBe(1)
     expect(s.availablePoints(s.characters.get(id)!)).toBe(6)
+  })
+
+  test('only rank-changing training shows in the change log', async () => {
+    const { open } = await setup(TRAINING_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    const trainingEntries = () => s.recentChanges().filter((e) => e.type === 'skill_trained')
+
+    for (let i = 0; i < 3; i++) s.train(id, 'stealth', 1, 'Mara') // 3 points: still untrained
+    expect(s.events.filter((e) => e.type === 'skill_trained')).toHaveLength(3) // all still stored
+    expect(trainingEntries()).toHaveLength(0)
+
+    s.train(id, 'stealth', 1, 'Mara') // 4th point → novice
+    expect(trainingEntries()).toMatchObject([{ from: 3, to: 4 }])
+
+    s.train(id, 'stealth', -1, 'Mara') // back to untrained
+    expect(trainingEntries()).toHaveLength(2)
+
+    // Undoing a point that changed nothing stays out of the log too.
+    s.train(id, 'stealth', 1, 'Mara') // novice again (logged)
+    s.train(id, 'stealth', 1, 'Mara') // 5 points, still novice (not logged)
+    const before = s.recentChanges().length
+    s.undoLast(id, 'Mara')
+    expect(s.recentChanges().length).toBe(before)
+  })
+})
+
+describe('challenge dice', () => {
+  test('face ids stay 1-6 while the values they count for are shifted by rank', () => {
+    const faces = [2, 5]
+    let i = 0
+    const rng = () => faces[i++]!
+
+    const average = rollChallengeSide(3, rng) // rank 3 → no shift
+    expect(average).toEqual({ faces: [2, 5], dice: [2, 5], sum: 7 })
+
+    i = 0
+    const strong = rollChallengeSide(5, rng) // +2 on every face
+    expect(strong).toEqual({ faces: [2, 5], dice: [4, 7], sum: 11 })
+
+    i = 0
+    const weak = rollChallengeSide(1, rng) // −2 on every face
+    expect(weak).toEqual({ faces: [2, 5], dice: [0, 3], sum: 3 })
+
+    // A strong character's "poor" (face 2) beats a weak character's "great" (face 5).
+    expect(strong.dice[0]).toBeGreaterThan(weak.dice[1])
+  })
+})
+
+const CHALLENGE_RULES = `
+name: Test
+sections:
+  - label: Abilities
+    base: true
+    fields:
+      - { id: strength, label: Strength, type: number, min: 1, max: 5, default: 3 }
+      - { id: agility, label: Agility, type: number, min: 1, max: 5, default: 3 }
+  - label: Reserves
+    fields:
+      - { id: stamina, label: Stamina, type: derived, pool: true, formula: "2" }
+      - { id: willpower, label: Willpower, type: derived, pool: true, formula: "1" }
+challenges:
+  difficulties:
+    - { id: easy, label: Easy, value: 4 }
+  approaches:
+    - { id: bold, label: Bold }
+  exertion_sources: [stamina, willpower]
+  faces:
+    - { value: 1, label: horrible, color: "#c0392b" }
+    - { value: 6, label: amazing, color: "#45a862" }
+rolls: []
+`
+
+describe('challenge setup', () => {
+  test('a challenge needs a description', async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const opts = {
+      mainAbility: 'strength',
+      supportAbility: 'agility',
+      mainDifficulty: 9,
+      supportDifficulty: 9,
+      stakes: 'normal' as const,
+    }
+    expect(s.startChallenge({ ...opts, description: '   ' }, 'GM')).toBeNull()
+    expect(s.challenges).toHaveLength(0)
+    expect(s.startChallenge({ ...opts, description: '  Scale the wall  ' }, 'GM')).not.toBeNull()
+    expect(s.currentChallenge()!.description).toBe('Scale the wall')
+  })
+})
+
+describe('exertion', () => {
+  async function rolledChallenge() {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    s.startChallenge(
+      {
+        description: 'Scale the wall',
+        mainAbility: 'strength',
+        supportAbility: 'agility',
+        mainDifficulty: 9,
+        supportDifficulty: 9,
+        stakes: 'normal',
+      },
+      'GM',
+    )
+    const ch = s.currentChallenge()!
+    s.setChallengePlayer(ch.id, id, 'bold', null, 'GM')
+    s.rollChallenge(ch.id, 'Mara')
+    return { s, id, ch: s.currentChallenge()! }
+  }
+
+  test('burning a pool point yields exertion that can be added to a side', async () => {
+    const { s, id, ch } = await rolledChallenge()
+    const char = () => s.characters.get(id)!
+    expect(s.availableExertion(ch)).toBe(0)
+    expect(s.spendExertion(ch.id, id, 'main', 'Mara')).toBe(false) // nothing to spend yet
+
+    expect(s.exert(ch.id, id, 'stamina', 'Mara')).toBe(true)
+    expect(s.statOf(char(), 'stamina')).toEqual({ normal: 2, current: 1 })
+    expect(s.availableExertion(ch)).toBe(1)
+
+    const before = s.challengeOutcome(ch)!.main.sum
+    s.spendExertion(ch.id, id, 'main', 'Mara')
+    expect(s.challengeOutcome(s.currentChallenge()!)!.main.sum).toBe(before + 1)
+    expect(s.availableExertion(s.currentChallenge()!)).toBe(0)
+  })
+
+  test('a pool at 0 cannot be exerted; rerolling spends exertion and replaces one die', async () => {
+    const { s, id, ch } = await rolledChallenge()
+    s.exert(ch.id, id, 'willpower', 'Mara') // willpower = 1
+    expect(s.exert(ch.id, id, 'willpower', 'Mara')).toBe(false) // empty now
+    expect(s.exert(ch.id, id, 'strength', 'Mara')).toBe(false) // not a listed pool
+
+    const kept = s.currentChallenge()!.main!.dice[1]
+    expect(s.rerollDie(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.main!
+    expect(after.dice[1]).toBe(kept)
+    expect(after.sum).toBe(after.dice[0] + after.dice[1])
+    expect(s.availableExertion(s.currentChallenge()!)).toBe(0)
+    expect(s.rerollDie(ch.id, id, 'main', 0, 'Mara')).toBe(false) // nothing left
+  })
+
+  test('a closed challenge takes no more input', async () => {
+    const { s, id, ch } = await rolledChallenge()
+    expect(s.closeChallenge(ch.id, 'GM')).toBe(true)
+    expect(s.currentChallenge()!.closed).toBe(true)
+    expect(s.closeChallenge(ch.id, 'GM')).toBe(false)
+    expect(s.exert(ch.id, id, 'stamina', 'Mara')).toBe(false)
+    expect(s.rerollDie(ch.id, id, 'main', 0, 'Mara')).toBe(false)
   })
 })

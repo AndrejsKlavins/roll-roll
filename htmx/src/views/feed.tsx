@@ -82,9 +82,15 @@ function describeChange(e: LoggedEvent, session: Session, rules: Rules): string 
     return `${e.by} ${e.amount > 0 ? 'gave' : 'took'} ${pts} ${e.amount > 0 ? 'to' : 'from'} ${who}`
   }
   if (e.type === 'skill_trained') {
+    // Only rank changes reach the log (see Session.recentChanges), so name the ranks, not points.
     const who = session.names.get(e.charId) ?? '?'
-    const label = rules.fields.get(e.skill)?.label ?? e.skill
-    return `${who} · trained ${label} ${e.from} → ${e.to} pts${e.by !== who ? ` (by ${e.by})` : ''}`
+    const field = rules.fields.get(e.skill)
+    const label = field?.label ?? e.skill
+    const rank = (points: number) => {
+      const r = session.rankOf(points)
+      return (field?.type === 'number' ? field.scale?.[r] : undefined) ?? String(r)
+    }
+    return `${who} · ${label} ${rank(e.from)} → ${rank(e.to)}${e.by !== who ? ` (by ${e.by})` : ''}`
   }
   if (e.type === 'stat_set') {
     const who = session.names.get(e.charId) ?? '?'

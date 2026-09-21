@@ -87,6 +87,18 @@ challenges:
     - { id: unbreakable, label: Unbreakable }
     - { id: exquisite,   label: Exquisite }
     - { id: limitless,   label: Limitless }
+  # Pool stats a player can burn during a challenge: 1 point → 1 exertion, spent as +1 on a
+  # side or to reroll one die. Must be pools (pool: true).
+  exertion_sources: [stamina, willpower]
+  # What each rolled die face is called, worst (red) to best (green). A rank shifts every face,
+  # so results outside this list use the nearest end (e.g. a 7 reads as "amazing").
+  faces:
+    - { value: 1, label: horrible, color: "#c0392b" }
+    - { value: 2, label: poor,     color: "#d1683a" }
+    - { value: 3, label: ok,       color: "#d6a648" }
+    - { value: 4, label: good,     color: "#b3bf4f" }
+    - { value: 5, label: great,    color: "#79b455" }
+    - { value: 6, label: amazing,  color: "#45a862" }
 
 traits:
   power_level: 0

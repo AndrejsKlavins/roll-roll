@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-18 (level row with Level up button)
+Last updated: 2026-09-21 (challenge setup dialog; training log noise)
 
 ---
 
@@ -209,7 +209,7 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 | `base_set` | `charId, field, from, to, by` (base value, clamped to field min..max) |
 | `stat_set` | `charId, stat, adj, from, to, by` — play change to a calculated stat (adj applied; from/to shown values) |
 | `skill_points_granted` | `charId, amount, reason ('creation' \| 'level' \| 'gm'), by` — level ups increment `level` |
-| `skill_trained` | `charId, skill, from, to, by` — points assigned to a trained field (undoable) |
+| `skill_trained` | `charId, skill, from, to, by` — points assigned to a trained field (undoable). Every point is stored, but `Session.worthLogging` keeps it out of the change log unless the **rank** changed (and hides undos of hidden ones); the log names ranks, not points |
 | `roll` | `charId \| null (GM), by, label, expr, total, breakdown, visibility` |
 | `undo` | `target` (event id), `by` |
 
@@ -291,6 +291,57 @@ Notes:
 - Active base fields (`BaseField`): the base value is **not** shown by default (user request). While the row is open, "base N" (+ "reset" when modified) appears under the name; when closed, a modified value gets a small ▲/▼ marker (title shows base).
 - Base fields have two steppers: `.play` (posts `/adjust`) and `.base-edit` (posts `/adjust-base`).
 - "✎ Base" toggle is Alpine state on the `<section>` (`x-data="{ editBase: false }"`, class `editing-base`); CSS shows base steppers directly on base rows (hiding value, marker and edit toggle) and a sticky purple "Editing base values" banner. Field oob swaps don't reset the mode (the section isn't replaced); whole-sheet pushes (undo, finalize) do.
+
+### 6.6c Challenge setup (`views/challenge.tsx`)
+
+Challenges themselves (board, rolling, outcomes, the `/table` screen) came from a separate
+session and are only summarised here; this covers the **GM setup flow**, which the user redesigned.
+
+- The GM board shows **only** a "Start new challenge" button; it opens `<dialog id="challenge-dialog">`
+  (`ChallengeSetupDialog`), rendered by `GmPage` **outside** `ChallengeBoard` so board pushes
+  (a player rolling) can't close it mid-edit.
+- The dialog opens with a required **description** ("What is the challenge?"): Start stays disabled
+  until it has text, `startChallenge` refuses a blank one, and it heads the board on every screen
+  (larger on `/table`) and names each entry in the challenge history.
+- Inside the dialog everything is Alpine state on the form (`stakes`, `mainAbility`/`mainDiff`/`mainValue`,
+  the same for support, `charId`), mirrored into hidden inputs with `x-model` and posted to
+  `/gm/challenge/start`. Stakes are three buttons with **Normal** (the middle one) preselected.
+- Each side is a `SidePicker`: a big indicator (ability name, then that ability's icon + the difficulty
+  number in the ability's colour, with the tier name in brackets — every icon is rendered and `x-show`
+  picks one, so no SVG is needed client-side) above two columns — abilities (icon + coloured name) and difficulty tiers. Selection is
+  `x-bind:class="{ on: … }"`; Start stays disabled until both sides and a player are picked.
+- **Players no longer join**: the GM picks who rolls in the dialog, and the start route calls
+  `setChallengePlayer`. The player's own board only shows approach/skill/roll once they are on it.
+  `ChallengePlayerPicker` (`#challenge-players`) is swapped on its own (`pushChallengePlayers`, e.g.
+  when a character is finished) so the list stays current without closing an open dialog.
+- After a successful start the form clears its picks via `Alpine.$data(this)` and closes the dialog.
+
+**Exertion** (user-designed): while a rolled challenge is open, the rolling player may burn one point
+of any pool stat listed in `challenges.exertion_sources` (rules.yaml: stamina, willpower) for one
+exertion — `challenge_exerted` both decrements the pool (`statAdj`, like `stat_set`) and adds to
+`exertionGained`, so the sheet and board move together. Exertion is spent either as **+1 on a side**
+(`challenge_exertion_spent` → `exertionMain`/`exertionSupport`, folded into `challengeOutcome`) or to
+**reroll one die** (`challenge_rerolled` → new face + rank-shifted value, side sum recomputed).
+`availableExertion = gained − main − support − rerolls`. Exert buttons carry each stat's icon/colour
+and disable at 0; dice become reroll buttons only while exertion is in hand. Repeatable while pools last.
+**Challenge done** (GM only, `challenge_closed`) accepts the result: `closed` hides every player
+control and shows a "Done" badge. None of these are undoable.
+- Result boxes: "Player attempt" heads the rolled part on the GM and `/table` screens (the player
+  sees their own controls there instead). Each die is a square tile showing the **shifted value**
+  (what counts in the check) with the **face id's** name underneath, from `challenges.faces` in
+  rules.yaml (1 horrible … 6 amazing, red → green; tile and name take that colour). `ChallengeSide`
+  keeps both: `faces` = raw d6 ids 1–6, `dice` = the same faces shifted by (rank − 3). So a strong
+  character's "horrible" (3 at rank 5) can beat a weak character's "good". `faces` is optional —
+  challenges rolled before it was recorded simply show no names. The attempt's sum shows bare (no "=", no "vs target") in the ability's colour, sized
+  like the target above it.
+- The player's board hides the joined character's ability line (they know their own values) and
+  instead splits the **skill bonus** with − / + under each result: `SkillBonusControls` posts the two
+  new totals to `/c/:id/challenge/skill-points`, − is disabled at 0 for that side, + at 0 left, and
+  `setChallengeSkillPoints` also caps the pair at the skill's rank (it used to allow rank on each side).
+  "<Skill> bonus: N left of R" sits under the boxes.
+- The board's `DifficultyBox` (GM, player and `/table`) mirrors that look: ability icon next to the
+  name, target number in the ability's colour, tier name in brackets. Challenges store only the
+  number, so the tier is found by matching `challenges.difficulties` on value (no match → no brackets).
 
 ### 6.7 Client script (`public/app.js`)
 

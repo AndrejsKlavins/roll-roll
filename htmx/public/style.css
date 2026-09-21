@@ -291,13 +291,46 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* ---- challenges (public table screen) ---- */
 .table-screen { max-width: 900px; }
 .challenge-board { display: grid; gap: 1rem; }
-.challenge-setup-form { display: grid; gap: 0.6rem; }
-.challenge-setup-form label { display: grid; gap: 0.25rem; font-size: 0.85rem; color: var(--muted); }
-.challenge-setup-form .stakes-pick { border: none; padding: 0; margin: 0; display: flex; gap: 0.8rem; font-size: 0.9rem; }
-.challenge-setup-form .stakes-pick label { flex-direction: row; align-items: center; gap: 0.3rem; color: var(--text); }
-.challenge-setup-form .stakes-pick legend { color: var(--muted); font-size: 0.8rem; padding: 0; }
+/* ---- GM challenge setup dialog ---- */
+.challenge-dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--text); padding: 0; width: min(560px, calc(100vw - 2rem)); max-height: 90vh; }
+.challenge-dialog::backdrop { background: #000a; }
+.challenge-dialog form { display: grid; gap: 0.9rem; padding: 1rem; max-height: 90vh; overflow-y: auto; }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.dialog-head h3 { margin: 0; color: var(--text); font-size: 1rem; letter-spacing: 0; text-transform: none; }
+.challenge-description-field { display: grid; gap: 0.3rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.challenge-description-field input { text-transform: none; letter-spacing: 0; font-size: 1rem; color: var(--text); }
+
+.stakes-row { display: flex; gap: 0.5rem; }
+.stakes-btn { flex: 1; }
+.stakes-btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+
+.side-pick { display: grid; gap: 0.5rem; }
+.side-pick h4 { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.big-indicator { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 0.8rem; padding: 0.6rem 0.9rem; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+/* Ability name on top; below it the icon, the number and the tier — all in the ability colour. */
+.big-indicator { grid-template-columns: 1fr; }
+.bi-ability { font-size: 1rem; font-weight: 600; color: var(--muted); }
+.bi-value { display: flex; align-items: center; gap: 0.5rem; font-size: 2.2rem; font-weight: 700; line-height: 1; }
+.bi-icon { display: inline-flex; }
+.bi-icon .field-icon { width: 34px; height: 34px; border-radius: 9px; }
+.bi-icon .field-icon svg, .bi-icon .field-icon img { width: 21px; height: 21px; }
+.bi-tier { font-size: 1rem; font-weight: 600; }
+
+.pick-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.pick-col { display: grid; gap: 0.35rem; align-content: start; }
+.pick-btn { display: flex; align-items: center; gap: 0.5rem; text-align: left; padding: 0.35rem 0.5rem; min-height: 40px; }
+.pick-btn .label { flex: 1; }
+.pick-btn.ability-btn .label { color: var(--field-color, var(--text)); font-weight: 600; }
+.pick-btn .field-icon { width: 26px; height: 26px; border-radius: 7px; }
+.pick-btn .field-icon svg { width: 16px; height: 16px; }
+.pick-btn .diff-value { color: var(--muted); font-weight: 700; }
+.pick-btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel-2)); }
+.pick-btn.on .diff-value { color: var(--text); }
+.player-pick .pick-col { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); display: grid; }
 
 .challenge { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; display: grid; gap: 0.8rem; }
+.challenge-description { margin: 0; color: var(--text); font-size: 1.25rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
+.table-screen .challenge-description { font-size: 1.8rem; }
 .challenge-head { display: flex; align-items: center; gap: 0.6rem; }
 .stakes { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 0.2rem 0.55rem; border: 1px solid var(--line); border-radius: 999px; }
 .stakes-high { color: var(--danger); border-color: var(--danger); }
@@ -311,14 +344,23 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .difficulty-box { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; text-align: center; }
 .difficulty-box.success { border-color: #5cc27a; }
 .difficulty-box.failure { border-color: var(--danger); }
-.difficulty-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.85rem; }
-.difficulty-target { font-size: 3rem; font-weight: 800; line-height: 1.1; }
+.difficulty-label { display: flex; align-items: center; justify-content: center; gap: 0.45rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.85rem; }
+.difficulty-label .field-icon { width: 28px; height: 28px; border-radius: 8px; }
+.difficulty-label .field-icon svg, .difficulty-label .field-icon img { width: 17px; height: 17px; }
+/* Number (and tier name) in the ability's colour, like the GM's setup dialog. */
+.difficulty-target { display: flex; align-items: baseline; justify-content: center; gap: 0.5rem; color: var(--field-color, var(--text)); font-size: 3rem; font-weight: 800; line-height: 1.1; }
+.difficulty-tier { font-size: 1.1rem; font-weight: 600; }
 .difficulty-result { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); display: grid; gap: 0.3rem; }
-.dice-faces { display: flex; justify-content: center; gap: 0.4rem; font-size: 1.3rem; font-weight: 700; }
-.dice-faces .die-face { min-width: 2ch; padding: 0.1rem 0.4rem; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
-.dice-faces .skill-bonus { color: var(--accent); align-self: center; }
-.difficulty-sum { font-size: 1.4rem; font-weight: 700; }
-.difficulty-sum .vs { font-size: 0.85rem; font-weight: 400; color: var(--muted); }
+/* "Player attempt" heads the rolled part of a box; faces are square dice. */
+.attempt-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; }
+.dice-faces { display: flex; align-items: flex-start; justify-content: center; gap: 0.5rem; font-size: 1.3rem; font-weight: 700; }
+/* Each die: square with the number, its name underneath, both in the face's colour. */
+.die { display: grid; justify-items: center; gap: 0.15rem; }
+.die-face { display: grid; place-items: center; width: 2.2rem; height: 2.2rem; background: var(--panel); border: 1px solid var(--face-color, var(--line)); border-radius: 8px; color: var(--face-color, var(--text)); }
+.die-name { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--face-color, var(--muted)); }
+.dice-faces .skill-bonus { color: var(--accent); align-self: flex-start; line-height: 2.2rem; }
+/* The attempt's total, in the ability's colour like the target above it. */
+.difficulty-sum { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
 .difficulty-diff { font-size: 1.1rem; color: var(--muted); }
 .difficulty-box.success .difficulty-diff { color: #5cc27a; }
 .difficulty-box.failure .difficulty-diff { color: var(--danger); }
@@ -332,15 +374,34 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .approach-pick legend { color: var(--muted); font-size: 0.8rem; padding: 0; width: 100%; }
 .approach-pick label { display: flex; align-items: center; gap: 0.3rem; }
 .skill-pick { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-.challenge-skill-points { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; font-size: 0.9rem; }
-.challenge-skill-points label { display: flex; align-items: center; gap: 0.4rem; }
-.challenge-skill-points input { width: 4rem; }
+/* Skill bonus split: − / + under each result, with what is left named below the boxes. */
+.skill-alloc { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 0.2rem; }
+.skill-alloc button { width: 40px; min-height: 40px; padding: 0; font-size: 1.2rem; }
+.skill-alloc-value { min-width: 2.5ch; font-weight: 700; color: var(--accent); }
+.skill-bonus-left { margin: 0; text-align: center; color: var(--muted); font-size: 0.9rem; }
+.skill-bonus-left b { color: var(--text); font-size: 1.05rem; }
+
+/* ---- exertion ---- */
+.dice-faces .exert-bonus { color: var(--secret); align-self: flex-start; line-height: 2.2rem; }
+.die-reroll { padding: 0; background: none; border: none; min-height: 0; cursor: pointer; }
+.die-reroll:hover .die-face { border-color: var(--secret); box-shadow: 0 0 0 2px color-mix(in srgb, var(--secret) 45%, transparent); }
+.exert-spend { min-height: 34px; padding: 0.2rem 0.6rem; margin-top: 0.3rem; font-size: 0.8rem; color: var(--secret); border-color: color-mix(in srgb, var(--secret) 50%, var(--line)); }
+.exertion { display: grid; gap: 0.5rem; }
+.exertion-left { margin: 0; text-align: center; color: var(--muted); font-size: 0.9rem; }
+.exertion-left b { color: var(--secret); font-size: 1.2rem; }
+.exert-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+.exert-btn { display: flex; align-items: center; gap: 0.5rem; color: var(--field-color, var(--text)); border-color: color-mix(in srgb, var(--field-color, var(--line)) 50%, var(--line)); }
+.exert-btn .field-icon { width: 26px; height: 26px; border-radius: 7px; }
+.exert-btn .field-icon svg, .exert-btn .field-icon img { width: 16px; height: 16px; }
+.exert-btn .exert-left { font-weight: 700; }
+.badge.closed { background: var(--muted); color: var(--bg); }
 
 .challenge-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
 .challenge-log li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; padding: 0.4rem 0.6rem; background: var(--panel-2); border-radius: 8px; border-left: 3px solid var(--line); font-size: 0.9rem; }
 .challenge-log li.success { border-left-color: #5cc27a; }
 .challenge-log li.failure { border-left-color: var(--danger); }
-.challenge-log-who { font-weight: 600; }
+.challenge-log-what { font-weight: 600; flex-basis: 100%; }
+.challenge-log-who { color: var(--muted); }
 .challenge-log-numbers { color: var(--muted); }
 .challenge-log-result { margin-left: auto; font-weight: 600; }
 .trait-choice-desc { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }

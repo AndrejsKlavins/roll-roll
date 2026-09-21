@@ -5,7 +5,7 @@ import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
-import { ChallengeBoard } from './views/challenge'
+import { ChallengeBoard, ChallengePlayerPicker } from './views/challenge'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
 import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar, TraitsSection } from './views/sheet'
@@ -56,6 +56,13 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       client.role === 'gm'
         ? html(<Sheet session={session} char={char} gm oob />) + html(<ChangeLog session={session} oob />)
         : html(<Sheet session={session} char={char} oob />),
+    )
+
+  /** Keeps the (long-lived) challenge setup dialog's player list in step with the cast. */
+  const pushChallengePlayers = () =>
+    hub.send(
+      (client) => client.role === 'gm',
+      () => html(<ChallengePlayerPicker session={session} oob />),
     )
 
   const pushChangeLogToGm = () =>
@@ -263,6 +270,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const stakes: ChallengeStakes = body.stakes === 'low' || body.stakes === 'high' ? body.stakes : 'normal'
     const started = session.startChallenge(
       {
+        description: body.description ?? '',
         mainAbility: body.main_ability ?? '',
         supportAbility: body.support_ability ?? '',
         mainDifficulty: Number(body.main_difficulty),
@@ -271,15 +279,11 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       },
       actorName(c),
     )
-    if (started) pushChallenge()
-    return noContent(c)
-  })
-
-  app.post('/c/:id/challenge/join', (c) => {
-    const char = session.characters.get(c.req.param('id'))
+    if (!started) return noContent(c)
+    // The GM picks who rolls as part of setup; players no longer join a challenge themselves.
     const ch = session.currentChallenge()
-    if (!char || !ch) return c.notFound()
-    if (session.setChallengePlayer(ch.id, char.id, ch.approach, ch.skill, actorName(c))) pushChallenge()
+    if (ch && body.char_id) session.setChallengePlayer(ch.id, body.char_id, null, null, actorName(c))
+    pushChallenge()
     return noContent(c)
   })
 
@@ -302,6 +306,43 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // Exertion: burning a pool point changes the sheet too, so push both.
+  app.post('/c/:id/challenge/exert', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    if (session.exert(ch.id, char.id, (await form(c)).stat ?? '', actorName(c))) {
+      pushChallenge()
+      pushStatChange(char)
+    }
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/spend-exertion', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    const side = (await form(c)).side === 'support' ? 'support' : 'main'
+    if (session.spendExertion(ch.id, char.id, side, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/reroll', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    const side = c.req.query('side') === 'support' ? 'support' : 'main'
+    if (session.rerollDie(ch.id, char.id, side, Number(c.req.query('index')), actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/gm/challenge/done', (c) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    if (session.closeChallenge(ch.id, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
   app.post('/c/:id/challenge/skill-points', async (c) => {
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
@@ -314,7 +355,10 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   app.post('/c/:id/finalize', (c) => {
     const char = session.characters.get(c.req.param('id'))
     if (!char) return c.notFound()
-    if (session.finalizeCharacter(char.id, actorName(c))) pushWholeSheet(char)
+    if (session.finalizeCharacter(char.id, actorName(c))) {
+      pushWholeSheet(char)
+      pushChallengePlayers() // a finished character can now be put on a challenge
+    }
     return noContent(c)
   })
 

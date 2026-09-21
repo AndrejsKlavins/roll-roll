@@ -18,10 +18,17 @@ export { isBaseField }
 export type Visibility = 'public' | 'gm' | 'hidden'
 
 export type ChallengeStakes = 'low' | 'normal' | 'high'
-/** One ability's roll: two d6, each shifted by (rank − 3) — see rollChallengeSide(). */
-export type ChallengeSide = { dice: [number, number]; sum: number }
+/**
+ * One ability's roll. `faces` are the raw d6 ids (1–6, what the face is *called*); `dice` are the
+ * same faces shifted by (rank − 3) — the values that actually count. A strong character's "poor"
+ * can therefore beat a weak character's "good". `faces` is optional: challenges rolled before it
+ * was recorded only have the shifted values.
+ */
+export type ChallengeSide = { faces?: [number, number]; dice: [number, number]; sum: number }
 export type Challenge = {
   id: string
+  /** What the challenge is, in the GM's words — shown on every screen. */
+  description: string
   mainAbility: string
   supportAbility: string
   mainDifficulty: number
@@ -33,6 +40,13 @@ export type Challenge = {
   skill: string | null
   mainSkillPoints: number
   supportSkillPoints: number
+  /** Exertion: pool points burned (gained), how much was added to each side, and rerolls used. */
+  exertionGained: number
+  exertionMain: number
+  exertionSupport: number
+  rerolls: number
+  /** The GM has accepted the result: nothing more can be spent or rerolled. */
+  closed: boolean
   /** null until rolled. Once rolled, skill points can still change (see setChallengeSkillPoints). */
   main: ChallengeSide | null
   support: ChallengeSide | null
@@ -50,8 +64,15 @@ export type ChallengeOutcome = { main: SideOutcome; support: SideOutcome; succes
  */
 export function rollChallengeSide(rank: number, rng: () => number = () => cryptoRng(6)): ChallengeSide {
   const shift = Math.round(rank) - 3
-  const dice: [number, number] = [rng() + shift, rng() + shift]
-  return { dice, sum: dice[0] + dice[1] }
+  const faces: [number, number] = [rng(), rng()]
+  const dice: [number, number] = [faces[0] + shift, faces[1] + shift]
+  return { faces, dice, sum: dice[0] + dice[1] }
+}
+
+/** One replacement die (exertion reroll): raw face id plus the rank-shifted value. */
+export function rollOneFace(rank: number, rng: () => number = () => cryptoRng(6)) {
+  const face = rng()
+  return { face, value: face + Math.round(rank) - 3 }
 }
 
 /**
@@ -117,6 +138,7 @@ export type EventData =
   | {
       type: 'challenge_started'
       challengeId: string
+      description: string
       mainAbility: string
       supportAbility: string
       mainDifficulty: number
@@ -127,6 +149,28 @@ export type EventData =
   | { type: 'challenge_player_set'; challengeId: string; charId: string | null; approach: string | null; skill: string | null; by: string }
   | { type: 'challenge_rolled'; challengeId: string; main: ChallengeSide; support: ChallengeSide; by: string }
   | { type: 'challenge_skill_points_set'; challengeId: string; mainSkillPoints: number; supportSkillPoints: number; by: string }
+  // Exertion: burn a pool point for one exertion, then spend it on a side or on rerolling a die.
+  | {
+      type: 'challenge_exerted'
+      challengeId: string
+      charId: string
+      stat: string
+      adj: number
+      from: number
+      to: number
+      by: string
+    }
+  | { type: 'challenge_exertion_spent'; challengeId: string; side: 'main' | 'support'; by: string }
+  | {
+      type: 'challenge_rerolled'
+      challengeId: string
+      side: 'main' | 'support'
+      index: number
+      face: number
+      value: number
+      by: string
+    }
+  | { type: 'challenge_closed'; challengeId: string; by: string }
   | { type: 'undo'; target: number; by: string }
   | { type: 'session_started'; by: string }
 
@@ -387,6 +431,7 @@ export class Session {
       case 'challenge_started':
         this.challenges.push({
           id: e.challengeId,
+          description: e.description ?? '',
           mainAbility: e.mainAbility,
           supportAbility: e.supportAbility,
           mainDifficulty: e.mainDifficulty,
@@ -397,6 +442,11 @@ export class Session {
           skill: null,
           mainSkillPoints: 0,
           supportSkillPoints: 0,
+          exertionGained: 0,
+          exertionMain: 0,
+          exertionSupport: 0,
+          rerolls: 0,
+          closed: false,
           main: null,
           support: null,
           by: e.by,
@@ -415,6 +465,35 @@ export class Session {
       case 'challenge_skill_points_set': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
         if (ch) Object.assign(ch, { mainSkillPoints: e.mainSkillPoints, supportSkillPoints: e.supportSkillPoints })
+        break
+      }
+      case 'challenge_exerted': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const c = this.characters.get(e.charId)
+        if (ch) ch.exertionGained += 1
+        if (c?.status === 'active') c.statAdj[e.stat] = e.adj
+        break
+      }
+      case 'challenge_exertion_spent': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (!ch) break
+        if (e.side === 'main') ch.exertionMain += 1
+        else ch.exertionSupport += 1
+        break
+      }
+      case 'challenge_rerolled': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const side = ch && ch[e.side]
+        if (!ch || !side) break
+        side.dice[e.index] = e.value
+        if (side.faces) side.faces[e.index] = e.face
+        side.sum = side.dice[0] + side.dice[1]
+        ch.rerolls += 1
+        break
+      }
+      case 'challenge_closed': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (ch) ch.closed = true
         break
       }
     }
@@ -783,6 +862,7 @@ export class Session {
   /** Starts a new challenge, becoming the current one (any previous one falls into history). */
   startChallenge(
     opts: {
+      description: string
       mainAbility: string
       supportAbility: string
       mainDifficulty: number
@@ -793,10 +873,13 @@ export class Session {
   ) {
     if (!this.isAbilityField(opts.mainAbility) || !this.isAbilityField(opts.supportAbility)) return null
     if (!Number.isFinite(opts.mainDifficulty) || !Number.isFinite(opts.supportDifficulty)) return null
+    const description = opts.description.trim().slice(0, 200)
+    if (!description) return null // the GM names every challenge
     const challengeId = crypto.randomUUID().slice(0, 8)
     return this.append({
       type: 'challenge_started',
       challengeId,
+      description,
       mainAbility: opts.mainAbility,
       supportAbility: opts.supportAbility,
       mainDifficulty: Math.round(opts.mainDifficulty),
@@ -844,12 +927,15 @@ export class Session {
     const skillField = this.rules.fields.get(ch.skill) as NumberField | undefined
     if (!char || !skillField) return null
     const rank = Math.round(Number(this.baseOf(char, skillField)))
-    const clamp = (n: number) => Math.max(0, Math.min(rank, Math.round(Number(n) || 0)))
+    const clamp = (n: number, max: number) => Math.max(0, Math.min(max, Math.round(Number(n) || 0)))
+    const main = clamp(mainPoints, rank)
+    const support = clamp(supportPoints, rank - main)
+    if (main === ch.mainSkillPoints && support === ch.supportSkillPoints) return null
     return this.append({
       type: 'challenge_skill_points_set',
       challengeId,
-      mainSkillPoints: clamp(mainPoints),
-      supportSkillPoints: clamp(supportPoints),
+      mainSkillPoints: main,
+      supportSkillPoints: support,
       by,
     })
   }
@@ -857,9 +943,76 @@ export class Session {
   /** Full outcome (both sides + overall success) for a rolled challenge; null until rolled. */
   challengeOutcome(ch: Challenge): ChallengeOutcome | null {
     if (!ch.main || !ch.support) return null
-    const main = outcomeFor(ch.main.sum + ch.mainSkillPoints, ch.mainDifficulty, ch.stakes)
-    const support = outcomeFor(ch.support.sum + ch.supportSkillPoints, ch.supportDifficulty, ch.stakes)
+    const main = outcomeFor(ch.main.sum + ch.mainSkillPoints + ch.exertionMain, ch.mainDifficulty, ch.stakes)
+    const support = outcomeFor(
+      ch.support.sum + ch.supportSkillPoints + ch.exertionSupport,
+      ch.supportDifficulty,
+      ch.stakes,
+    )
     return { main, support, success: main.success && support.success }
+  }
+
+  /** Exertion earned but not yet spent on a side or a reroll. */
+  availableExertion(ch: Challenge) {
+    return ch.exertionGained - ch.exertionMain - ch.exertionSupport - ch.rerolls
+  }
+
+  /** The challenge's player, if it is rolled, open and theirs to act on. */
+  private actingCharacter(challengeId: string, charId: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    if (!ch || ch.closed || !ch.main || ch.charId !== charId) return null
+    const char = this.characters.get(charId)
+    return char?.status === 'active' ? { ch, char } : null
+  }
+
+  /** Burns one point of a pool stat (stamina/willpower) for one exertion. */
+  exert(challengeId: string, charId: string, statId: string, by: string) {
+    const acting = this.actingCharacter(challengeId, charId)
+    if (!acting || !this.rules.challenges.exertionSources.includes(statId)) return false
+    const stat = this.statOf(acting.char, statId)
+    if (!stat || stat.current <= 0) return false
+    const to = stat.current - 1
+    this.append({
+      type: 'challenge_exerted',
+      challengeId,
+      charId,
+      stat: statId,
+      adj: to - stat.normal,
+      from: stat.current,
+      to,
+      by,
+    })
+    return true
+  }
+
+  /** Spends one exertion as +1 on one side's result. */
+  spendExertion(challengeId: string, charId: string, side: 'main' | 'support', by: string) {
+    const acting = this.actingCharacter(challengeId, charId)
+    if (!acting || this.availableExertion(acting.ch) <= 0) return false
+    this.append({ type: 'challenge_exertion_spent', challengeId, side, by })
+    return true
+  }
+
+  /** Spends one exertion to reroll a single die, keeping the new face. */
+  rerollDie(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
+    const acting = this.actingCharacter(challengeId, charId)
+    if (!acting || this.availableExertion(acting.ch) <= 0) return false
+    const { ch, char } = acting
+    if (index !== 0 && index !== 1) return false
+    const abilityId = side === 'main' ? ch.mainAbility : ch.supportAbility
+    const field = this.rules.fields.get(abilityId) as NumberField | undefined
+    if (!ch[side] || !field) return false
+    const { face, value } = rollOneFace(Number(this.valueOf(char, field)))
+    this.append({ type: 'challenge_rerolled', challengeId, side, index, face, value, by })
+    return true
+  }
+
+  /** GM accepts the result: the challenge stops taking input. */
+  closeChallenge(challengeId: string, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    if (!ch || ch.closed || !ch.main) return false
+    this.append({ type: 'challenge_closed', challengeId, by })
+    return true
   }
 
   roll(opts: {
@@ -906,9 +1059,23 @@ export class Session {
       .slice(-limit)
   }
 
+  /**
+   * Assigning skill points is noise in the log until it moves the rank, so only rank-changing
+   * training events (and undos of them) are shown.
+   */
+  private worthLogging(e: LoggedEvent): boolean {
+    if (!CHANGE_TYPES.has(e.type)) return false
+    if (e.type === 'skill_trained') return this.rankOf(e.from) !== this.rankOf(e.to)
+    if (e.type === 'undo') {
+      const target = this.events.find((t) => t.id === e.target)
+      return !target || this.worthLogging(target)
+    }
+    return true
+  }
+
   recentChanges(limit = 40): LoggedEvent[] {
     return this.sinceSessionStart()
-      .filter((e) => CHANGE_TYPES.has(e.type))
+      .filter((e) => this.worthLogging(e))
       .slice(-limit)
   }
 }

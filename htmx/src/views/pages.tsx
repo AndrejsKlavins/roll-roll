@@ -1,6 +1,6 @@
 import { raw } from 'hono/html'
 import type { Character, Session } from '../session'
-import { ChallengeBoard } from './challenge'
+import { ChallengeBoard, ChallengeSetupDialog } from './challenge'
 import { ChangeLog, Feed } from './feed'
 import { Layout } from './layout'
 import { Sheet } from './sheet'
@@ -134,6 +134,7 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             Open public table screen ↗
           </a>
           <ChallengeBoard session={session} role="gm" />
+          <ChallengeSetupDialog session={session} />
 
           <form
             class="card gm-roll"
