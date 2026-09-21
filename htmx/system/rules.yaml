@@ -78,11 +78,11 @@ training:
 # to the rolling player. Tweak "value" freely — nothing else depends on the exact numbers.
 challenges:
   difficulties:
-    - { id: trivial,     label: Trivial,     value: 2 }
     - { id: easy,        label: Easy,        value: 4 }
     - { id: challenging, label: Challenging, value: 7 }
-    - { id: hard,        label: Hard,        value: 11 }
-    - { id: extreme,     label: Extreme,     value: 16 }
+    - { id: hard,        label: Hard,        value: 10 }
+    - { id: very_hard,   label: Very hard,   value: 13 }
+    - { id: epic,        label: Epic,        value: 16 }
   approaches:
     - { id: unbreakable, label: Unbreakable }
     - { id: exquisite,   label: Exquisite }
