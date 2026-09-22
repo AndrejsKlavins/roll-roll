@@ -96,8 +96,8 @@ export type Difficulty = { id: string; label: string; value: number }
 /**
  * A named approach the rolling player picks. Each one rolls its own d6 (the approach die);
  * `when` says whether that die's effect applies: `always`, only while the roll is failing
- * (`failure`), or by the player's `choice` (they press Activate). The effects themselves are
- * not designed yet — for now the die is just a number.
+ * (`failure`), or by the player's `choice` (they press Activate). Nothing applies on its own —
+ * the player always presses Activate first; `when` decides whether that button is offered.
  */
 export type ApproachWhen = 'always' | 'failure' | 'choice'
 export type Approach = {
@@ -113,31 +113,70 @@ const APPROACH_WHEN: ApproachWhen[] = ['always', 'failure', 'choice']
 /**
  * What one face of an approach die does, and what the player has to pick to apply it:
  * - `none` — nothing happens, so there is nothing to activate.
+ * - `declare` — a ruling with no mechanics (e.g. "ignore the failure's bad news"); Activate
+ *   records that it was used and asks for nothing.
  * - `discard` — the player taps one rolled die; it stops counting.
  * - `reroll` — the player taps one rolled die; it is rolled again.
  * - `extra_dice` — the player picks one of the two abilities and rolls `dice` more for it.
- * Any cost ("payment") is settled at the table; the app never deducts one.
+ * - `raise_face` — the player taps `dice` dice; each moves one face up (a die already on the
+ *   top face stays put and the pick is spent).
+ * - `set_face` — the player taps `dice` dice; each is set to `toFace`, up or down.
+ * `dice` is how many dice the effect involves: rolled (extra_dice) or tapped (raise/set).
+ * The same die can't be tapped twice for one effect. Any cost ("payment") is settled at the
+ * table; the app never deducts one.
  */
-export type ApproachEffectKind = 'none' | 'discard' | 'reroll' | 'extra_dice'
-export type ApproachEffect = { face: number; kind: ApproachEffectKind; dice: number; label: string }
-const APPROACH_EFFECT_KINDS: ApproachEffectKind[] = ['none', 'discard', 'reroll', 'extra_dice']
+export type ApproachEffectKind = 'none' | 'declare' | 'discard' | 'reroll' | 'extra_dice' | 'raise_face' | 'set_face'
+export type ApproachEffect = {
+  face: number
+  kind: ApproachEffectKind
+  dice: number
+  /** Only for `set_face`: the face id every tapped die is set to. */
+  toFace: number
+  label: string
+}
+const APPROACH_EFFECT_KINDS: ApproachEffectKind[] = [
+  'none',
+  'declare',
+  'discard',
+  'reroll',
+  'extra_dice',
+  'raise_face',
+  'set_face',
+]
+/** Kinds whose `dice` counts dice the player taps (rather than dice rolled for them). */
+const TAP_KINDS: ApproachEffectKind[] = ['raise_face', 'set_face']
 
-const defaultEffectLabel = (kind: ApproachEffectKind, dice: number) =>
+const plural = (n: number) => (n === 1 ? 'die' : 'dice')
+const defaultEffectLabel = (kind: ApproachEffectKind, dice: number, toFace: number) =>
   kind === 'discard'
     ? 'Discard one die'
     : kind === 'reroll'
       ? 'Reroll one die'
       : kind === 'extra_dice'
-        ? `Roll ${dice} extra ${dice === 1 ? 'die' : 'dice'}`
-        : 'Nothing happens'
+        ? `Roll ${dice} extra ${plural(dice)}`
+        : kind === 'raise_face'
+          ? `Raise ${dice} ${plural(dice)} one face`
+          : kind === 'set_face'
+            ? `Set ${dice} ${plural(dice)} to face ${toFace}`
+            : kind === 'declare'
+              ? 'A ruling, with no dice to change'
+              : 'Nothing happens'
 
 /** The effect of the face this approach die landed on, or null when none is configured. */
 export const approachEffect = (approach: Approach, face: number) =>
   approach.effects.find((e) => e.face === face) ?? null
 
+/** How many picks (dice or an ability) applying this effect asks the player for. */
+export const effectPicks = (effect: ApproachEffect | null) => {
+  if (!effect || effect.kind === 'none' || effect.kind === 'declare') return 0
+  return TAP_KINDS.includes(effect.kind) ? effect.dice : 1
+}
+
 /** Whether applying this effect needs the player to pick a die or an ability first. */
-export const effectNeedsPick = (effect: ApproachEffect | null) =>
-  !!effect && effect.kind !== 'none'
+export const effectNeedsPick = (effect: ApproachEffect | null) => effectPicks(effect) > 0
+
+/** Whether this face is worth an Activate button at all (a blank face is not). */
+export const effectCanActivate = (effect: ApproachEffect | null) => !!effect && effect.kind !== 'none'
 /** What a rolled die face is called, and the colour it reads in (red → green). */
 export type FaceName = { value: number; label: string; color: string; ink: string }
 
@@ -453,11 +492,17 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
         return []
       }
       const dice = e?.dice === undefined ? 1 : Number(e.dice)
-      if (kind === 'extra_dice' && (!Number.isInteger(dice) || dice < 1 || dice > 10)) {
+      const countsDice = kind === 'extra_dice' || TAP_KINDS.includes(kind)
+      if (countsDice && (!Number.isInteger(dice) || dice < 1 || dice > 10)) {
         fail(`${at} (face ${face}): dice must be a whole number 1..10`)
         return []
       }
-      return [{ face, kind, dice, label: String(e?.label ?? defaultEffectLabel(kind, dice)) }]
+      const toFace = Number(e?.to_face ?? 0)
+      if (kind === 'set_face' && !Number.isFinite(toFace)) {
+        fail(`${at} (face ${face}): set_face needs to_face (the face id to set dice to)`)
+        return []
+      }
+      return [{ face, kind, dice, toFace, label: String(e?.label ?? defaultEffectLabel(kind, dice, toFace)) }]
     })
     const duplicate = effects.find((e, j) => effects.findIndex((o) => o.face === e.face) !== j)
     if (duplicate) fail(`${where} "${a.id}": face ${duplicate.face} is listed twice in effects`)
@@ -476,6 +521,17 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       return [{ value, label: String(f?.label ?? value), color: look.color ?? '', ink: look.ink ?? '#ffffff' }]
     })
     .sort((a, b) => a.value - b.value)
+
+  // set_face effects name a face by id, so it has to be one of the faces above.
+  if (faces.length) {
+    for (const a of approaches) {
+      for (const e of a.effects) {
+        if (e.kind === 'set_face' && !faces.some((f) => f.value === e.toFace)) {
+          fail(`challenges.approaches "${a.id}" (face ${e.face}): to_face ${e.toFace} is not a configured face`)
+        }
+      }
+    }
+  }
 
   // challenges.exertion_sources: [stamina, willpower] — must be pool stats (spend 1, gain exertion).
   const exertionSources: string[] = ((rawChallenges.exertion_sources ?? []) as any[]).flatMap((id: any, i: number) => {

@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-22 (approach pick buttons; per-die "Reroll N" counter)
+Last updated: 2026-09-22 (Unbreakable face effects: declare, raise, squash)
 
 ---
 
@@ -326,46 +326,58 @@ no rank shift, stored as `approachDie` on `challenge_rolled` (absent when no app
 challenges rolled before this existed). Two things are configured per approach in
 `challenges.approaches`:
 
-`when` — whether the die counts at all:
+**Nothing ever applies on its own** (user decision): the player always presses **Activate result**.
+
+`when` — whether that button is offered at all:
 
 | `when` | approach | status shown |
 |---|---|---|
 | `always` | Limitless | always `active` |
-| `failure` | Unbreakable | `active` while the roll fails (at least one side short of its target), `skipped` once it succeeds — derived, so it flips live as skill points/exertion move the sums |
-| `choice` | Exquisite | `ready` until the player presses **Activate result**, then `active` |
+| `failure` | Unbreakable | `active` while the roll fails (at least one side short of its target), `skipped` once it succeeds — derived, so it flips live as skill points/exertion move the sums. **Once activated the status locks to `active`**, so an effect that turns the roll into a success (raising dice, say) doesn't grey out the thing that caused it |
+| `choice` | Exquisite | `ready` until the player activates it, then `active` |
 
-`effects` — what each **face** does, and therefore what the player is asked to pick after Activate.
-Only Limitless has them so far (user-designed; Unbreakable and Exquisite are still open):
+`effects` — what each **face** does, and therefore what the player is asked to tap after Activate.
+Both user-designed; Exquisite's are still open:
 
-| face | `kind` | after Activate |
+| kind | after Activate | used by |
 |---|---|---|
-| 1 | `discard` | the player taps any rolled die; it stays on screen struck through and drops out of the sum |
-| 2 | `none` | nothing happens — no Activate button at all |
-| 3 | `reroll` | the player taps any rolled die; it is rolled again, **free of exertion** |
-| 4, 5 | `extra_dice` (1) | the player picks one of the two abilities; one more die is rolled at that ability's rank and joins the side |
-| 6 | `extra_dice` (2) | the same, two dice |
+| `none` | nothing — no Activate button at all | Limitless 2, Unbreakable 1 |
+| `declare` | a ruling with no dice to change; Activate just records it ("In effect") | Unbreakable 2 (Unshakable) |
+| `discard` | tap a die; it stays on screen struck through and drops out of the sum | Limitless 1 |
+| `reroll` | tap a die; it is rolled again, **free of exertion** | Limitless 3 |
+| `extra_dice` | pick one of the two abilities; `dice` more dice are rolled at that ability's rank and join the side | Limitless 4/5 (1), 6 (2) |
+| `raise_face` | tap `dice` dice; each moves one face up. A die already on the **top face stays put** and the pick is still spent (user decision), so it gets no marker | Unbreakable 3/4 (2 dice) |
+| `set_face` | tap `dice` dice; each is set to `to_face`, **up or down** (user decision — a good die may be lowered) | Unbreakable 5/6 (2 dice → face 3) |
 
 Any **cost is settled at the table** — the app never deducts one (user decision); the rules.yaml
 labels say so and nothing is spent automatically.
 
-Flow and state: **Activate** (`challenge_approach_activated`) sets `approachActivated`, and for an
-effect that needs a target also `approachPending`. While pending, the board waits: the dice become tap
-targets (`/c/:id/challenge/approach-pick?effect=…&side=…&index=…`) or the two abilities appear in the
-approach box, and the resolving event (`challenge_die_discarded`, `challenge_dice_added`, or
-`challenge_rerolled` with `source: 'approach'`, which costs no exertion) clears `approachPending`.
-One pick per activation. A pending effect owns the dice, so exertion rerolls stand down until it is
-resolved. "Challenge done" ends the pick too — the note then reads "… — not used".
+Flow and state: **Activate** (`challenge_approach_activated`) sets `approachActivated` and
+`approachPicksLeft` = however many picks the effect wants (`effectPicks`). While picks are left the
+board waits: dice become tap targets (`/c/:id/challenge/approach-pick?effect=discard|reroll|face&side=…&index=…`)
+or the two abilities appear in the approach box, and each resolving event
+(`challenge_die_discarded`, `challenge_face_changed`, `challenge_dice_added`, or `challenge_rerolled`
+with `source: 'approach'`, which costs no exertion) spends one pick. **The same die is never tapped
+twice for one effect** (user decision): `approachPicked` holds `"side:index"` keys and those dice stop
+being buttons. The prompt counts down ("Tap 2 dice…" → "Tap a die…"). A pending effect owns the dice,
+so exertion rerolls stand down until it is resolved. "Challenge done" ends the pick too — the status
+line then reads "Not used".
 
-Because of `discard` and `extra_dice`, `ChallengeSide` is no longer a fixed pair: `dice`/`faces` are
-plain arrays with optional parallel `discarded` flags and `rerolled` counts, and **`sideSum()` is the
-only way to total a side** (every die that is not discarded). Old two-die events replay unchanged.
+Because of `discard`, `extra_dice` and the face-moving effects, `ChallengeSide` is no longer a fixed
+pair: `dice`/`faces` are plain arrays with optional parallel `discarded` flags, `rerolled` counts and
+`changed` markers ('raised' / 'squashed', shown under the die), and **`sideSum()` is the only way to
+total a side** (every die that is not discarded). A face change keeps that die's own rank shift
+(`dice[i] − faces[i]`), so the new value stays in step with how it was rolled. Old two-die events
+replay unchanged.
 
-`session.approachState(ch)` returns `{ approach, die, status, effect, canActivate, pending }` (null
-when nothing was rolled) and is the single place all of this is decided; `ApproachDie` in
-`views/challenge.tsx` renders it under the two result boxes on every screen, with the buttons only for
-the rolling player while the challenge is open — the GM and `/table` see the same prompt in the third
-person ("Player taps a die to discard it"). Unknown `when`/`kind` values, a bad `dice` count and a
-face listed twice all fail startup. Not undoable, like the rest of a challenge.
+`session.approachState(ch)` returns `{ approach, die, status, effect, canActivate, pending, picksLeft }`
+(null when nothing was rolled) and is the single place all of this is decided; `ApproachDie` in
+`views/challenge.tsx` renders it under the two result boxes on every screen — face label on one line,
+what it is waiting for (or "Done" / "In effect" / "Not used") on the next — with the buttons only for
+the rolling player while the challenge is open. The GM and `/table` see the same prompt in the third
+person ("Player taps 2 dice to raise them one face"). Unknown `when`/`kind` values, a bad `dice` count,
+a `set_face` whose `to_face` is not a configured face, and a face listed twice all fail startup. Not
+undoable, like the rest of a challenge.
 
 **Exertion** (user-designed): while a rolled challenge is open, the rolling player may burn one point
 of any pool stat listed in `challenges.exertion_sources` (rules.yaml: stamina, willpower) for one

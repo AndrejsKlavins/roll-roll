@@ -360,6 +360,8 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .die-name { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--face-color, var(--muted)); }
 /* How many times this die was rolled again (exertion or an approach effect). */
 .die-rerolls { font-size: 0.6rem; font-weight: 700; color: var(--secret); }
+/* An approach effect moved this die's face after the roll. */
+.die-changed { font-size: 0.6rem; font-weight: 700; color: var(--accent); }
 .dice-faces .skill-bonus { color: var(--accent); align-self: flex-start; line-height: 2.2rem; }
 /* The attempt's total, in the ability's colour like the target above it. */
 .difficulty-sum { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
@@ -385,14 +387,16 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .approach-label { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .approach-die .die-face { font-size: 1.3rem; font-weight: 700; width: 2.6rem; height: 2.6rem; }
 .approach-note { font-size: 0.8rem; color: var(--muted); }
+/* Where the effect stands: the pick it is waiting for, or that it is applied / went unused. */
+.approach-status { font-size: 0.8rem; font-weight: 700; color: var(--muted); }
 .approach-active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
-.approach-active .approach-label, .approach-active .approach-note, .approach-active .die-face { color: var(--accent); }
+.approach-active .approach-label, .approach-active .approach-note, .approach-active .approach-status, .approach-active .die-face { color: var(--accent); }
 .approach-active .die-face { border-color: var(--accent); }
 .approach-skipped { opacity: 0.55; }
 .approach-activate { min-height: 34px; padding: 0.2rem 0.7rem; font-size: 0.8rem; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
 /* Waiting for the player to pick a die or an ability: the prompt is the loudest thing on the board. */
 .approach-pending { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
-.approach-pending .approach-note { color: var(--accent); font-weight: 700; }
+.approach-pending .approach-status { color: var(--accent); }
 .approach-sides { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
 .approach-side-btn { display: flex; align-items: center; gap: 0.4rem; color: var(--field-color, var(--text)); border-color: color-mix(in srgb, var(--field-color, var(--line)) 50%, var(--line)); }
 .approach-side-btn .field-icon { width: 24px; height: 24px; border-radius: 7px; }
@@ -400,6 +404,8 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* A discarded die stays visible (the table can see what was thrown away) but is out of the sum. */
 .die-discarded .die-face { border-style: dashed; opacity: 0.45; text-decoration: line-through; }
 .die-discarded .die-name { opacity: 0.45; text-decoration: line-through; }
+.die-face-change .die-face { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.die-face-change:hover .die-face { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 .die-discard .die-face { box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 40%, transparent); }
 .die-discard:hover .die-face { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 45%, transparent); }
 .skill-pick { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }

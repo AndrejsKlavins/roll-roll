@@ -342,6 +342,16 @@ challenges:
     - { id: bold, label: Bold }
     - { id: stubborn, label: Stubborn, when: failure }
     - { id: fancy, label: Fancy, when: choice }
+    - id: stoic
+      label: Stoic
+      when: failure
+      effects:
+        - { face: 1, kind: none }
+        - { face: 2, kind: declare, label: Shrug it off }
+        - { face: 3, kind: raise_face, dice: 2 }
+        - { face: 4, kind: raise_face, dice: 2 }
+        - { face: 5, kind: set_face, dice: 2, to_face: 3 }
+        - { face: 6, kind: set_face, dice: 2, to_face: 3 }
     - id: tricky
       label: Tricky
       when: always
@@ -355,7 +365,11 @@ challenges:
   exertion_sources: [stamina, willpower]
   faces:
     - { value: 1, label: horrible, color: "#c0392b" }
-    - { value: 6, label: amazing, color: "#45a862" }
+    - { value: 2, label: poor,     color: "#d1683a" }
+    - { value: 3, label: ok,       color: "#d6a648" }
+    - { value: 4, label: good,     color: "#b3bf4f" }
+    - { value: 5, label: great,    color: "#79b455" }
+    - { value: 6, label: amazing,  color: "#45a862" }
 rolls: []
 `
 
@@ -624,6 +638,114 @@ describe('approach die effects', () => {
     expect(replayed.main!.discarded).toEqual([false, true])
     expect(replayed.main!.sum).toBe(sum)
     expect(replayed.approachActivated).toBe(true)
-    expect(replayed.approachPending).toBe(false)
+    expect(replayed.approachPicksLeft).toBe(0)
+  })
+})
+
+describe('unbreakable-style approach effects', () => {
+  /** A failing challenge (difficulty 30) rolled with the `stoic` approach on the given face. */
+  const failing = (face: number) => challengeWithFace(face, 'stoic', 30)
+
+  test('nothing applies until the player activates it', async () => {
+    const { s, id, ch } = await failing(3)
+    const before = s.currentChallenge()!.main!.faces!.slice()
+    expect(s.approachState(ch)!.canActivate).toBe(true)
+    expect(s.approachState(ch)!.pending).toBe(false)
+    expect(s.changeDieFace(ch.id, id, 'main', 0, 'Mara')).toBe(false) // not activated yet
+    expect(s.currentChallenge()!.main!.faces).toEqual(before)
+
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.approachState(s.currentChallenge()!)!.picksLeft).toBe(2)
+  })
+
+  test('a blank face offers no button; a declared ruling asks for nothing', async () => {
+    const blank = await failing(1)
+    expect(blank.s.approachState(blank.ch)!.canActivate).toBe(false)
+    expect(blank.s.activateApproach(blank.ch.id, blank.id, 'Mara')).toBe(false)
+
+    const ruling = await failing(2)
+    expect(ruling.s.approachState(ruling.ch)!.canActivate).toBe(true)
+    expect(ruling.s.activateApproach(ruling.ch.id, ruling.id, 'Mara')).toBe(true)
+    const after = ruling.s.approachState(ruling.s.currentChallenge()!)!
+    expect(after.status).toBe('active')
+    expect(after.pending).toBe(false) // no dice to pick
+  })
+
+  test('raising moves two dice one face up and marks them', async () => {
+    const { s, id, ch } = await failing(3)
+    s.activateApproach(ch.id, id, 'Mara')
+    const before = s.currentChallenge()!.main!.faces!.slice()
+
+    expect(s.changeDieFace(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+    expect(s.approachState(s.currentChallenge()!)!.picksLeft).toBe(1)
+    expect(s.changeDieFace(ch.id, id, 'main', 0, 'Mara')).toBe(false) // never the same die twice
+    expect(s.changeDieFace(ch.id, id, 'support', 1, 'Mara')).toBe(true)
+
+    const done = s.currentChallenge()!
+    const raise = (was: number) => Math.min(6, was + 1)
+    expect(done.main!.faces![0]).toBe(raise(before[0]!))
+    expect(done.main!.dice[0]).toBe(done.main!.faces![0]! + (done.main!.dice[1]! - done.main!.faces![1]!))
+    expect(done.main!.sum).toBe(sideSum(done.main!))
+    // A die that was already on the top face cannot move, so it carries no marker.
+    expect(done.main!.changed![0]).toBe(before[0] === 6 ? null : 'raised')
+    expect(s.approachState(done)!.pending).toBe(false)
+    expect(s.changeDieFace(ch.id, id, 'main', 1, 'Mara')).toBe(false) // both picks spent
+  })
+
+  test('squashing sets two dice to the configured face, up or down', async () => {
+    const { s, id, ch } = await failing(5)
+    s.activateApproach(ch.id, id, 'Mara')
+    const before = s.currentChallenge()!.main!.faces!.slice()
+    s.changeDieFace(ch.id, id, 'main', 0, 'Mara')
+    s.changeDieFace(ch.id, id, 'main', 1, 'Mara')
+
+    const done = s.currentChallenge()!.main!
+    expect(done.faces).toEqual([3, 3])
+    expect(done.changed).toEqual([before[0] === 3 ? null : 'squashed', before[1] === 3 ? null : 'squashed'])
+    expect(done.sum).toBe(sideSum(done))
+  })
+
+  test('an activated die stays active even after the roll turns into a success', async () => {
+    // Look for a failing roll that a point or two of exertion can turn into a success.
+    const { s, id } = await rolledChallenge('stoic', 9)
+    let ch = s.currentChallenge()!
+    const shortBy = (c: typeof ch) => {
+      const o = s.challengeOutcome(c)!
+      return Math.max(0, -o.main.difference) + Math.max(0, -o.support.difference)
+    }
+    for (let i = 0; i < 300 && !(shortBy(ch) > 0 && shortBy(ch) <= 2 && s.approachState(ch)?.canActivate); i++) {
+      ch = startAndRoll(s, id, 'stoic', 9)
+    }
+    expect(s.approachState(ch)!.status).toBe('active') // failing, so the button is offered
+    s.activateApproach(ch.id, id, 'Mara')
+
+    // Close the gap (stamina 2 + willpower 1 covers the 2 points this roll can be short).
+    while (!s.challengeOutcome(s.currentChallenge()!)!.success) {
+      if (!s.exert(ch.id, id, 'stamina', 'Mara')) s.exert(ch.id, id, 'willpower', 'Mara')
+      const o = s.challengeOutcome(s.currentChallenge()!)!
+      s.spendExertion(ch.id, id, o.main.success ? 'support' : 'main', 'Mara')
+    }
+    // Succeeding now would normally skip a `when: failure` die; activation holds it in place.
+    expect(s.approachState(s.currentChallenge()!)!.status).toBe('active')
+  })
+
+  test('a succeeding roll offers nothing at all', async () => {
+    const { s, id, ch } = await challengeWithFace(5, 'stoic', 2) // target 2: always a success
+    const state = s.approachState(ch)!
+    expect(state.status).toBe('skipped')
+    expect(state.canActivate).toBe(false)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false)
+  })
+
+  test('picks and markers survive a restart', async () => {
+    const { s, id, ch, open } = await failing(5)
+    s.activateApproach(ch.id, id, 'Mara')
+    s.changeDieFace(ch.id, id, 'main', 0, 'Mara')
+
+    const replayed = open().currentChallenge()!
+    expect(replayed.main!.faces![0]).toBe(3)
+    expect(replayed.approachPicksLeft).toBe(1)
+    expect(replayed.approachPicked).toEqual(['main:0'])
+    expect(replayed.main!.sum).toBe(sideSum(replayed.main!))
   })
 })

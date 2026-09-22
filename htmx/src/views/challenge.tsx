@@ -4,7 +4,7 @@
 import { raw } from 'hono/html'
 import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '../rules'
 import type { Child } from 'hono/jsx'
-import { isBaseField, type Challenge, type ChallengeSide, type Session, type SideOutcome } from '../session'
+import { isBaseField, type Challenge, type ChallengeSide, type DieMarker, type Session, type SideOutcome } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 const signed = (n: number) => (n === 0 ? '0' : n > 0 ? `+${n}` : String(n))
@@ -34,6 +34,8 @@ function Die(props: {
   discarded?: boolean
   /** How many times this die has been rolled again; shown under it. */
   rerolled?: number
+  /** Set when an approach effect moved this die's face; named under it. */
+  changed?: DieMarker
   action?: DieAction
 }) {
   const face = faceName(props.faces, props.faceId)
@@ -43,6 +45,7 @@ function Die(props: {
       <span class="die-face">{props.value}</span>
       {face && <span class="die-name">{face.label}</span>}
       {!!props.rerolled && <span class="die-rerolls">Reroll {props.rerolled}</span>}
+      {props.changed && <span class="die-changed">{props.changed === 'raised' ? 'Raised' : 'Squashed'}</span>}
     </>
   )
   const cls = ['die', props.discarded && 'die-discarded'].filter(Boolean).join(' ')
@@ -70,7 +73,7 @@ function Die(props: {
 }
 
 /** What tapping a die does right now. `kind` only picks the highlight colour. */
-type DieAction = { kind: 'reroll' | 'discard'; url: string; title: string }
+type DieAction = { kind: 'reroll' | 'discard' | 'face-change'; url: string; title: string }
 
 /** One side's big number: target, then (once rolled) dice, skill bonus, final sum and difference. */
 function DifficultyBox(props: {
@@ -113,6 +116,7 @@ function DifficultyBox(props: {
                 faces={props.faces}
                 discarded={side.discarded?.[i]}
                 rerolled={side.rerolled?.[i]}
+                changed={side.changed?.[i]}
                 action={side.discarded?.[i] ? undefined : props.dieAction?.(i)}
               />
             ))}
@@ -199,23 +203,32 @@ function ApproachDie(props: {
   const { effect } = state
   // "Challenge done" ends the pick too: an effect nobody applied in time simply went unused.
   const pending = state.pending && !!effect && !ch.closed
-  const note = pending
-    ? pickPrompt(effect!, acting)
-    : effect
-      ? state.pending
-        ? `${effect.label} — not used`
+  // What this face is (the effect's own words, or a plain note for an approach with no effects).
+  const note = effect
+    ? effect.label
+    : state.status === 'active'
+      ? ch.approachActivated
+        ? 'Activated'
+        : state.approach.when === 'failure'
+          ? 'In effect — the roll is failing'
+          : 'In effect'
+      : state.status === 'skipped'
+        ? 'Skipped — the roll succeeded'
+        : 'Not activated'
+  // Where it stands: waiting for picks, applied, or left unused when the GM closed the challenge.
+  const status = !effect
+    ? null
+    : pending
+      ? pickPrompt(effect, state.picksLeft, acting)
+      : state.pending
+        ? 'Not used'
         : ch.approachActivated
-          ? `${effect.label} — done`
-          : effect.label
-      : state.status === 'active'
-        ? ch.approachActivated
-          ? 'Activated'
-          : state.approach.when === 'failure'
-            ? 'In effect — the roll is failing'
-            : 'In effect'
-        : state.status === 'skipped'
-          ? 'Skipped — the roll succeeded'
-          : 'Not activated'
+          ? effect.kind === 'declare'
+            ? 'In effect'
+            : 'Done'
+          : state.status === 'skipped'
+            ? 'Skipped — the roll succeeded'
+            : null
   const cls = ['approach-die', `approach-${state.status}`, pending && 'approach-pending'].filter(Boolean).join(' ')
   return (
     <div class={cls}>
@@ -224,6 +237,7 @@ function ApproachDie(props: {
         <span class="die-face">{state.die}</span>
       </span>
       <div class="approach-note">{note}</div>
+      {status && <div class="approach-status">{status}</div>}
       {acting && state.canActivate && (
         <button
           type="button"
@@ -255,11 +269,18 @@ function ApproachDie(props: {
   )
 }
 
-/** What the player (or everyone else, watching) is told to do while an effect waits for a pick. */
-function pickPrompt(effect: ApproachEffect, acting: boolean) {
+/**
+ * What the player (or everyone else, watching) is told to do while an effect waits for a pick.
+ * Effects over several dice count down, so the prompt always says how many are still to come.
+ */
+function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean) {
   const who = acting ? 'Tap' : 'Player taps'
-  if (effect.kind === 'discard') return `${who} a die to discard it`
-  if (effect.kind === 'reroll') return `${who} a die to reroll it`
+  const dice = picksLeft === 1 ? 'a die' : `${picksLeft} dice`
+  const them = picksLeft === 1 ? 'it' : 'them'
+  if (effect.kind === 'discard') return `${who} ${dice} to discard ${them}`
+  if (effect.kind === 'reroll') return `${who} ${dice} to reroll ${them}`
+  if (effect.kind === 'raise_face') return `${who} ${dice} to raise ${them} one face`
+  if (effect.kind === 'set_face') return `${who} ${dice} to set ${them} to face ${effect.toFace}`
   const n = effect.dice === 1 ? 'one extra die' : `${effect.dice} extra dice`
   return acting ? `Pick the ability to roll ${n} for` : `Player picks the ability for ${n}`
 }
@@ -407,14 +428,22 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   // on); otherwise they are exertion reroll buttons whenever exertion is in hand.
   const approach = session.approachState(ch)
   const pendingKind = acting && approach?.pending ? approach.effect?.kind : undefined
+  // Multi-die effects never take the same die twice, so dice already used drop out.
+  const picked = (side: 'main' | 'support', index: number) => ch.approachPicked.includes(`${side}:${index}`)
   const dieAction = (side: 'main' | 'support') => {
-    if (pendingKind === 'discard' || pendingKind === 'reroll') {
-      const verb = pendingKind === 'discard' ? 'Discard this die' : 'Reroll this die'
-      return (index: number): DieAction => ({
-        kind: pendingKind,
-        url: `/c/${viewerCharId}/challenge/approach-pick?effect=${pendingKind}&side=${side}&index=${index}`,
-        title: `${verb} (${approach!.approach.label})`,
-      })
+    const tap = (kind: DieAction['kind'], effect: string, title: string) => (index: number) =>
+      picked(side, index)
+        ? undefined
+        : {
+            kind,
+            url: `/c/${viewerCharId}/challenge/approach-pick?effect=${effect}&side=${side}&index=${index}`,
+            title: `${title} (${approach!.approach.label})`,
+          }
+    if (pendingKind === 'discard') return tap('discard', 'discard', 'Discard this die')
+    if (pendingKind === 'reroll') return tap('reroll', 'reroll', 'Reroll this die')
+    if (pendingKind === 'raise_face') return tap('face-change', 'face', 'Raise this die one face')
+    if (pendingKind === 'set_face') {
+      return tap('face-change', 'face', `Set this die to face ${approach!.effect!.toFace}`)
     }
     if (!acting || approach?.pending || exertion <= 0) return undefined
     return (index: number): DieAction => ({

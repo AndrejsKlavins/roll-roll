@@ -353,12 +353,15 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const side = c.req.query('side') === 'support' ? 'support' : 'main'
     const index = Number(c.req.query('index'))
     const by = actorName(c)
+    const effect = c.req.query('effect')
     const done =
-      c.req.query('effect') === 'discard'
+      effect === 'discard'
         ? session.discardDie(ch.id, char.id, side, index, by)
-        : c.req.query('effect') === 'reroll'
+        : effect === 'reroll'
           ? session.approachReroll(ch.id, char.id, side, index, by)
-          : session.addApproachDice(ch.id, char.id, side, by)
+          : effect === 'face'
+            ? session.changeDieFace(ch.id, char.id, side, index, by)
+            : session.addApproachDice(ch.id, char.id, side, by)
     if (done) pushChallenge()
     return noContent(c)
   })

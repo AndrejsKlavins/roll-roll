@@ -96,6 +96,13 @@ challenges:
       label: Unbreakable
       when: failure
       description: The effect triggers only if you are failing.
+      effects:
+        - { face: 1, kind: none }
+        - { face: 2, kind: declare, label: Unshakable — ignore any negative effects of the failure }
+        - { face: 3, kind: raise_face, dice: 2, label: Recall your source of strength — raise 2 dice one face }
+        - { face: 4, kind: raise_face, dice: 2, label: Recall your source of strength — raise 2 dice one face }
+        - { face: 5, kind: set_face, dice: 2, to_face: 3, label: Squash weakness — set 2 dice to their 3rd face }
+        - { face: 6, kind: set_face, dice: 2, to_face: 3, label: Squash weakness — set 2 dice to their 3rd face }
     - id: exquisite
       label: Exquisite
       when: choice

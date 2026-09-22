@@ -13,7 +13,8 @@ import { cryptoRng, evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
 import {
   approachEffect,
-  effectNeedsPick,
+  effectCanActivate,
+  effectPicks,
   isBaseField,
   type Approach,
   type ApproachEffect,
@@ -36,14 +37,17 @@ export type ChallengeStakes = 'low' | 'normal' | 'high'
  *
  * A side starts with two dice, but approach effects can add more (`extra_dice`) or stop one from
  * counting (`discard`), so these are plain arrays: `discarded[i]` keeps a discarded die visible
- * while leaving it out of `sum` (see sideSum), and `rerolled[i]` counts how many times that die
- * has been rolled again (shown under it as "Reroll N"). Both are absent until something happens.
+ * while leaving it out of `sum` (see sideSum), `rerolled[i]` counts how many times that die has
+ * been rolled again (shown under it as "Reroll N") and `changed[i]` names an approach effect that
+ * moved its face. All three are absent until something happens.
  */
+export type DieMarker = 'raised' | 'squashed' | null
 export type ChallengeSide = {
   faces?: number[]
   dice: number[]
   discarded?: boolean[]
   rerolled?: number[]
+  changed?: DieMarker[]
   sum: number
 }
 
@@ -66,8 +70,10 @@ export type Challenge = {
   approachDie: number | null
   /** The player pressed Activate on the approach die. */
   approachActivated: boolean
-  /** Activated, but the effect still needs the player to pick a die or an ability. */
-  approachPending: boolean
+  /** Picks the activated effect is still waiting for (a die or an ability); 0 = nothing pending. */
+  approachPicksLeft: number
+  /** Dice already tapped for this effect, as "side:index" — no die may be picked twice. */
+  approachPicked: string[]
   /** A trained skill whose rank is split between the two sides (see the skillPoints fields). */
   skill: string | null
   mainSkillPoints: number
@@ -206,8 +212,21 @@ export type EventData =
       source?: 'exertion' | 'approach'
       by: string
     }
-  // Approach-die effects: one die stops counting, or extra dice join one side.
+  // Approach-die effects: one die stops counting, its face moves, or extra dice join one side.
   | { type: 'challenge_die_discarded'; challengeId: string; side: 'main' | 'support'; index: number; by: string }
+  | {
+      type: 'challenge_face_changed'
+      challengeId: string
+      side: 'main' | 'support'
+      index: number
+      /** The face id the die now shows, and its rank-shifted value. Equal to the old ones when
+       *  the effect could not move it (e.g. raising a die already on the top face). */
+      face: number
+      value: number
+      /** What to show under the die; null when nothing actually moved. */
+      marker: DieMarker
+      by: string
+    }
   | {
       type: 'challenge_dice_added'
       challengeId: string
@@ -487,7 +506,8 @@ export class Session {
           approach: null,
           approachDie: null,
           approachActivated: false,
-          approachPending: false,
+          approachPicksLeft: 0,
+          approachPicked: [],
           skill: null,
           mainSkillPoints: 0,
           supportSkillPoints: 0,
@@ -515,8 +535,8 @@ export class Session {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
         if (!ch) break
         ch.approachActivated = true
-        // Effects that need a target wait for the player's pick; the rest are done on activation.
-        ch.approachPending = effectNeedsPick(this.approachEffectOf(ch))
+        // Effects that need targets wait for that many picks; the rest are done on activation.
+        ch.approachPicksLeft = effectPicks(this.approachEffectOf(ch))
         break
       }
       case 'challenge_skill_points_set': {
@@ -548,7 +568,7 @@ export class Session {
         side.rerolled[e.index] = (side.rerolled[e.index] ?? 0) + 1
         side.sum = sideSum(side)
         // An approach reroll is free; only exertion rerolls count against what was burned.
-        if (e.source === 'approach') ch.approachPending = false
+        if (e.source === 'approach') this.spendApproachPick(ch, e.side, e.index)
         else ch.rerolls += 1
         break
       }
@@ -559,7 +579,19 @@ export class Session {
         side.discarded = side.discarded ?? side.dice.map(() => false)
         side.discarded[e.index] = true
         side.sum = sideSum(side)
-        ch.approachPending = false
+        this.spendApproachPick(ch, e.side, e.index)
+        break
+      }
+      case 'challenge_face_changed': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const side = ch && ch[e.side]
+        if (!ch || !side) break
+        side.dice[e.index] = e.value
+        if (side.faces) side.faces[e.index] = e.face
+        side.changed = side.changed ?? side.dice.map(() => null)
+        side.changed[e.index] = e.marker
+        side.sum = sideSum(side)
+        this.spendApproachPick(ch, e.side, e.index)
         break
       }
       case 'challenge_dice_added': {
@@ -570,8 +602,9 @@ export class Session {
         if (side.faces) side.faces.push(...e.faces)
         if (side.discarded) side.discarded.push(...e.values.map(() => false))
         if (side.rerolled) side.rerolled.push(...e.values.map(() => 0))
+        if (side.changed) side.changed.push(...e.values.map(() => null))
         side.sum = sideSum(side)
-        ch.approachPending = false
+        ch.approachPicksLeft = Math.max(0, ch.approachPicksLeft - 1)
         break
       }
       case 'challenge_closed': {
@@ -580,6 +613,12 @@ export class Session {
         break
       }
     }
+  }
+
+  /** One pick of an approach effect is used up on that die; a die is never picked twice. */
+  private spendApproachPick(ch: Challenge, side: 'main' | 'support', index: number) {
+    ch.approachPicksLeft = Math.max(0, ch.approachPicksLeft - 1)
+    ch.approachPicked.push(`${side}:${index}`)
   }
 
   /** trait_added/trait_removed: a change targets base (ability), skillPoints (skill) or statBonus (derived). */
@@ -1011,15 +1050,18 @@ export class Session {
   }
 
   /**
-   * How the approach die stands right now:
-   * - `always` (Limitless): in effect as soon as it is rolled.
-   * - `failure` (Unbreakable): in effect only while the roll fails — i.e. at least one side is
-   *   short of its target; a successful roll skips it. Flips live as the sums change.
-   * - `choice` (Exquisite): the player switches it on with Activate.
+   * How the approach die stands right now. Nothing applies by itself — the player presses
+   * Activate — and `when` decides whether that button is offered at all:
+   * - `always` (Limitless): as soon as it is rolled.
+   * - `failure` (Unbreakable): only while the roll fails, i.e. at least one side is short of its
+   *   target. A successful roll `skips` it, and that flips live as the sums change — but once
+   *   activated the die stays `active`, so an effect that turns the roll into a success (raising
+   *   dice, say) doesn't grey out the very thing that caused it.
+   * - `choice` (Exquisite): whenever the player likes.
    *
-   * `effect` is what this face does (null when the approach has none configured) and
-   * `canActivate` says whether the Activate button belongs on screen: an effect that does
-   * nothing, a skipped die and an already-activated one all leave nothing to press.
+   * `effect` is what this face does (null when the approach has none configured), `canActivate`
+   * says whether the button belongs on screen, and `picksLeft` counts the dice (or the one
+   * ability) an activated effect is still waiting for.
    * Returns null when nothing was rolled (no approach, or a pre-approach-die challenge).
    */
   approachState(ch: Challenge): {
@@ -1029,38 +1071,39 @@ export class Session {
     effect: ApproachEffect | null
     canActivate: boolean
     pending: boolean
+    picksLeft: number
   } | null {
     if (ch.approachDie === null || !ch.approach) return null
     const approach = this.rules.challenges.approaches.find((a) => a.id === ch.approach)
     if (!approach) return null
-    const status =
-      approach.when === 'always'
+    const status = ch.approachActivated
+      ? 'active'
+      : approach.when === 'always'
         ? 'active'
         : approach.when === 'choice'
-          ? ch.approachActivated
-            ? 'active'
-            : 'ready'
+          ? 'ready'
           : this.challengeOutcome(ch)?.success
             ? 'skipped'
             : 'active'
     const effect = approachEffect(approach, ch.approachDie)
     // With effects configured the button applies one, so a blank face offers nothing. Without
-    // them (Unbreakable, Exquisite — effects still to come) only `choice` has a button at all.
-    const worthActivating = approach.effects.length ? effectNeedsPick(effect) : approach.when === 'choice'
+    // them (Exquisite — effects still to come) only `choice` has a button at all.
+    const worthActivating = approach.effects.length ? effectCanActivate(effect) : approach.when === 'choice'
     return {
       approach,
       die: ch.approachDie,
       status,
       effect,
       canActivate: worthActivating && !ch.approachActivated && status !== 'skipped',
-      pending: ch.approachPending,
+      pending: ch.approachPicksLeft > 0,
+      picksLeft: ch.approachPicksLeft,
     }
   }
 
   /**
-   * Presses Activate on the approach die. Effects that need a target (discard/reroll/extra dice)
-   * leave the challenge `approachPending` until the player picks one; the rest are done here.
-   * One way only, and never after the GM closes the challenge.
+   * Presses Activate on the approach die. Effects that need targets (a die to discard, reroll or
+   * change, an ability for extra dice) leave that many `approachPicksLeft`; the rest are done
+   * here. One way only, and never after the GM closes the challenge.
    */
   activateApproach(challengeId: string, charId: string, by: string) {
     const acting = this.actingCharacter(challengeId, charId)
@@ -1071,30 +1114,35 @@ export class Session {
     return true
   }
 
-  /** The pending approach effect of the given kind, with the acting player — or null. */
-  private pendingEffect(challengeId: string, charId: string, kind: ApproachEffect['kind']) {
+  /** The pending approach effect, if it is one of `kinds`, with the acting player — or null. */
+  private pendingEffect(challengeId: string, charId: string, kinds: ApproachEffect['kind'][]) {
     const acting = this.actingCharacter(challengeId, charId)
-    if (!acting?.ch.approachPending) return null
+    if (!acting || acting.ch.approachPicksLeft <= 0) return null
     const effect = this.approachEffectOf(acting.ch)
-    return effect?.kind === kind ? { ...acting, effect } : null
+    return effect && kinds.includes(effect.kind) ? { ...acting, effect } : null
+  }
+
+  /** A die the effect may still be pointed at: on the board, in play, and not already picked. */
+  private pickableDie(ch: Challenge, side: 'main' | 'support', index: number) {
+    const rolled = ch[side]
+    if (!rolled || !Number.isInteger(index) || index < 0 || index >= rolled.dice.length) return null
+    if (rolled.discarded?.[index]) return null // out of play
+    if (ch.approachPicked.includes(`${side}:${index}`)) return null // one pick per die
+    return rolled
   }
 
   /** Approach effect: the tapped die stops counting (it stays on screen, struck through). */
   discardDie(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
-    const pending = this.pendingEffect(challengeId, charId, 'discard')
-    const rolled = pending?.ch[side]
-    if (!pending || !rolled || index < 0 || index >= rolled.dice.length) return false
-    if (rolled.discarded?.[index]) return false // already out of play
+    const pending = this.pendingEffect(challengeId, charId, ['discard'])
+    if (!pending || !this.pickableDie(pending.ch, side, index)) return false
     this.append({ type: 'challenge_die_discarded', challengeId, side, index, by })
     return true
   }
 
   /** Approach effect: the tapped die is rolled again, free of exertion. */
   approachReroll(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
-    const pending = this.pendingEffect(challengeId, charId, 'reroll')
-    const rolled = pending?.ch[side]
-    if (!pending || !rolled || index < 0 || index >= rolled.dice.length) return false
-    if (rolled.discarded?.[index]) return false // a discarded die is out of play
+    const pending = this.pendingEffect(challengeId, charId, ['reroll'])
+    if (!pending || !this.pickableDie(pending.ch, side, index)) return false
     const field = this.rules.fields.get(side === 'main' ? pending.ch.mainAbility : pending.ch.supportAbility) as
       | NumberField
       | undefined
@@ -1104,9 +1152,28 @@ export class Session {
     return true
   }
 
+  /**
+   * Approach effect: the tapped die's face moves — one step up (`raise_face`) or onto a fixed
+   * face (`set_face`). The rank shift is taken from the die itself, so the new value stays in
+   * step with how that die was rolled. A raise that can't go higher still spends the pick, and
+   * the die then carries no marker because nothing moved.
+   */
+  changeDieFace(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
+    const pending = this.pendingEffect(challengeId, charId, ['raise_face', 'set_face'])
+    const rolled = pending && this.pickableDie(pending.ch, side, index)
+    if (!pending || !rolled?.faces) return false // pre-`faces` challenges have no face to move
+    const was = rolled.faces[index]!
+    const topFace = this.rules.challenges.faces.at(-1)?.value ?? was
+    const face = pending.effect.kind === 'raise_face' ? Math.min(topFace, was + 1) : pending.effect.toFace
+    const shift = rolled.dice[index]! - was
+    const marker: DieMarker = face === was ? null : pending.effect.kind === 'raise_face' ? 'raised' : 'squashed'
+    this.append({ type: 'challenge_face_changed', challengeId, side, index, face, value: face + shift, marker, by })
+    return true
+  }
+
   /** Approach effect: extra dice for the ability the player picked, rolled at its rank. */
   addApproachDice(challengeId: string, charId: string, side: 'main' | 'support', by: string) {
-    const pending = this.pendingEffect(challengeId, charId, 'extra_dice')
+    const pending = this.pendingEffect(challengeId, charId, ['extra_dice'])
     if (!pending || !pending.ch[side]) return false
     const field = this.rules.fields.get(side === 'main' ? pending.ch.mainAbility : pending.ch.supportAbility) as
       | NumberField
