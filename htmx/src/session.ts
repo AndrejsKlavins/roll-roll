@@ -60,6 +60,20 @@ export type ChallengeSide = {
   sum: number
 }
 
+/** How far a circumstance modifier may be pushed in either direction. */
+export const MAX_CIRCUMSTANCE = 5
+
+/**
+ * The number a side actually has to reach: its difficulty plus the GM's circumstance modifier, so
+ * a plus makes the check harder and a minus makes it easier. Every screen and the outcome go
+ * through this, so a circumstance can never be applied twice or missed.
+ */
+export function challengeTarget(ch: Challenge, side: 'main' | 'support') {
+  return side === 'main'
+    ? ch.mainDifficulty + ch.mainCircumstance
+    : ch.supportDifficulty + ch.supportCircumstance
+}
+
 /** A side's total: every die that has not been discarded. */
 export function sideSum(side: ChallengeSide) {
   return side.dice.reduce((total, die, i) => (side.discarded?.[i] ? total : total + die), 0)
@@ -72,6 +86,13 @@ export type Challenge = {
   supportAbility: string
   mainDifficulty: number
   supportDifficulty: number
+  /**
+   * The GM's circumstance modifier per side, set after the difficulties are chosen. It is **added
+   * to the difficulty** (user decision): a plus raises the number the side has to reach and so
+   * works against the player, a minus lowers it and helps them. Always use challengeTarget().
+   */
+  mainCircumstance: number
+  supportCircumstance: number
   stakes: ChallengeStakes
   charId: string | null
   approach: string | null
@@ -197,6 +218,9 @@ export type EventData =
   // approachDie is absent on challenges rolled before approach dice existed (or with no approach).
   | { type: 'challenge_rolled'; challengeId: string; main: ChallengeSide; support: ChallengeSide; approachDie?: number; by: string }
   | { type: 'challenge_approach_activated'; challengeId: string; by: string }
+  // GM circumstance modifier on one side. `value` is the whole new modifier, not a step, so a
+  // replay lands on the same number however many times it was nudged.
+  | { type: 'challenge_circumstance_set'; challengeId: string; side: 'main' | 'support'; value: number; by: string }
   // GM debug tool: the approach die is forced onto a face, re-arming Activate (see setApproachDie).
   | { type: 'challenge_approach_die_set'; challengeId: string; die: number; by: string }
   | { type: 'challenge_skill_points_set'; challengeId: string; mainSkillPoints: number; supportSkillPoints: number; by: string }
@@ -517,6 +541,8 @@ export class Session {
           supportAbility: e.supportAbility,
           mainDifficulty: e.mainDifficulty,
           supportDifficulty: e.supportDifficulty,
+          mainCircumstance: 0,
+          supportCircumstance: 0,
           stakes: e.stakes,
           charId: null,
           approach: null,
@@ -560,6 +586,13 @@ export class Session {
         if (!ch) break
         // The new face gets a fresh Activate; effects already applied stay on the ability dice.
         Object.assign(ch, { approachDie: e.die, approachActivated: false, approachPicksLeft: 0, approachPicked: [] })
+        break
+      }
+      case 'challenge_circumstance_set': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (!ch) break
+        if (e.side === 'main') ch.mainCircumstance = e.value
+        else ch.supportCircumstance = e.value
         break
       }
       case 'challenge_skill_points_set': {
@@ -1380,10 +1413,14 @@ export class Session {
   /** Full outcome (both sides + overall success) for a rolled challenge; null until rolled. */
   challengeOutcome(ch: Challenge): ChallengeOutcome | null {
     if (!ch.main || !ch.support) return null
-    const main = outcomeFor(ch.main.sum + ch.mainSkillPoints + ch.exertionMain, ch.mainDifficulty, ch.stakes)
+    const main = outcomeFor(
+      ch.main.sum + ch.mainSkillPoints + ch.exertionMain,
+      challengeTarget(ch, 'main'),
+      ch.stakes,
+    )
     const support = outcomeFor(
       ch.support.sum + ch.supportSkillPoints + ch.exertionSupport,
-      ch.supportDifficulty,
+      challengeTarget(ch, 'support'),
       ch.stakes,
     )
     return { main, support, success: main.success && support.success }
@@ -1445,6 +1482,22 @@ export class Session {
     if (!field) return false
     const { face, value } = rollOneFace(Number(this.valueOf(char, field)))
     this.append({ type: 'challenge_rerolled', challengeId, side, index, face, value, by })
+    return true
+  }
+
+  /**
+   * GM circumstance modifier: nudges one side's by `delta` (the board's − and + buttons), clamped
+   * to ±MAX_CIRCUMSTANCE. A plus raises the target — see Challenge.mainCircumstance. Allowed from
+   * the moment the difficulties are set until the GM closes the challenge, so a ruling that lands
+   * mid-roll still counts; the outcome, the tier note and every screen follow it live.
+   */
+  adjustCircumstance(challengeId: string, side: 'main' | 'support', delta: number, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    if (!ch || ch.closed || !Number.isFinite(delta)) return false
+    const was = side === 'main' ? ch.mainCircumstance : ch.supportCircumstance
+    const value = Math.max(-MAX_CIRCUMSTANCE, Math.min(MAX_CIRCUMSTANCE, was + Math.round(delta)))
+    if (value === was) return false // already at the end of the range, or a delta of 0
+    this.append({ type: 'challenge_circumstance_set', challengeId, side, value, by })
     return true
   }
 

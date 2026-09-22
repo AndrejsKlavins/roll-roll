@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadRules, type NumberField } from './rules'
-import { rollChallengeSide, Session, sideSum } from './session'
+import { challengeTarget, MAX_CIRCUMSTANCE, rollChallengeSide, Session, sideSum } from './session'
 
 const RULES = `
 name: Test
@@ -614,6 +614,127 @@ async function tweakWithDieOn(face: number) {
   }
   throw new Error(`never rolled a die on face ${face} alongside one Tweak could lower`)
 }
+
+describe('circumstance modifier', () => {
+  test('a plus raises the target and a minus lowers it', async () => {
+    const { s, ch } = await rolledChallenge('bold', 9)
+    expect(challengeTarget(ch, 'main')).toBe(9) // nothing applied yet
+
+    expect(s.adjustCircumstance(ch.id, 'main', 1, 'GM')).toBe(true)
+    expect(s.currentChallenge()!.mainCircumstance).toBe(1)
+    expect(challengeTarget(s.currentChallenge()!, 'main')).toBe(10) // a plus works against the player
+
+    expect(s.adjustCircumstance(ch.id, 'main', -3, 'GM')).toBe(true)
+    expect(s.currentChallenge()!.mainCircumstance).toBe(-2)
+    expect(challengeTarget(s.currentChallenge()!, 'main')).toBe(7) // a minus helps them
+  })
+
+  test('the outcome is judged against the adjusted target', async () => {
+    const { s, ch } = await rolledChallenge('bold', 9)
+    const sum = s.challengeOutcome(ch)!.main.sum
+    s.adjustCircumstance(ch.id, 'main', 2, 'GM')
+    const main = s.challengeOutcome(s.currentChallenge()!)!.main
+    expect(main.target).toBe(11)
+    expect(main.sum).toBe(sum) // the roll itself is untouched
+    expect(main.difference).toBe(sum - 11)
+    expect(main.success).toBe(sum >= 11)
+  })
+
+  test('each side carries its own, and the other is untouched', async () => {
+    const { s, ch } = await rolledChallenge('bold', 9)
+    s.adjustCircumstance(ch.id, 'main', 2, 'GM')
+    s.adjustCircumstance(ch.id, 'support', -1, 'GM')
+    const now = s.currentChallenge()!
+    expect([now.mainCircumstance, now.supportCircumstance]).toEqual([2, -1])
+    expect(challengeTarget(now, 'main')).toBe(11)
+    expect(challengeTarget(now, 'support')).toBe(8)
+  })
+
+  test('steps stack but clamp, and a step that changes nothing is refused', async () => {
+    const { s, ch } = await rolledChallenge('bold', 9)
+    for (let i = 0; i < MAX_CIRCUMSTANCE; i++) {
+      expect(s.adjustCircumstance(ch.id, 'main', 1, 'GM')).toBe(true)
+    }
+    expect(s.currentChallenge()!.mainCircumstance).toBe(MAX_CIRCUMSTANCE)
+    expect(s.adjustCircumstance(ch.id, 'main', 1, 'GM')).toBe(false) // already at the top
+    expect(s.adjustCircumstance(ch.id, 'main', 0, 'GM')).toBe(false) // a no-op step
+    expect(s.currentChallenge()!.mainCircumstance).toBe(MAX_CIRCUMSTANCE)
+
+    // A big step lands on the clamp rather than being thrown away.
+    expect(s.adjustCircumstance(ch.id, 'support', -40, 'GM')).toBe(true)
+    expect(s.currentChallenge()!.supportCircumstance).toBe(-MAX_CIRCUMSTANCE)
+    expect(s.adjustCircumstance(ch.id, 'main', Number.NaN, 'GM')).toBe(false)
+  })
+
+  test('it can be set before the roll, and not after the GM closes the challenge', async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    s.startChallenge(
+      {
+        description: 'Scale the wall',
+        mainAbility: 'strength',
+        supportAbility: 'agility',
+        mainDifficulty: 9,
+        supportDifficulty: 9,
+        stakes: 'normal',
+      },
+      'GM',
+    )
+    const ch = s.currentChallenge()!
+    s.setChallengePlayer(ch.id, id, 'bold', null, 'GM')
+    expect(s.adjustCircumstance(ch.id, 'main', 1, 'GM')).toBe(true) // before the dice are in
+    s.rollChallenge(ch.id, 'Mara')
+    expect(s.challengeOutcome(s.currentChallenge()!)!.main.target).toBe(10)
+    expect(s.adjustCircumstance(ch.id, 'main', 1, 'GM')).toBe(true) // and mid-roll
+    s.closeChallenge(ch.id, 'GM')
+    expect(s.adjustCircumstance(ch.id, 'main', 1, 'GM')).toBe(false) // but not once it is done
+    expect(s.currentChallenge()!.mainCircumstance).toBe(2)
+  })
+
+  test('it survives a reopen, landing on the same number however it was nudged', async () => {
+    const { s, id, open, ch } = await rolledChallenge('bold', 9)
+    s.adjustCircumstance(ch.id, 'main', 1, 'GM')
+    s.adjustCircumstance(ch.id, 'main', 1, 'GM')
+    s.adjustCircumstance(ch.id, 'main', -1, 'GM')
+    s.adjustCircumstance(ch.id, 'support', 3, 'GM')
+    expect(id).toBeTruthy()
+
+    const reopened = open()
+    const replayed = reopened.currentChallenge()!
+    expect(replayed.mainCircumstance).toBe(1)
+    expect(replayed.supportCircumstance).toBe(3)
+    expect(challengeTarget(replayed, 'main')).toBe(10)
+    expect(challengeTarget(replayed, 'support')).toBe(12)
+  })
+
+  test('lowering the target enough turns a failing roll into a success', async () => {
+    // A "failure" approach is only in effect while the roll is short, so this also checks that a
+    // circumstance ruling feeds straight back into the approach die.
+    const { s, id } = await rolledChallenge('stubborn', 9)
+    for (let i = 0; i < 300; i++) {
+      const ch = s.currentChallenge()!
+      const outcome = s.challengeOutcome(ch)!
+      const shortest = Math.min(outcome.main.difference, outcome.support.difference)
+      // Both sides short by no more than the clamp, so one nudge each can rescue the roll.
+      if (!outcome.success && shortest >= -MAX_CIRCUMSTANCE) {
+        expect(s.approachState(ch)!.status).toBe('active') // failing, so Unbreakable applies
+        for (const side of ['main', 'support'] as const) {
+          const behind = -s.challengeOutcome(s.currentChallenge()!)![side].difference
+          // A minus eases the target, so the nudge that rescues a side is negative.
+          if (behind > 0) s.adjustCircumstance(ch.id, side, -behind, 'GM')
+        }
+        const after = s.challengeOutcome(s.currentChallenge()!)!
+        expect(after.success).toBe(true)
+        expect(s.approachState(s.currentChallenge()!)!.status).toBe('skipped') // no longer failing
+        return
+      }
+      startAndRoll(s, id, 'stubborn', 9)
+    }
+    throw new Error('never rolled a failure within reach of the circumstance clamp')
+  })
+})
 
 describe('Tweak (lower_raise): one die down a face, another up', () => {
   test('the first tap lowers, the second raises, and the effect is then done', async () => {

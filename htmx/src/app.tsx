@@ -380,6 +380,16 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // GM circumstance modifier: a plus eases one side's target, a minus raises it. Settable from
+  // the moment the challenge is started until it is closed.
+  app.post('/gm/challenge/circumstance', (c) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    const side = c.req.query('side') === 'support' ? 'support' : 'main'
+    if (session.adjustCircumstance(ch.id, side, Number(c.req.query('delta')), actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
   app.post('/gm/challenge/done', (c) => {
     const ch = session.currentChallenge()
     if (!ch) return c.notFound()

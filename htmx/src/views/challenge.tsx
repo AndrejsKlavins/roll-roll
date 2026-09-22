@@ -6,7 +6,9 @@ import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '
 import type { Child } from 'hono/jsx'
 import {
   APPROACH_DIE_SIDES,
+  challengeTarget,
   isBaseField,
+  MAX_CIRCUMSTANCE,
   type Challenge,
   type ChallengeSide,
   type DieMarker,
@@ -101,7 +103,14 @@ const markerLabel = (marker: NonNullable<DieMarker>) =>
 function DifficultyBox(props: {
   field: NumberField | undefined
   label: string
+  /** The number to beat, circumstance already applied (see challengeTarget). */
   target: number
+  /** The GM's difficulty before the circumstance came off it — named by `tier`. */
+  baseTarget: number
+  /** The circumstance modifier itself; shown to everyone when it is not 0. */
+  circumstance: number
+  /** The GM's − / + buttons, when the viewer is the GM. */
+  circumstanceControls?: Child
   tier: string | null
   side: ChallengeSide | null
   skillPoints: number
@@ -126,7 +135,18 @@ function DifficultyBox(props: {
       <div class="difficulty-target">
         {target}
         {tier && <span class="difficulty-tier">({tier})</span>}
+        {props.circumstance !== 0 && (
+          <span
+            class={props.circumstance > 0 ? 'circumstance hinder' : 'circumstance help'}
+            title={`Circumstance ${signed(props.circumstance)} — difficulty ${props.baseTarget} ${
+              props.circumstance > 0 ? 'raised to' : 'lowered to'
+            } ${target}`}
+          >
+            {signed(props.circumstance)}
+          </span>
+        )}
       </div>
+      {props.circumstanceControls}
       {side && outcome && (
         <div class="difficulty-result">
           {props.attemptLabel && <div class="attempt-label">Player attempt</div>}
@@ -151,6 +171,38 @@ function DifficultyBox(props: {
           {props.controls}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * GM only: nudges one side's circumstance modifier. It is added to the difficulty, so a plus makes
+ * the check harder and a minus makes it easier. Offered from the moment the challenge exists until
+ * it is closed — a ruling can land before the roll or part-way through it — and every screen shows
+ * the result. The legend sits above the buttons so the row stays narrow enough for the GM column.
+ */
+function CircumstanceControls(props: { side: 'main' | 'support'; value: number }) {
+  const { side, value } = props
+  const step = (delta: number, label: string, disabled: boolean) => (
+    <button
+      type="button"
+      class="circumstance-step"
+      hx-post={`/gm/challenge/circumstance?side=${side}&delta=${delta}`}
+      hx-swap="none"
+      disabled={disabled || undefined}
+      title={delta > 0 ? 'Circumstance against the player' : 'Circumstance in the player\u2019s favour'}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div class="circumstance-set">
+      <span class="circumstance-legend">Circumstance</span>
+      <div class="circumstance-controls">
+        {step(-1, '\u2212', value <= -MAX_CIRCUMSTANCE)}
+        <output>{signed(value)}</output>
+        {step(1, '+', value >= MAX_CIRCUMSTANCE)}
+      </div>
     </div>
   )
 }
@@ -563,7 +615,12 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
         <DifficultyBox
           field={mainField}
           label={mainField?.label ?? ch.mainAbility}
-          target={ch.mainDifficulty}
+          target={challengeTarget(ch, 'main')}
+          baseTarget={ch.mainDifficulty}
+          circumstance={ch.mainCircumstance}
+          circumstanceControls={
+            role === 'gm' && !ch.closed ? <CircumstanceControls side="main" value={ch.mainCircumstance} /> : undefined
+          }
           tier={tierOf(ch.mainDifficulty)}
           side={ch.main}
           skillPoints={ch.mainSkillPoints}
@@ -578,7 +635,14 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
         <DifficultyBox
           field={supportField}
           label={supportField?.label ?? ch.supportAbility}
-          target={ch.supportDifficulty}
+          target={challengeTarget(ch, 'support')}
+          baseTarget={ch.supportDifficulty}
+          circumstance={ch.supportCircumstance}
+          circumstanceControls={
+            role === 'gm' && !ch.closed ? (
+              <CircumstanceControls side="support" value={ch.supportCircumstance} />
+            ) : undefined
+          }
           tier={tierOf(ch.supportDifficulty)}
           side={ch.support}
           skillPoints={ch.supportSkillPoints}
@@ -634,7 +698,9 @@ function ChallengeLog(props: { session: Session; entries: Challenge[] }) {
             <span class="challenge-log-what">{ch.description || '—'}</span>
             <span class="challenge-log-who">{char?.name ?? 'Nobody joined'}</span>
             <span class="challenge-log-numbers">
-              {mainField?.label} {ch.mainDifficulty} / {supportField?.label} {ch.supportDifficulty} · {stakesLabel(ch.stakes)}
+              {mainField?.label} {challengeTarget(ch, 'main')} / {supportField?.label}{' '}
+              {challengeTarget(ch, 'support')} · {stakesLabel(ch.stakes)}
+              {(ch.mainCircumstance !== 0 || ch.supportCircumstance !== 0) && ' · circumstance'}
             </span>
             {outcome && <span class="challenge-log-result">{outcome.success ? 'Success' : 'Failure'}</span>}
           </li>

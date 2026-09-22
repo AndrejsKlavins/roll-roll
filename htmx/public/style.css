@@ -339,7 +339,9 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .result.success { color: #5cc27a; background: color-mix(in srgb, #5cc27a 15%, transparent); }
 .result.failure { color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
 
-.challenge-numbers { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+/* minmax(0, 1fr), not 1fr: the boxes have to be able to shrink below their content's natural
+   width, or a wide child (the circumstance stepper, a long tier name) overflows the GM column. */
+.challenge-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 @media (max-width: 480px) { .challenge-numbers { grid-template-columns: 1fr; } }
 .difficulty-box { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; text-align: center; }
 .difficulty-box.success { border-color: #5cc27a; }
@@ -348,7 +350,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .difficulty-label .field-icon { width: 28px; height: 28px; border-radius: 8px; }
 .difficulty-label .field-icon svg, .difficulty-label .field-icon img { width: 17px; height: 17px; }
 /* Number (and tier name) in the ability's colour, like the GM's setup dialog. */
-.difficulty-target { display: flex; align-items: baseline; justify-content: center; gap: 0.5rem; color: var(--field-color, var(--text)); font-size: 3rem; font-weight: 800; line-height: 1.1; }
+.difficulty-target { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.2rem 0.5rem; color: var(--field-color, var(--text)); font-size: 3rem; font-weight: 800; line-height: 1.1; }
 .difficulty-tier { font-size: 1.1rem; font-weight: 600; }
 .difficulty-result { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); display: grid; gap: 0.3rem; }
 /* "Player attempt" heads the rolled part of a box; faces are square dice. */
@@ -397,6 +399,20 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .approach-active .die-face { border-color: var(--accent); }
 .approach-skipped { opacity: 0.55; }
 .approach-activate { min-height: 34px; padding: 0.2rem 0.7rem; font-size: 0.8rem; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+/* ---- circumstance: the GM's +/- on a side's target, shown on every screen ---- */
+/* The chip beside the target. A plus raised the difficulty, so it reads as a warning; a minus
+   eased it and reads as help. */
+.circumstance { font-size: 0.8rem; font-weight: 700; padding: 0 0.3rem; border-radius: 5px; }
+.circumstance.hinder { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.circumstance.help { color: #5cc27a; background: color-mix(in srgb, #5cc27a 16%, transparent); }
+/* GM stepper under the target, legend stacked above the buttons so the row stays narrow (the GM
+   column is only 360px and holds two of these side by side). Quiet: it is setup, not a result. */
+.circumstance-set { display: grid; justify-items: center; gap: 0.15rem; margin-top: 0.4rem; }
+.circumstance-legend { color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.circumstance-controls { display: flex; align-items: center; gap: 0.25rem; }
+.circumstance-step { min-height: 26px; width: 1.7rem; padding: 0; font-size: 0.95rem; font-weight: 700; color: var(--muted); }
+.circumstance-controls output { min-width: 2.2ch; text-align: center; font-size: 0.8rem; font-weight: 700; }
+
 /* Waiting for the player to pick a die or an ability: the prompt is the loudest thing on the board. */
 .approach-pending { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
 .approach-pending .approach-status { color: var(--accent); }

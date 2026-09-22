@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-22 (Tweak refuses dice with nowhere to go; exertion rerolls reach added dice)
+Last updated: 2026-09-22 (GM circumstance modifier: + raises the difficulty, and fits the GM column)
 
 ---
 
@@ -315,6 +315,43 @@ session and are only summarised here; this covers the **GM setup flow**, which t
   `ChallengePlayerPicker` (`#challenge-players`) is swapped on its own (`pushChallengePlayers`, e.g.
   when a character is finished) so the list stays current without closing an open dialog.
 - After a successful start the form clears its picks via `Alpine.$data(this)` and closes the dialog.
+
+**Circumstance modifier** (user-designed): once the difficulties are set, the GM may nudge either
+side's target with a **− / + stepper** under it (`CircumstanceControls`, GM board only, hidden once
+the challenge is closed). Each press moves that side by one, clamped to `MAX_CIRCUMSTANCE` (±5, so
+one press covers the usual ruling and a rough situation can go further); the button disables at the
+end of the range.
+
+**The modifier is added to the difficulty** (user decision, after seeing it the other way round
+first): a `+2` on a difficulty of 10 is a target of 12 and works *against* the player, while `−1` on
+a difficulty of 7 is a target of 6 and helps them. `challengeTarget(ch, side)` is the only place that
+arithmetic lives — `challengeOutcome` and all three screens go through it, so a modifier can't be
+applied twice or missed. Because the outcome follows it, so does everything
+derived from the outcome: the difference, the degrees, and whether a `failure` approach
+(Unbreakable) is still in effect.
+
+It is **visible to everyone** (user requirement): the target shows the adjusted number with a signed
+chip beside it — **red for a plus** (it raised the difficulty), green for a minus — titled with the
+arithmetic ("Circumstance +2 — difficulty 10 raised to 12"), on the GM board, the player's page and
+`/table`. Only
+the GM gets the stepper. The **tier name stays that of the GM's original difficulty** ("8 (Hard)"),
+since the tier is the GM's assessment of the task and the chip is what circumstances did to it; the
+challenge history shows the effective targets and flags "· circumstance" so those numbers aren't
+mistaken for the raw ones.
+
+Layout note: the GM column is a fixed **360px** holding both difficulty boxes side by side, so
+anything added inside a box has to stay narrow. `.challenge-numbers` uses `repeat(2, minmax(0, 1fr))`
+rather than `1fr 1fr` (a plain `1fr` will not shrink below its content's min-content width, so a wide
+child overflows the column instead of compressing — this cost 79px of clipping when the stepper's
+legend sat inline), `.difficulty-target` wraps, and the stepper stacks its legend above the buttons.
+
+State is `mainCircumstance`/`supportCircumstance` on the challenge, written by
+`challenge_circumstance_set` via `adjustCircumstance(challengeId, side, delta, by)`
+(`/gm/challenge/circumstance?side=…&delta=±1`). The event stores the **whole new modifier, not the
+step**, so a replay lands on the same number however many times it was nudged, and a step that would
+change nothing (a 0, or pushing past the clamp) is refused rather than logged. Settable from the
+moment the challenge is started — before the dice are in or part-way through — until "Challenge
+done". Not undoable, like the rest of a challenge.
 
 **Approach die** (user-designed): the player picks an approach before rolling (Unbreakable /
 Exquisite / Limitless) from **one stacked button per approach, each with its `description` from
