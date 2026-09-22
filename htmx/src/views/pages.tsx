@@ -1,6 +1,6 @@
 import { raw } from 'hono/html'
 import type { Character, Session } from '../session'
-import { ChallengeBoard, ChallengeSetupDialog } from './challenge'
+import { ChallengeBoard, ChallengeSetupDialog, SoloRollBoard, SoloRollDialog } from './challenge'
 import { ChangeLog, Feed } from './feed'
 import { Layout } from './layout'
 import { Sheet } from './sheet'
@@ -60,6 +60,7 @@ export function PlayerPage(props: { session: Session; charId: string }) {
         <Sheet session={session} char={char} />
         <aside>
           <ChallengeBoard session={session} role="player" viewerCharId={charId} />
+          <SoloRollBoard session={session} role="player" />
           <h3>Rolls</h3>
           <Feed session={session} viewer="player" />
         </aside>
@@ -75,6 +76,7 @@ export function TablePage(props: { session: Session }) {
     <Layout title="Table" system={session.rules.name} wsUrl="/ws?table=1">
       <main class="table-screen">
         <ChallengeBoard session={session} role="table" />
+        <SoloRollBoard session={session} role="table" />
       </main>
     </Layout>
   )
@@ -134,7 +136,9 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             Open public table screen ↗
           </a>
           <ChallengeBoard session={session} role="gm" />
+          <SoloRollBoard session={session} role="gm" />
           <ChallengeSetupDialog session={session} />
+          <SoloRollDialog session={session} />
 
           <form
             class="card gm-roll"

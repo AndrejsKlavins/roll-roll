@@ -245,6 +245,29 @@ export type Rules = {
   challenges: ChallengesConfig
 }
 
+/**
+ * The rank ladder a solo roll may pick from, so the range stays a rules-file decision rather than
+ * a number in code. It comes from the **word scale** the sheet's abilities use (rating: 0 abysmal
+ * … 6 epic), not from their min/max — abilities deliberately have no fixed bounds in play, so
+ * those are usually infinite. `def` is an ability's own default, for what the picker starts on.
+ * Falls back to 1..5 with no words for a rules file whose abilities carry no scale.
+ */
+export function abilityRankRange(rules: Rules): {
+  min: number
+  max: number
+  def: number
+  scale?: Record<number, string>
+} {
+  const abilities = [...rules.fields.values()].filter((f): f is NumberField => isBaseField(f) && !f.trained)
+  const scale = abilities.find((a) => a.scale)?.scale
+  const ranks = Object.keys(scale ?? {})
+    .map(Number)
+    .filter(Number.isFinite)
+  const def = abilities.map((a) => a.default).find(Number.isFinite) ?? 3
+  if (!ranks.length) return { min: 1, max: 5, def, scale }
+  return { min: Math.min(...ranks), max: Math.max(...ranks), def, scale }
+}
+
 export const RULES_PATH = join(import.meta.dir, '..', 'system', 'rules.yaml')
 
 export async function loadRules(path = RULES_PATH): Promise<Rules> {

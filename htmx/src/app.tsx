@@ -5,7 +5,7 @@ import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
-import { ChallengeBoard, ChallengePlayerPicker } from './views/challenge'
+import { ChallengeBoard, ChallengePlayerPicker, SoloRollBoard } from './views/challenge'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
 import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar, TraitsSection } from './views/sheet'
@@ -264,6 +264,37 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       (client) =>
         html(<ChallengeBoard session={session} role={client.role} viewerCharId={client.charId ?? undefined} oob />),
     )
+
+  // The solo board is its own swap target, so a solo roll never disturbs the challenge board.
+  // Players and the table are sent it too — SoloRollBoard renders an empty section for them while
+  // the roll is private, which also clears a roll that has just been hidden again.
+  const pushSolo = () =>
+    hub.send(
+      () => true,
+      (client) => html(<SoloRollBoard session={session} role={client.role} oob />),
+    )
+
+  app.post('/gm/solo/roll', async (c) => {
+    const body = await form(c)
+    const rolled = session.rollSolo(
+      {
+        description: body.description ?? '',
+        difficulty: Number(body.difficulty),
+        tier: body.tier || null,
+        rank: Number(body.rank),
+        visibility: body.visibility === 'public' ? 'public' : 'gm',
+      },
+      actorName(c),
+    )
+    if (rolled) pushSolo()
+    return noContent(c)
+  })
+
+  app.post('/gm/solo/visibility', (c) => {
+    const to = c.req.query('to') === 'public' ? 'public' : 'gm'
+    if (session.setSoloVisibility(c.req.query('id') ?? '', to, actorName(c))) pushSolo()
+    return noContent(c)
+  })
 
   app.post('/gm/challenge/start', async (c) => {
     const body = await form(c)

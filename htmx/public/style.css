@@ -399,6 +399,35 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .approach-active .die-face { border-color: var(--accent); }
 .approach-skipped { opacity: 0.55; }
 .approach-activate { min-height: 34px; padding: 0.2rem 0.7rem; font-size: 0.8rem; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+/* ---- solo roll: the GM rolling alone against a picked opposition number ---- */
+.solo-board { display: grid; gap: 0.6rem; margin-top: 1rem; }
+.solo-board:empty { display: none; }
+.solo-roll { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: var(--radius); padding: 0.7rem 0.8rem; display: grid; gap: 0.5rem; }
+.solo-roll.success { border-left-color: #5cc27a; }
+.solo-roll.failure { border-left-color: var(--danger); }
+.solo-head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.solo-title { color: var(--muted); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; }
+.solo-head .result { margin-left: auto; }
+.badge.solo-private { background: var(--muted); color: var(--bg); }
+.badge.solo-public { background: #5cc27a; color: var(--bg); }
+.solo-description { margin: 0; font-weight: 600; }
+/* minmax(0, …) so the card survives the 360px GM column, like the difficulty boxes. */
+.solo-body { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 0.8rem; align-items: start; }
+.solo-label { display: block; color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.solo-opposition, .solo-attempt { display: grid; justify-items: center; gap: 0.2rem; }
+.solo-number { font-size: 2rem; font-weight: 800; line-height: 1.1; }
+.solo-tier { color: var(--muted); font-size: 0.8rem; }
+.solo-sum { font-size: 1.6rem; font-weight: 800; line-height: 1.1; }
+.solo-diff { font-size: 0.9rem; color: var(--muted); }
+.solo-roll.success .solo-diff { color: #5cc27a; }
+.solo-roll.failure .solo-diff { color: var(--danger); }
+.solo-reveal { justify-self: start; }
+/* The dialog reuses the challenge dialog's frame; its picks stack in one column. */
+.solo-dialog .pick-col { gap: 0.4rem; }
+.solo-nudge { margin: 0.4rem 0; }
+.solo-visibility { display: flex; gap: 0.5rem; }
+.solo-visibility .pick-btn { flex: 1; }
+
 /* ---- circumstance: the GM's +/- on a side's target, shown on every screen ---- */
 /* The chip beside the target. A plus raised the difficulty, so it reads as a warning; a minus
    eased it and reads as help. */

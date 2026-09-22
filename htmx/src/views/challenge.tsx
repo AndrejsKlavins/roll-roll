@@ -2,6 +2,7 @@
 // and a history log of past challenges. Shared between /table (the shared screen), /gm (setup +
 // oversight) and the player's own page (join/roll controls) — role picks what's interactive.
 import { raw } from 'hono/html'
+import { abilityRankRange } from '../rules'
 import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '../rules'
 import type { Child } from 'hono/jsx'
 import {
@@ -9,6 +10,7 @@ import {
   challengeTarget,
   isBaseField,
   MAX_CIRCUMSTANCE,
+  type SoloRoll,
   type Challenge,
   type ChallengeSide,
   type DieMarker,
@@ -924,6 +926,242 @@ export function ChallengeSetupDialog(props: { session: Session }) {
           x-bind:disabled="!(description.trim() && mainAbility && mainDiff && supportAbility && supportDiff && charId)"
         >
           Start challenge
+        </button>
+      </form>
+    </dialog>
+  )
+}
+
+/**
+ * The GM's solo roll: the opposition number it went against, the two dice, the total and whether
+ * it beat the number. Shown on the GM board always, and on the player/table screens only once the
+ * GM has made it public — so a hidden check stays hidden.
+ */
+function SoloRollCard(props: { session: Session; solo: SoloRoll; role: 'gm' | 'player' | 'table' }) {
+  const { session, solo, role } = props
+  const outcome = session.soloOutcome(solo)
+  const { scale } = abilityRankRange(session.rules)
+  const rankWord = scale?.[solo.rank]
+  return (
+    <div class={`solo-roll ${outcome.success ? 'success' : 'failure'}`}>
+      <div class="solo-head">
+        <span class="solo-title">Solo roll</span>
+        {solo.visibility === 'gm' ? (
+          <span class="badge solo-private">GM only</span>
+        ) : (
+          <span class="badge solo-public">Public</span>
+        )}
+        <span class={outcome.success ? 'result success' : 'result failure'}>
+          {outcome.success ? 'Success' : 'Failure'}
+        </span>
+      </div>
+      {solo.description && <p class="solo-description">{solo.description}</p>}
+      <div class="solo-body">
+        <div class="solo-opposition">
+          <span class="solo-label">Opposition</span>
+          <span class="solo-number">{solo.difficulty}</span>
+          {solo.tier && <span class="solo-tier">({solo.tier})</span>}
+        </div>
+        <div class="solo-attempt">
+          <span class="solo-label">
+            Rank {solo.rank}
+            {rankWord && ` \u00b7 ${rankWord}`}
+          </span>
+          <div class="dice-faces">
+            {solo.roll.dice.map((d, i) => (
+              <Die value={d} faceId={solo.roll.faces?.[i]} faces={session.rules.challenges.faces} />
+            ))}
+          </div>
+          <div class="solo-sum">{outcome.sum}</div>
+          <div class="solo-diff">{signed(outcome.difference)}</div>
+        </div>
+      </div>
+      {role === 'gm' && (
+        <button
+          type="button"
+          class="small solo-reveal"
+          hx-post={`/gm/solo/visibility?id=${solo.id}&to=${solo.visibility === 'gm' ? 'public' : 'gm'}`}
+          hx-swap="none"
+        >
+          {solo.visibility === 'gm' ? 'Show the table' : 'Hide again'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The solo-roll section: the GM's "Start solo roll" button and the last roll. Its own swap target
+ * so a solo roll never disturbs the challenge board, and mounted on all three screens — it renders
+ * nothing at all when there is no roll to show the viewer.
+ */
+export function SoloRollBoard(props: { session: Session; role: 'gm' | 'player' | 'table'; oob?: boolean }) {
+  const { session, role } = props
+  const solo = session.currentSoloRoll()
+  const visible = solo && (role === 'gm' || solo.visibility === 'public')
+  return (
+    <section id="solo-board" class="solo-board" hx-swap-oob={oobAttr(props.oob)}>
+      {role === 'gm' && (
+        <button type="button" class="small" onclick="document.getElementById('solo-dialog').showModal()">
+          Start solo roll
+        </button>
+      )}
+      {visible && <SoloRollCard session={session} solo={solo} role={role} />}
+    </section>
+  )
+}
+
+/** Clears the solo dialog back to its defaults after a roll, then closes it. */
+const AFTER_SOLO = [
+  'if (!event.detail.successful) return;',
+  'const d = Alpine.$data(this);',
+  "Object.assign(d, { description: '', tier: d.startTier, value: d.startValue, rank: d.startRank, visibility: 'gm' });",
+  "this.closest('dialog').close()",
+].join(' ')
+
+/**
+ * GM-only dialog for a solo roll: pick an opposition number off the difficulty ladder and nudge it
+ * by 1s (the same idea as the circumstance stepper), pick the rank to roll at, choose whether the
+ * table sees it, and roll. Everything is Alpine state until the one POST. Lives outside the boards
+ * so live updates can't close it mid-edit.
+ */
+export function SoloRollDialog(props: { session: Session }) {
+  const { session } = props
+  const { difficulties } = session.rules.challenges
+  const { min, max, def, scale } = abilityRankRange(session.rules)
+  const ranks = Array.from({ length: max - min + 1 }, (_, i) => min + i)
+  // The dialog opens on the first rung of the ladder, named, so the indicator is never blank.
+  const startValue = difficulties[0]?.value ?? 7
+  const startTier = difficulties[0]?.id ?? ''
+  const state = {
+    description: '',
+    /** Which ladder tier the number came from; cleared as soon as a nudge moves it off. */
+    tier: startTier,
+    value: startValue,
+    rank: def,
+    visibility: 'gm',
+    startValue,
+    startTier,
+    startRank: def,
+    // Kept so a nudge can tell whether the number still sits on a tier, and name it when it does.
+    tiers: difficulties.map((d) => ({ id: d.id, label: d.label, value: d.value })),
+  }
+  return (
+    <dialog id="solo-dialog" class="challenge-dialog solo-dialog">
+      <form hx-post="/gm/solo/roll" hx-swap="none" x-data={JSON.stringify(state)} hx-on--after-request={AFTER_SOLO}>
+        <header class="dialog-head">
+          <h3>Solo roll</h3>
+          <button type="button" class="small" x-on:click="$el.closest('dialog').close()">
+            Close
+          </button>
+        </header>
+
+        <label class="challenge-description-field">
+          <span>What is it for? (optional)</span>
+          <input
+            name="description"
+            x-model="description"
+            placeholder="e.g. Does the guard notice the open window?"
+            maxlength={200}
+            autocomplete="off"
+          />
+        </label>
+
+        <section class="side-pick">
+          <h4>Opposition</h4>
+          <div class="big-indicator">
+            <span class="bi-ability">Difficulty</span>
+            <span class="bi-value">
+              <span x-text="value">{startValue}</span>
+              <span
+                class="bi-tier"
+                x-cloak
+                x-show="tier"
+                x-text="'(' + ((tiers.find((t) => t.id === tier) || {}).label || '') + ')'"
+              ></span>
+            </span>
+          </div>
+          {/* Nudging by 1 keeps the number but drops the tier name once it no longer matches. */}
+          <div class="circumstance-set solo-nudge">
+            <span class="circumstance-legend">Nudge</span>
+            <div class="circumstance-controls">
+              <button
+                type="button"
+                class="circumstance-step"
+                x-on:click="value = value - 1; tier = (tiers.find((t) => t.value === value) || {}).id || ''"
+              >
+                {'\u2212'}
+              </button>
+              <output x-text="value">{startValue}</output>
+              <button
+                type="button"
+                class="circumstance-step"
+                x-on:click="value = value + 1; tier = (tiers.find((t) => t.value === value) || {}).id || ''"
+              >
+                +
+              </button>
+            </div>
+          </div>
+          <div class="pick-col">
+            {difficulties.map((d) => (
+              <button
+                type="button"
+                class="pick-btn diff-btn"
+                x-bind:class={`{ on: value === ${d.value} }`}
+                x-on:click={`value = ${d.value}; tier = '${d.id}'`}
+              >
+                <span class="label">{d.label}</span>
+                <span class="diff-value">{d.value}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section class="side-pick">
+          <h4>Roll at rank</h4>
+          <div class="pick-col">
+            {ranks.map((r) => (
+              <button
+                type="button"
+                class="pick-btn"
+                x-bind:class={`{ on: rank === ${r} }`}
+                x-on:click={`rank = ${r}`}
+              >
+                <span class="label">{scale?.[r] ?? `Rank ${r}`}</span>
+                <span class="diff-value">{r}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section class="side-pick">
+          <h4>Who sees it</h4>
+          <div class="solo-visibility">
+            <button
+              type="button"
+              class="pick-btn"
+              x-bind:class="{ on: visibility === 'gm' }"
+              x-on:click="visibility = 'gm'"
+            >
+              <span class="label">GM only</span>
+            </button>
+            <button
+              type="button"
+              class="pick-btn"
+              x-bind:class="{ on: visibility === 'public' }"
+              x-on:click="visibility = 'public'"
+            >
+              <span class="label">Public</span>
+            </button>
+          </div>
+        </section>
+
+        <input type="hidden" name="difficulty" x-model="value" />
+        <input type="hidden" name="tier" x-model="tier" />
+        <input type="hidden" name="rank" x-model="rank" />
+        <input type="hidden" name="visibility" x-model="visibility" />
+        <button type="submit" class="primary">
+          Roll
         </button>
       </form>
     </dialog>

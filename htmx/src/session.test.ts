@@ -615,6 +615,113 @@ async function tweakWithDieOn(face: number) {
   throw new Error(`never rolled a die on face ${face} alongside one Tweak could lower`)
 }
 
+describe('solo roll', () => {
+  /** A finished character exists in these, but a solo roll never involves one. */
+  const soloSession = async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    return open()
+  }
+
+  test('rolls two dice at the given rank, shifted like an ability side', async () => {
+    const s = await soloSession()
+    expect(s.rollSolo({ difficulty: 7, rank: 5, visibility: 'gm' }, 'GM')).not.toBeNull()
+    const solo = s.currentSoloRoll()!
+    expect(solo.rank).toBe(5)
+    expect(solo.roll.dice).toHaveLength(2)
+    expect(solo.roll.faces).toHaveLength(2)
+    for (const [i, face] of solo.roll.faces!.entries()) {
+      expect(face).toBeGreaterThanOrEqual(1)
+      expect(face).toBeLessThanOrEqual(6)
+      expect(solo.roll.dice[i]).toBe(face + (5 - 3)) // rank 5 shifts every face up 2
+    }
+    expect(solo.roll.sum).toBe(solo.roll.dice[0]! + solo.roll.dice[1]!)
+  })
+
+  test('the outcome is the roll against the opposition number, with no degrees', async () => {
+    const s = await soloSession()
+    s.rollSolo({ difficulty: 7, rank: 3, visibility: 'gm' }, 'GM')
+    const solo = s.currentSoloRoll()!
+    const outcome = s.soloOutcome(solo)
+    expect(outcome.target).toBe(7)
+    expect(outcome.sum).toBe(solo.roll.sum)
+    expect(outcome.difference).toBe(solo.roll.sum - 7)
+    expect(outcome.success).toBe(solo.roll.sum >= 7)
+    expect(outcome.degrees).toBe(0) // solo rolls have no stakes, so never a boon or complication
+  })
+
+  test('the tier names the number only while it still matches that tier', async () => {
+    const s = await soloSession()
+    s.rollSolo({ difficulty: 4, tier: 'easy', rank: 3, visibility: 'gm' }, 'GM')
+    expect(s.currentSoloRoll()!.tier).toBe('Easy') // 4 is Easy in the fixture
+
+    s.rollSolo({ difficulty: 5, tier: 'easy', rank: 3, visibility: 'gm' }, 'GM')
+    expect(s.currentSoloRoll()!.tier).toBeNull() // nudged off it, so it goes unnamed
+
+    s.rollSolo({ difficulty: 4, tier: 'nonsense', rank: 3, visibility: 'gm' }, 'GM')
+    expect(s.currentSoloRoll()!.tier).toBeNull()
+  })
+
+  test('the rank has to be on the ladder the rules describe', async () => {
+    const s = await soloSession()
+    // The fixture's abilities carry no scale, so the ladder is the 1..5 fallback.
+    for (const rank of [0, 6, -1, 99, Number.NaN]) {
+      expect(s.rollSolo({ difficulty: 7, rank, visibility: 'gm' }, 'GM')).toBeNull()
+    }
+    expect(s.rollSolo({ difficulty: 7, rank: Number.POSITIVE_INFINITY, visibility: 'gm' }, 'GM')).toBeNull()
+    expect(s.rollSolo({ difficulty: Number.NaN, rank: 3, visibility: 'gm' }, 'GM')).toBeNull()
+    expect(s.soloRolls).toHaveLength(0)
+    expect(s.rollSolo({ difficulty: 7, rank: 1, visibility: 'gm' }, 'GM')).not.toBeNull()
+    expect(s.rollSolo({ difficulty: 7, rank: 5, visibility: 'gm' }, 'GM')).not.toBeNull()
+  })
+
+  test('private unless asked otherwise, and revealable afterwards', async () => {
+    const s = await soloSession()
+    s.rollSolo({ difficulty: 7, rank: 3, visibility: 'gm' }, 'GM')
+    const id = s.currentSoloRoll()!.id
+    expect(s.currentSoloRoll()!.visibility).toBe('gm')
+
+    expect(s.setSoloVisibility(id, 'public', 'GM')).toBe(true)
+    expect(s.currentSoloRoll()!.visibility).toBe('public')
+    expect(s.setSoloVisibility(id, 'public', 'GM')).toBe(false) // already there
+    expect(s.setSoloVisibility(id, 'gm', 'GM')).toBe(true) // and it can be hidden again
+    expect(s.currentSoloRoll()!.visibility).toBe('gm')
+    expect(s.setSoloVisibility('nosuchid', 'public', 'GM')).toBe(false)
+  })
+
+  test('can be rolled public from the start', async () => {
+    const s = await soloSession()
+    s.rollSolo({ difficulty: 7, rank: 3, visibility: 'public' }, 'GM')
+    expect(s.currentSoloRoll()!.visibility).toBe('public')
+  })
+
+  test('the latest is the current one, and a challenge is never disturbed', async () => {
+    const { s, id, ch } = await rolledChallenge('bold', 9)
+    const before = s.challengeOutcome(ch)!.main.sum
+    s.rollSolo({ difficulty: 7, rank: 3, visibility: 'gm', description: 'first' }, 'GM')
+    s.rollSolo({ difficulty: 12, rank: 4, visibility: 'gm', description: 'second' }, 'GM')
+
+    expect(s.soloRolls).toHaveLength(2)
+    expect(s.currentSoloRoll()!.description).toBe('second')
+    // The board is untouched: same challenge, same dice, same player.
+    expect(s.currentChallenge()!.id).toBe(ch.id)
+    expect(s.challengeOutcome(s.currentChallenge()!)!.main.sum).toBe(before)
+    expect(s.currentChallenge()!.charId).toBe(id)
+  })
+
+  test('survives a reopen, dice and visibility intact', async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    s.rollSolo({ difficulty: 11, tier: 'easy', rank: 2, visibility: 'public', description: '  Guard patrol  ' }, 'GM')
+    const solo = s.currentSoloRoll()!
+
+    const replayed = open().currentSoloRoll()!
+    expect(replayed).toEqual(solo)
+    expect(replayed.description).toBe('Guard patrol') // trimmed on the way in
+    expect(replayed.tier).toBeNull() // 11 is not the Easy value
+    expect(replayed.visibility).toBe('public')
+  })
+})
+
 describe('circumstance modifier', () => {
   test('a plus raises the target and a minus lowers it', async () => {
     const { s, ch } = await rolledChallenge('bold', 9)

@@ -12,6 +12,7 @@ import { dirname } from 'node:path'
 import { cryptoRng, evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
 import {
+  abilityRankRange,
   approachEffect,
   effectCanActivate,
   effectPicks,
@@ -120,6 +121,29 @@ export type Challenge = {
   support: ChallengeSide | null
   by: string
 }
+/** Who sees a solo roll. The GM always does; `public` also shows it to players and /table. */
+export type SoloVisibility = 'gm' | 'public'
+
+/**
+ * A roll the GM makes alone — an NPC's attempt, a hidden check — with no character, no approach
+ * and nobody to join it. The GM picks an opposition number off the difficulty ladder (nudging it
+ * by 1s), picks the rank to roll at, and rolls: two dice shifted by (rank − 3), exactly as an
+ * ability side is rolled. Private unless the GM says otherwise, and revealable afterwards.
+ */
+export type SoloRoll = {
+  id: string
+  /** What it is for, in the GM's words. Optional — a quick roll needs no label. */
+  description: string
+  /** The opposition number actually rolled against, after the GM's ±1 nudges. */
+  difficulty: number
+  /** The ladder tier the number came from, kept for naming it; null once it no longer matches. */
+  tier: string | null
+  rank: number
+  roll: ChallengeSide
+  visibility: SoloVisibility
+  by: string
+}
+
 /** One side's result against its target: difference, pass/fail, and stakes-scaled degrees
  *  (positive = boons, negative = complications; see outcomeFor()). */
 export type SideOutcome = { sum: number; target: number; difference: number; success: boolean; degrees: number }
@@ -276,6 +300,20 @@ export type EventData =
       by: string
     }
   | { type: 'challenge_closed'; challengeId: string; by: string }
+  // Solo roll: the GM's own roll against a picked opposition number. One event carries the whole
+  // thing (it is set up in a dialog and rolled in one go); visibility can be changed afterwards.
+  | {
+      type: 'solo_rolled'
+      soloId: string
+      description: string
+      difficulty: number
+      tier: string | null
+      rank: number
+      roll: ChallengeSide
+      visibility: SoloVisibility
+      by: string
+    }
+  | { type: 'solo_visibility_set'; soloId: string; visibility: SoloVisibility; by: string }
   | { type: 'undo'; target: number; by: string }
   | { type: 'session_started'; by: string }
 
@@ -348,6 +386,7 @@ export class Session {
   powerLevel: number
   /** All challenges ever started, in order. The last one (if any) is the "current" one. */
   readonly challenges: Challenge[] = []
+  readonly soloRolls: SoloRoll[] = []
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
@@ -426,6 +465,7 @@ export class Session {
     this.names.clear()
     this.undone.clear()
     this.challenges.length = 0
+    this.soloRolls.length = 0
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
     for (const e of this.events) this.apply(e)
     // Draft edits aren't events; layer the saved draft on top.
@@ -670,6 +710,23 @@ export class Session {
       case 'challenge_closed': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
         if (ch) ch.closed = true
+        break
+      }
+      case 'solo_rolled':
+        this.soloRolls.push({
+          id: e.soloId,
+          description: e.description ?? '',
+          difficulty: e.difficulty,
+          tier: e.tier,
+          rank: e.rank,
+          roll: e.roll,
+          visibility: e.visibility,
+          by: e.by,
+        })
+        break
+      case 'solo_visibility_set': {
+        const solo = this.soloRolls.find((x) => x.id === e.soloId)
+        if (solo) solo.visibility = e.visibility
         break
       }
     }
@@ -1507,6 +1564,57 @@ export class Session {
     if (!ch || ch.closed || !ch.main) return false
     this.append({ type: 'challenge_closed', challengeId, by })
     return true
+  }
+
+  /** The GM's most recent solo roll, if there is one. */
+  currentSoloRoll(): SoloRoll | null {
+    return this.soloRolls.at(-1) ?? null
+  }
+
+  /**
+   * Rolls the GM's solo roll: two dice at `rank`, against `difficulty`. The rank is held to the
+   * ladder the sheet's own abilities use (abilityRankRange) so it cannot be set to something the
+   * dice maths was never meant for; the opposition number is free, since the GM nudges it by 1s
+   * off whichever tier they started from.
+   */
+  rollSolo(
+    opts: { description?: string; difficulty: number; tier?: string | null; rank: number; visibility: SoloVisibility },
+    by: string,
+  ) {
+    if (!Number.isFinite(opts.difficulty) || !Number.isFinite(opts.rank)) return null
+    const { min, max } = abilityRankRange(this.rules)
+    const rank = Math.round(opts.rank)
+    if (rank < min || rank > max) return null
+    const difficulty = Math.round(opts.difficulty)
+    // The tier only names the number; drop it once a nudge has moved it off that tier's value.
+    const tier = this.rules.challenges.difficulties.find((d) => d.id === opts.tier) ?? null
+    return this.append({
+      type: 'solo_rolled',
+      soloId: crypto.randomUUID().slice(0, 8),
+      description: (opts.description ?? '').trim().slice(0, 200),
+      difficulty,
+      tier: tier && tier.value === difficulty ? tier.label : null,
+      rank,
+      roll: rollChallengeSide(rank),
+      visibility: opts.visibility === 'public' ? 'public' : 'gm',
+      by,
+    })
+  }
+
+  /** Reveals a private solo roll to the table, or takes a public one back. */
+  setSoloVisibility(soloId: string, visibility: SoloVisibility, by: string) {
+    const solo = this.soloRolls.find((x) => x.id === soloId)
+    if (!solo || solo.visibility === visibility) return false
+    this.append({ type: 'solo_visibility_set', soloId, visibility, by })
+    return true
+  }
+
+  /**
+   * A solo roll against its opposition number. Solo rolls have no stakes, so this is worked out
+   * at `low` — pass/fail and by how much, and never a boon or a complication.
+   */
+  soloOutcome(solo: SoloRoll): SideOutcome {
+    return outcomeFor(solo.roll.sum, solo.difficulty, 'low')
   }
 
   roll(opts: {

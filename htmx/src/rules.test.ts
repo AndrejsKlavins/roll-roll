@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadRules } from './rules'
+import { abilityRankRange, loadRules } from './rules'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -109,5 +109,83 @@ describe('derived values in sections', () => {
 
   test('bad formulas fail startup', async () => {
     await expect(rulesWith('      - { id: x, type: derived, formula: "nope + 1" }')).rejects.toThrow('derived "x": Unknown name "nope"')
+  })
+})
+
+describe('solo roll rank ladder', () => {
+  /** A whole rules file, so sections can be marked base and carry a word scale. */
+  const rulesFile = (lines: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), 'roll-rules-'))
+    dirs.push(dir)
+    const path = join(dir, 'rules.yaml')
+    writeFileSync(path, lines.join('\n'))
+    return loadRules(path)
+  }
+
+  test("comes from the abilities' word scale", async () => {
+    const rules = await rulesFile([
+      'name: Test',
+      'scales:',
+      '  rating:',
+      '    0: awful',
+      '    1: poor',
+      '    2: fine',
+      '    3: great',
+      'sections:',
+      '  - label: Abilities',
+      '    base: true',
+      '    fields:',
+      '      - { id: might, type: number, default: 2, scale: rating }',
+      'derived: []',
+      'rolls: []',
+    ])
+    expect(abilityRankRange(rules)).toEqual({
+      min: 0,
+      max: 3,
+      def: 2,
+      scale: { 0: 'awful', 1: 'poor', 2: 'fine', 3: 'great' },
+    })
+  })
+
+  test('falls back to 1..5 when the abilities carry no scale', async () => {
+    // Abilities have no fixed bounds in play, so min/max are usually infinite and unusable here.
+    const rules = await rulesFile([
+      'name: Test',
+      'sections:',
+      '  - label: Abilities',
+      '    base: true',
+      '    fields:',
+      '      - { id: might, type: number, default: 4 }',
+      'derived: []',
+      'rolls: []',
+    ])
+    expect(abilityRankRange(rules)).toEqual({ min: 1, max: 5, def: 4, scale: undefined })
+  })
+
+  test('trained skills are not part of the ladder', async () => {
+    const rules = await rulesFile([
+      'name: Test',
+      'scales:',
+      '  rating:',
+      '    2: fine',
+      '    3: great',
+      '  skill:',
+      '    0: untrained',
+      '    9: master',
+      'training:',
+      '  points_stat: pts',
+      '  rank_costs: [4]',
+      'sections:',
+      '  - label: Abilities',
+      '    base: true',
+      '    fields:',
+      '      - { id: might, type: number, default: 3, scale: rating }',
+      '      - { id: sneak, type: number, trained: true, scale: skill }',
+      '      - { id: pts, type: derived, formula: "3" }',
+      'derived: []',
+      'rolls: []',
+    ])
+    // The skill scale reaches 9; the ladder still stops at the abilities' 3.
+    expect(abilityRankRange(rules)).toMatchObject({ min: 2, max: 3, def: 3 })
   })
 })

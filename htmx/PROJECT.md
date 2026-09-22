@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-22 (GM circumstance modifier: + raises the difficulty, and fits the GM column)
+Last updated: 2026-09-22 (Solo roll: the GM rolls alone against a picked opposition number)
 
 ---
 
@@ -474,6 +474,35 @@ already made to the ability dice (a discard, a reroll, a moved face) **stay** �
 results, and both events stay in the log — and it does not bypass `when`, so a `failure` approach on
 a roll that is now succeeding still shows `skipped` with no Activate button (raise the difficulties
 to test those faces). Players never see the row. Not undoable, like the rest of a challenge.
+
+**Solo roll** (user-designed): the GM's own roll, for an NPC's attempt or a hidden check — no
+character, no approach, no exertion and **nobody joins it**. Its own **"Start solo roll"** button
+opens `<dialog id="solo-dialog">` (`SoloRollDialog`, rendered by `GmPage` outside the boards so live
+updates can't close it mid-edit), where the GM:
+
+1. picks an **opposition number** off the same difficulty ladder, then nudges it by 1s with a
+   − / + stepper (the circumstance stepper's markup, reused). The tier **names** the number while it
+   still matches ("10 (Hard)") and goes unnamed as soon as a nudge moves it off, which is exactly
+   what `rollSolo` records in `tier`;
+2. picks the **rank to roll at** from a ladder of words — `abilityRankRange(rules)` in rules.ts,
+   taken from the **word scale the sheet's abilities use** (rating: 0 abysmal … 6 epic), *not* their
+   min/max, since abilities deliberately have no fixed bounds in play and those come back infinite.
+   A rank off that ladder is refused, so the range stays a rules-file decision;
+3. chooses **who sees it — GM only by default**, or public;
+4. presses **Roll**.
+
+One `solo_rolled` event carries the whole thing (it is set up in Alpine state and rolled in one go):
+description, opposition number, tier name, rank, the rolled `ChallengeSide` and visibility. The dice
+are `rollChallengeSide(rank)` — the same two dice shifted by (rank − 3) an ability side gets, so a
+solo roll reads like any other. `soloOutcome()` judges it at **`low` stakes**, so it is pass/fail and
+by how much, never a boon or a complication (solo rolls have no stakes picker).
+
+`SoloRollBoard` (`#solo-board`) is its own swap target mounted on **all three screens**, so a solo
+roll never disturbs the challenge board and a challenge in progress is untouched. It renders an
+empty section for anyone who should not see the roll, which also clears a roll that has just been
+hidden again. The GM always sees the card and gets a **"Show the table" / "Hide again"** button
+(`solo_visibility_set`), so a roll made in private can be revealed after the fact — and taken back.
+Not undoable, like challenges.
 
 **Exertion** (user-designed): while a rolled challenge is open, the rolling player may burn one point
 of any pool stat listed in `challenges.exertion_sources` (rules.yaml: stamina, willpower) for one
