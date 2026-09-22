@@ -144,6 +144,88 @@ export type SoloRoll = {
   by: string
 }
 
+/** Which half of an opposition roll a contestant is. */
+export type OppositionSide = 'a' | 'b'
+
+/**
+ * One contestant in an opposition roll: either a player's character or an NPC the GM rolls for.
+ * Each rolls **two** checks — a core ability and a supporting one — against the other's.
+ *
+ * A character's ranks are read off the sheet when it rolls (so a wound between setup and roll
+ * counts); an NPC has no sheet, so the GM gives `coreRank`/`supportRank` outright and it commits
+ * nothing. Committed bonuses are **hidden from the other side until both are ready** (user
+ * decision), which is what makes Ready worth pressing.
+ */
+export type Contestant = {
+  /** null for an NPC. */
+  charId: string | null
+  /** The character's name, or the GM's label for an NPC. */
+  name: string
+  /** Ability field ids — a character rolls these; null on an NPC. */
+  coreAbility: string | null
+  supportAbility: string | null
+  /** An NPC's flat ranks; null on a character, whose ranks come from the sheet. */
+  coreRank: number | null
+  supportRank: number | null
+  /** Pool points burned before the roll, each worth +1 on the check it was put on. */
+  exertionCore: number
+  exertionSupport: number
+  /** A trained skill declared before the roll, its rank split across the two checks. */
+  skill: string | null
+  skillCore: number
+  skillSupport: number
+  /** Committing is over for this side. Both sides ready reveals the commitments and opens Roll. */
+  ready: boolean
+  core: ChallengeSide | null
+  support: ChallengeSide | null
+}
+
+/**
+ * A head-to-head roll with no difficulty number: two contestants, each rolling a core and a
+ * supporting ability, and the sums compared. Player vs player, player vs NPC or NPC vs NPC.
+ *
+ * It runs in three phases — commit (bonuses in, hidden), roll (both ready), done — and **nothing
+ * can be changed once the dice are in** (user decision): no rerolls, no late exertion, no
+ * circumstance. Always high stakes, so the margin reads as degrees of victory.
+ */
+export type Opposition = {
+  id: string
+  /** What the contest is, in the GM's words. */
+  description: string
+  a: Contestant
+  b: Contestant
+  by: string
+}
+
+/** Where an opposition roll has got to. */
+export type OppositionPhase = 'committing' | 'rolling' | 'done'
+
+/** One of the two head-to-head comparisons, once both sides have rolled it. */
+export type OppositionCheck = {
+  aSum: number
+  bSum: number
+  /** aSum − bSum. */
+  margin: number
+  /** Who took this check; null when it is level. */
+  winner: OppositionSide | null
+}
+
+/**
+ * How an opposition roll came out. **The core check decides** (user decision): when the two
+ * checks disagree it is the core one that names the winner. A level core check falls through to
+ * the supporting one rather than throwing that information away, and only a contest level on both
+ * is a tie — which the app reports without picking a winner, for the GM to rule on.
+ */
+export type OppositionOutcome = {
+  core: OppositionCheck
+  support: OppositionCheck
+  winner: OppositionSide | null
+  /** Which check named the winner; null on a tie. */
+  decidedBy: 'core' | 'support' | null
+  /** Degrees of victory: one per full 3 points of the deciding check's margin (high stakes). */
+  degrees: number
+}
+
 /** One side's result against its target: difference, pass/fail, and stakes-scaled degrees
  *  (positive = boons, negative = complications; see outcomeFor()). */
 export type SideOutcome = { sum: number; target: number; difference: number; success: boolean; degrees: number }
@@ -314,6 +396,46 @@ export type EventData =
       by: string
     }
   | { type: 'solo_visibility_set'; soloId: string; visibility: SoloVisibility; by: string }
+  // Opposition roll: set up by the GM, then each side commits, readies and rolls. `side` is
+  // always 'a' or 'b'; `check` says which of a contestant's two rolls a bonus was put on.
+  | {
+      type: 'opposition_started'
+      oppositionId: string
+      description: string
+      a: Contestant
+      b: Contestant
+      by: string
+    }
+  | {
+      type: 'opposition_exerted'
+      oppositionId: string
+      side: OppositionSide
+      check: 'core' | 'support'
+      charId: string
+      stat: string
+      adj: number
+      from: number
+      to: number
+      by: string
+    }
+  | { type: 'opposition_skill_set'; oppositionId: string; side: OppositionSide; skill: string | null; by: string }
+  | {
+      type: 'opposition_skill_points_set'
+      oppositionId: string
+      side: OppositionSide
+      core: number
+      support: number
+      by: string
+    }
+  | { type: 'opposition_ready_set'; oppositionId: string; side: OppositionSide; ready: boolean; by: string }
+  | {
+      type: 'opposition_rolled'
+      oppositionId: string
+      side: OppositionSide
+      core: ChallengeSide
+      support: ChallengeSide
+      by: string
+    }
   | { type: 'undo'; target: number; by: string }
   | { type: 'session_started'; by: string }
 
@@ -387,6 +509,7 @@ export class Session {
   /** All challenges ever started, in order. The last one (if any) is the "current" one. */
   readonly challenges: Challenge[] = []
   readonly soloRolls: SoloRoll[] = []
+  readonly oppositions: Opposition[] = []
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
@@ -466,6 +589,7 @@ export class Session {
     this.undone.clear()
     this.challenges.length = 0
     this.soloRolls.length = 0
+    this.oppositions.length = 0
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
     for (const e of this.events) this.apply(e)
     // Draft edits aren't events; layer the saved draft on top.
@@ -727,6 +851,46 @@ export class Session {
       case 'solo_visibility_set': {
         const solo = this.soloRolls.find((x) => x.id === e.soloId)
         if (solo) solo.visibility = e.visibility
+        break
+      }
+      case 'opposition_started':
+        this.oppositions.push({
+          id: e.oppositionId,
+          description: e.description ?? '',
+          a: { ...e.a },
+          b: { ...e.b },
+          by: e.by,
+        })
+        break
+      case 'opposition_exerted': {
+        const one = this.contestantOf(e.oppositionId, e.side)
+        const c = this.characters.get(e.charId)
+        if (one) {
+          if (e.check === 'core') one.exertionCore += 1
+          else one.exertionSupport += 1
+        }
+        if (c?.status === 'active') c.statAdj[e.stat] = e.adj
+        break
+      }
+      case 'opposition_skill_set': {
+        const one = this.contestantOf(e.oppositionId, e.side)
+        // A new skill (or none) drops whatever was allocated from the old one.
+        if (one) Object.assign(one, { skill: e.skill, skillCore: 0, skillSupport: 0 })
+        break
+      }
+      case 'opposition_skill_points_set': {
+        const one = this.contestantOf(e.oppositionId, e.side)
+        if (one) Object.assign(one, { skillCore: e.core, skillSupport: e.support })
+        break
+      }
+      case 'opposition_ready_set': {
+        const one = this.contestantOf(e.oppositionId, e.side)
+        if (one) one.ready = e.ready
+        break
+      }
+      case 'opposition_rolled': {
+        const one = this.contestantOf(e.oppositionId, e.side)
+        if (one) Object.assign(one, { core: e.core, support: e.support })
         break
       }
     }
@@ -1615,6 +1779,289 @@ export class Session {
    */
   soloOutcome(solo: SoloRoll): SideOutcome {
     return outcomeFor(solo.roll.sum, solo.difficulty, 'low')
+  }
+
+  // ---- opposition rolls --------------------------------------------------
+  /** The opposition roll currently on the board, if any — always the most recently started. */
+  currentOpposition(): Opposition | null {
+    return this.oppositions.at(-1) ?? null
+  }
+
+  /** One contestant by side, or null when there is no such opposition roll. */
+  private contestantOf(oppositionId: string, side: OppositionSide): Contestant | null {
+    return this.oppositions.find((x) => x.id === oppositionId)?.[side] ?? null
+  }
+
+  /**
+   * Commit → roll → done. Both sides ready reveals the commitments and opens Roll; both rolled
+   * ends it, and nothing can be changed after that (user decision).
+   */
+  oppositionPhase(opp: Opposition): OppositionPhase {
+    if (opp.a.core && opp.b.core) return 'done'
+    return opp.a.ready && opp.b.ready ? 'rolling' : 'committing'
+  }
+
+  /**
+   * Whether `viewer` may see what this side has committed. Hidden from the other contestant (and
+   * from the shared screen, which both of them can see) until both are ready; a player always
+   * sees their own, and the GM sees everything because they are refereeing, not competing.
+   */
+  oppositionCommitVisible(
+    opp: Opposition,
+    side: OppositionSide,
+    role: 'gm' | 'player' | 'table',
+    viewerCharId?: string,
+  ) {
+    if (role === 'gm' || this.oppositionPhase(opp) !== 'committing') return true
+    const one = opp[side]
+    return !!one.charId && one.charId === viewerCharId
+  }
+
+  /** The rank a contestant rolls a check at: off the sheet for a character, flat for an NPC. */
+  private contestantRank(one: Contestant, check: 'core' | 'support'): number | null {
+    if (!one.charId) return check === 'core' ? one.coreRank : one.supportRank
+    const char = this.characters.get(one.charId)
+    const abilityId = check === 'core' ? one.coreAbility : one.supportAbility
+    const field = abilityId ? this.rules.fields.get(abilityId) : undefined
+    if (!char || !field || field.type !== 'number') return null
+    return Number(this.valueOf(char, field))
+  }
+
+  /** A contestant's total for one check: the dice, plus what was committed to it. */
+  oppositionSum(one: Contestant, check: 'core' | 'support'): number | null {
+    const rolled = check === 'core' ? one.core : one.support
+    if (!rolled) return null
+    return rolled.sum + (check === 'core' ? one.exertionCore + one.skillCore : one.exertionSupport + one.skillSupport)
+  }
+
+  /**
+   * How the contest came out, or null until both sides have rolled. The core check decides; a
+   * level core check falls through to the supporting one, and level on both is a tie with no
+   * winner named. Degrees come from the deciding check's margin at **high stakes** (user
+   * decision: always high), so they are read through outcomeFor like every other degree.
+   */
+  oppositionOutcome(opp: Opposition): OppositionOutcome | null {
+    if (this.oppositionPhase(opp) !== 'done') return null
+    const check = (which: 'core' | 'support'): OppositionCheck => {
+      const aSum = this.oppositionSum(opp.a, which) ?? 0
+      const bSum = this.oppositionSum(opp.b, which) ?? 0
+      const margin = aSum - bSum
+      return { aSum, bSum, margin, winner: margin === 0 ? null : margin > 0 ? 'a' : 'b' }
+    }
+    const core = check('core')
+    const support = check('support')
+    const decidedBy = core.winner ? 'core' : support.winner ? 'support' : null
+    const deciding = decidedBy === 'core' ? core : decidedBy === 'support' ? support : null
+    // outcomeFor keeps the degree rule in one place: sum vs the opponent's sum, at high stakes.
+    const degrees = deciding ? Math.abs(outcomeFor(deciding.aSum, deciding.bSum, 'high').degrees) : 0
+    return { core, support, winner: deciding?.winner ?? null, decidedBy, degrees }
+  }
+
+  /**
+   * GM sets up a contest. Each side is either a character with two of its abilities, or an NPC
+   * with two flat ranks. An NPC's ranks are held to the ladder the sheet's abilities use, the
+   * same as a solo roll.
+   */
+  startOpposition(
+    opts: {
+      description: string
+      a: {
+        charId?: string | null
+        name?: string
+        coreAbility?: string | null
+        supportAbility?: string | null
+        coreRank?: number | null
+        supportRank?: number | null
+      }
+      b: {
+        charId?: string | null
+        name?: string
+        coreAbility?: string | null
+        supportAbility?: string | null
+        coreRank?: number | null
+        supportRank?: number | null
+      }
+    },
+    by: string,
+  ) {
+    const description = opts.description.trim().slice(0, 200)
+    if (!description) return null // the GM names every contest, as with challenges
+    const ladder = abilityRankRange(this.rules)
+    const build = (raw: typeof opts.a): Contestant | null => {
+      const blank = {
+        exertionCore: 0,
+        exertionSupport: 0,
+        skill: null,
+        skillCore: 0,
+        skillSupport: 0,
+        ready: false,
+        core: null,
+        support: null,
+      }
+      if (raw.charId) {
+        const char = this.characters.get(raw.charId)
+        if (!char || char.status !== 'active') return null
+        if (!this.isAbilityField(raw.coreAbility ?? '') || !this.isAbilityField(raw.supportAbility ?? '')) return null
+        return {
+          charId: char.id,
+          name: char.name,
+          coreAbility: raw.coreAbility!,
+          supportAbility: raw.supportAbility!,
+          coreRank: null,
+          supportRank: null,
+          ...blank,
+        }
+      }
+      const coreRank = Math.round(Number(raw.coreRank))
+      const supportRank = Math.round(Number(raw.supportRank))
+      for (const r of [coreRank, supportRank]) {
+        if (!Number.isFinite(r) || r < ladder.min || r > ladder.max) return null
+      }
+      return {
+        charId: null,
+        name: cleanName(raw.name ?? '') || 'NPC',
+        coreAbility: null,
+        supportAbility: null,
+        coreRank,
+        supportRank,
+        ...blank,
+      }
+    }
+    const a = build(opts.a)
+    const b = build(opts.b)
+    if (!a || !b) return null
+    return this.append({
+      type: 'opposition_started',
+      oppositionId: crypto.randomUUID().slice(0, 8),
+      description,
+      a,
+      b,
+      by,
+    })
+  }
+
+  /** The side this character is on, with its contestant — or null when they are not in it. */
+  private oppositionSideOf(oppositionId: string, charId: string) {
+    const opp = this.oppositions.find((x) => x.id === oppositionId)
+    if (!opp) return null
+    const side: OppositionSide | null = opp.a.charId === charId ? 'a' : opp.b.charId === charId ? 'b' : null
+    return side ? { opp, side, one: opp[side] } : null
+  }
+
+  /** A side that may still change its commitment: in the contest, still committing, not ready. */
+  private committing(oppositionId: string, charId: string) {
+    const found = this.oppositionSideOf(oppositionId, charId)
+    if (!found || this.oppositionPhase(found.opp) !== 'committing' || found.one.ready) return null
+    const char = this.characters.get(charId)
+    return char?.status === 'active' ? { ...found, char } : null
+  }
+
+  /**
+   * Commits one point of a pool stat (stamina/willpower) to one of this side's checks, worth +1.
+   * Unlike a challenge's exertion this is spent **before** the dice, and cannot be taken back.
+   */
+  commitOppositionExertion(
+    oppositionId: string,
+    charId: string,
+    check: 'core' | 'support',
+    statId: string,
+    by: string,
+  ) {
+    const acting = this.committing(oppositionId, charId)
+    if (!acting || !this.rules.challenges.exertionSources.includes(statId)) return false
+    const stat = this.statOf(acting.char, statId)
+    if (!stat || stat.current <= 0) return false
+    const to = stat.current - 1
+    this.append({
+      type: 'opposition_exerted',
+      oppositionId,
+      side: acting.side,
+      check,
+      charId,
+      stat: statId,
+      adj: to - stat.normal,
+      from: stat.current,
+      to,
+      by,
+    })
+    return true
+  }
+
+  /** Declares (or clears) the trained skill this side commits, resetting how it was split. */
+  setOppositionSkill(oppositionId: string, charId: string, skill: string | null, by: string) {
+    const acting = this.committing(oppositionId, charId)
+    if (!acting) return false
+    if (skill !== null) {
+      const f = this.rules.fields.get(skill)
+      if (!f || f.type !== 'number' || !f.trained) return false
+    }
+    this.append({ type: 'opposition_skill_set', oppositionId, side: acting.side, skill, by })
+    return true
+  }
+
+  /** Splits the declared skill's rank across the two checks (each clamped to what is left). */
+  setOppositionSkillPoints(oppositionId: string, charId: string, core: number, support: number, by: string) {
+    const acting = this.committing(oppositionId, charId)
+    if (!acting?.one.skill) return false
+    const field = this.rules.fields.get(acting.one.skill) as NumberField | undefined
+    if (!field) return false
+    const rank = Math.round(Number(this.baseOf(acting.char, field)))
+    const clamp = (n: number, max: number) => Math.max(0, Math.min(max, Math.round(Number(n) || 0)))
+    const onCore = clamp(core, rank)
+    const onSupport = clamp(support, rank - onCore)
+    if (onCore === acting.one.skillCore && onSupport === acting.one.skillSupport) return false
+    this.append({
+      type: 'opposition_skill_points_set',
+      oppositionId,
+      side: acting.side,
+      core: onCore,
+      support: onSupport,
+      by,
+    })
+    return true
+  }
+
+  /**
+   * Presses Ready for one side, which locks its commitment. It can be taken back only while the
+   * other side is still committing — once both are ready the commitments are revealed, so there
+   * is no going back from that. The GM may ready any side (there is no permission system, and an
+   * NPC has nobody else to do it).
+   */
+  setOppositionReady(oppositionId: string, side: OppositionSide, ready: boolean, by: string) {
+    const opp = this.oppositions.find((x) => x.id === oppositionId)
+    if (!opp || this.oppositionPhase(opp) !== 'committing') return false
+    if (opp[side].ready === ready) return false
+    this.append({ type: 'opposition_ready_set', oppositionId, side, ready, by })
+    return true
+  }
+
+  /** Rolls one side's two checks, once both sides are ready. Once per side. */
+  rollOpposition(oppositionId: string, side: OppositionSide, by: string) {
+    const opp = this.oppositions.find((x) => x.id === oppositionId)
+    if (!opp || !opp.a.ready || !opp.b.ready) return false
+    const one = opp[side]
+    if (one.core) return false // already rolled
+    const coreRank = this.contestantRank(one, 'core')
+    const supportRank = this.contestantRank(one, 'support')
+    if (coreRank === null || supportRank === null) return false
+    this.append({
+      type: 'opposition_rolled',
+      oppositionId,
+      side,
+      core: rollChallengeSide(coreRank),
+      support: rollChallengeSide(supportRank),
+      by,
+    })
+    return true
+  }
+
+  /** The rank left to split for a side's declared skill, for the commit controls. */
+  oppositionSkillState(one: Contestant) {
+    const char = one.charId ? this.characters.get(one.charId) : null
+    const field = one.skill ? (this.rules.fields.get(one.skill) as NumberField | undefined) : undefined
+    if (!char || !field) return null
+    const rank = Math.round(Number(this.baseOf(char, field)))
+    return { label: field.label, rank, left: rank - one.skillCore - one.skillSupport }
   }
 
   roll(opts: {

@@ -5,7 +5,7 @@ import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
-import { ChallengeBoard, ChallengePlayerPicker, SoloRollBoard } from './views/challenge'
+import { ChallengeBoard, ChallengePlayerPicker, OppositionBoard, SoloRollBoard } from './views/challenge'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
 import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar, TraitsSection } from './views/sheet'
@@ -273,6 +273,87 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       () => true,
       (client) => html(<SoloRollBoard session={session} role={client.role} oob />),
     )
+
+  // Opposition rolls get their own swap target, like the solo board. Everyone is sent it: what
+  // is hidden is only each side's commitment, and OppositionBoard decides that per viewer.
+  const pushOpposition = () =>
+    hub.send(
+      () => true,
+      (client) =>
+        html(<OppositionBoard session={session} role={client.role} viewerCharId={client.charId ?? undefined} oob />),
+    )
+
+  app.post('/gm/opposition/start', async (c) => {
+    const body = await form(c)
+    const side = (p: 'a' | 'b') =>
+      body[`${p}_kind`] === 'npc'
+        ? {
+            charId: null,
+            name: body[`${p}_name`] ?? '',
+            coreRank: Number(body[`${p}_core_rank`]),
+            supportRank: Number(body[`${p}_support_rank`]),
+          }
+        : {
+            charId: body[`${p}_char`] ?? '',
+            coreAbility: body[`${p}_core`] ?? '',
+            supportAbility: body[`${p}_support`] ?? '',
+          }
+    if (session.startOpposition({ description: body.description ?? '', a: side('a'), b: side('b') }, actorName(c))) {
+      pushOpposition()
+    }
+    return noContent(c)
+  })
+
+  const oppSide = (c: Context) => (c.req.query('side') === 'b' ? 'b' : 'a')
+
+  // Ready and Roll are posted per side; the GM may act for either (an NPC has nobody else, and
+  // the app has no permission system), so these are not tied to the acting character.
+  app.post('/gm/opposition/ready', (c) => {
+    const opp = session.currentOpposition()
+    if (!opp) return c.notFound()
+    if (session.setOppositionReady(opp.id, oppSide(c), c.req.query('to') === '1', actorName(c))) pushOpposition()
+    return noContent(c)
+  })
+
+  app.post('/gm/opposition/roll', (c) => {
+    const opp = session.currentOpposition()
+    if (!opp) return c.notFound()
+    if (session.rollOpposition(opp.id, oppSide(c), actorName(c))) pushOpposition()
+    return noContent(c)
+  })
+
+  // Commitment is the acting character's own, so these go through /c/:id like a sheet change.
+  // Burning a pool point moves the sheet too, so push both.
+  app.post('/c/:id/opposition/exert', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const opp = session.currentOpposition()
+    if (!char || !opp) return c.notFound()
+    const check = c.req.query('check') === 'support' ? 'support' : 'core'
+    if (session.commitOppositionExertion(opp.id, char.id, check, (await form(c)).stat ?? '', actorName(c))) {
+      pushOpposition()
+      pushStatChange(char)
+    }
+    return noContent(c)
+  })
+
+  app.post('/c/:id/opposition/skill', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const opp = session.currentOpposition()
+    if (!char || !opp) return c.notFound()
+    if (session.setOppositionSkill(opp.id, char.id, (await form(c)).skill || null, actorName(c))) pushOpposition()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/opposition/skill-points', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const opp = session.currentOpposition()
+    if (!char || !opp) return c.notFound()
+    const body = await form(c)
+    if (session.setOppositionSkillPoints(opp.id, char.id, Number(body.core), Number(body.support), actorName(c))) {
+      pushOpposition()
+    }
+    return noContent(c)
+  })
 
   app.post('/gm/solo/roll', async (c) => {
     const body = await form(c)

@@ -335,6 +335,14 @@ sections:
     fields:
       - { id: stamina, label: Stamina, type: derived, pool: true, formula: "2" }
       - { id: willpower, label: Willpower, type: derived, pool: true, formula: "1" }
+  - label: Skills
+    base: true
+    fields:
+      - { id: pts, label: Points, type: derived, formula: "6" }
+      - { id: athletics, label: Athletics, type: number, trained: true }
+training:
+  points_stat: pts
+  rank_costs: [1, 2, 3]
 challenges:
   difficulties:
     - { id: easy, label: Easy, value: 4 }
@@ -614,6 +622,259 @@ async function tweakWithDieOn(face: number) {
   }
   throw new Error(`never rolled a die on face ${face} alongside one Tweak could lower`)
 }
+
+describe('opposition roll', () => {
+  const ABILITIES = { coreAbility: 'strength', supportAbility: 'agility' }
+
+  /** Two finished characters, ready to be put on either side of a contest. */
+  const twoPlayers = async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const mara = s.createCharacter('Mara').id
+    const jorik = s.createCharacter('Jorik').id
+    s.finalizeCharacter(mara, 'Mara')
+    s.finalizeCharacter(jorik, 'Jorik')
+    return { s, open, mara, jorik }
+  }
+
+  const start = (s: Session, a: object, b: object, description = 'Arm wrestle') =>
+    s.startOpposition({ description, a, b } as never, 'GM')
+
+  /** Walks a contest all the way to a result: both ready, both rolled. */
+  const resolve = (s: Session, id: string) => {
+    s.setOppositionReady(id, 'a', true, 'GM')
+    s.setOppositionReady(id, 'b', true, 'GM')
+    s.rollOpposition(id, 'a', 'GM')
+    s.rollOpposition(id, 'b', 'GM')
+    return s.currentOpposition()!
+  }
+
+  test('player vs player: two checks each, no difficulty anywhere', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    expect(start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })).not.toBeNull()
+    const opp = s.currentOpposition()!
+    expect([opp.a.name, opp.b.name]).toEqual(['Mara', 'Jorik'])
+    expect(opp.a.coreAbility).toBe('strength')
+    expect(opp.a.supportAbility).toBe('agility')
+
+    const done = resolve(s, opp.id)
+    for (const one of [done.a, done.b]) {
+      expect(one.core!.dice).toHaveLength(2)
+      expect(one.support!.dice).toHaveLength(2)
+    }
+    const outcome = s.oppositionOutcome(done)!
+    expect(outcome.core.aSum).toBe(done.a.core!.sum)
+    expect(outcome.core.bSum).toBe(done.b.core!.sum)
+    expect(outcome.core.margin).toBe(outcome.core.aSum - outcome.core.bSum)
+  })
+
+  test('player vs npc and npc vs npc both work', async () => {
+    const { s, mara } = await twoPlayers()
+    const npc = { name: 'Guard', coreRank: 4, supportRank: 2 }
+    expect(start(s, { charId: mara, ...ABILITIES }, npc)).not.toBeNull()
+    expect(s.currentOpposition()!.b.name).toBe('Guard')
+    expect(s.currentOpposition()!.b.charId).toBeNull()
+
+    expect(start(s, { name: 'Wolf', coreRank: 5, supportRank: 5 }, npc)).not.toBeNull()
+    const both = s.currentOpposition()!
+    expect([both.a.charId, both.b.charId]).toEqual([null, null])
+    const done = resolve(s, both.id)
+    // An NPC rolls at its flat rank: every face shifted by (rank − 3).
+    for (const [i, face] of done.a.core!.faces!.entries()) {
+      expect(done.a.core!.dice[i]).toBe(face + (5 - 3))
+    }
+  })
+
+  test('an unnamed contest, a missing ability or an off-ladder NPC rank are all refused', async () => {
+    const { s, mara } = await twoPlayers()
+    const ok = { charId: mara, ...ABILITIES }
+    const npc = { name: 'Guard', coreRank: 3, supportRank: 3 }
+    expect(start(s, ok, npc, '   ')).toBeNull()
+    expect(start(s, { charId: mara, coreAbility: 'strength', supportAbility: 'nope' }, npc)).toBeNull()
+    expect(start(s, { charId: 'nobody', ...ABILITIES }, npc)).toBeNull()
+    expect(start(s, ok, { name: 'Guard', coreRank: 0, supportRank: 3 })).toBeNull() // ladder is 1..5
+    expect(start(s, ok, { name: 'Guard', coreRank: 3, supportRank: 9 })).toBeNull()
+    expect(s.oppositions).toHaveLength(0)
+  })
+
+  test('a commitment is hidden from the other side until both are ready', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const opp = s.currentOpposition()!
+    expect(s.oppositionPhase(opp)).toBe('committing')
+
+    const see = (side: 'a' | 'b', role: 'gm' | 'player' | 'table', who?: string) =>
+      s.oppositionCommitVisible(s.currentOpposition()!, side, role, who)
+
+    expect(see('a', 'player', mara)).toBe(true) // your own is always yours to see
+    expect(see('a', 'player', jorik)).toBe(false) // the opponent's is not
+    expect(see('a', 'table')).toBe(false) // nor the shared screen's, which both can read
+    expect(see('a', 'gm')).toBe(true) // the GM referees, so sees everything
+
+    s.setOppositionReady(opp.id, 'a', true, 'Mara')
+    expect(see('a', 'player', jorik)).toBe(false) // one side ready is not enough
+    s.setOppositionReady(opp.id, 'b', true, 'Jorik')
+    expect(s.oppositionPhase(s.currentOpposition()!)).toBe('rolling')
+    expect(see('a', 'player', jorik)).toBe(true) // both ready: the commitments come out
+    expect(see('b', 'table')).toBe(true)
+  })
+
+  test('stamina and skill are committed before the dice, and count towards the check', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    s.train(mara, 'athletics', 6, 'Mara') // 6 points = rank 3 in the fixture
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const opp = s.currentOpposition()!
+
+    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(true)
+    expect(s.commitOppositionExertion(opp.id, mara, 'support', 'willpower', 'Mara')).toBe(true)
+    expect(s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')).toBe(true)
+    expect(s.oppositionSkillState(s.currentOpposition()!.a)).toMatchObject({ rank: 3, left: 3 })
+    expect(s.setOppositionSkillPoints(opp.id, mara, 2, 1, 'Mara')).toBe(true)
+
+    const committed = s.currentOpposition()!.a
+    expect(committed.exertionCore).toBe(1)
+    expect(committed.exertionSupport).toBe(1)
+    expect([committed.skillCore, committed.skillSupport]).toEqual([2, 1])
+    // Burning a pool point shows on the sheet, as a challenge's exertion does.
+    expect(s.statOf(s.characters.get(mara)!, 'stamina')!.current).toBe(1)
+
+    const done = resolve(s, opp.id)
+    expect(s.oppositionSum(done.a, 'core')).toBe(done.a.core!.sum + 1 + 2)
+    expect(s.oppositionSum(done.a, 'support')).toBe(done.a.support!.sum + 1 + 1)
+    expect(s.oppositionOutcome(done)!.core.aSum).toBe(done.a.core!.sum + 3)
+  })
+
+  test('a skill split cannot exceed its rank, and changing skill drops the split', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    s.train(mara, 'athletics', 6, 'Mara')
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const opp = s.currentOpposition()!
+    s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')
+    s.setOppositionSkillPoints(opp.id, mara, 99, 99, 'Mara')
+    const one = s.currentOpposition()!.a
+    expect(one.skillCore + one.skillSupport).toBe(3) // the whole rank, no more
+    s.setOppositionSkill(opp.id, mara, null, 'Mara')
+    expect(s.currentOpposition()!.a).toMatchObject({ skill: null, skillCore: 0, skillSupport: 0 })
+    expect(s.setOppositionSkillPoints(opp.id, mara, 1, 0, 'Mara')).toBe(false) // no skill declared
+  })
+
+  test('a ready side cannot change its commitment, and only un-ready before the reveal', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const opp = s.currentOpposition()!
+
+    s.setOppositionReady(opp.id, 'a', true, 'Mara')
+    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(false)
+    expect(s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')).toBe(false)
+    expect(s.setOppositionReady(opp.id, 'a', false, 'Mara')).toBe(true) // still time to change
+    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(true)
+
+    s.setOppositionReady(opp.id, 'a', true, 'Mara')
+    s.setOppositionReady(opp.id, 'b', true, 'Jorik')
+    expect(s.setOppositionReady(opp.id, 'a', false, 'Mara')).toBe(false) // the reveal is done
+  })
+
+  test('nobody rolls before both are ready, and nobody rolls twice', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const opp = s.currentOpposition()!
+
+    expect(s.rollOpposition(opp.id, 'a', 'Mara')).toBe(false) // nobody is ready
+    s.setOppositionReady(opp.id, 'a', true, 'Mara')
+    expect(s.rollOpposition(opp.id, 'a', 'Mara')).toBe(false) // only one side is
+    s.setOppositionReady(opp.id, 'b', true, 'Jorik')
+    expect(s.rollOpposition(opp.id, 'a', 'Mara')).toBe(true)
+    expect(s.rollOpposition(opp.id, 'a', 'Mara')).toBe(false) // once each
+    expect(s.oppositionOutcome(s.currentOpposition()!)).toBeNull() // still waiting on b
+    expect(s.rollOpposition(opp.id, 'b', 'Jorik')).toBe(true)
+    expect(s.oppositionOutcome(s.currentOpposition()!)).not.toBeNull()
+  })
+
+  test('nothing can be committed or readied once the dice are in', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const opp = s.currentOpposition()!
+    const done = resolve(s, opp.id)
+    expect(s.oppositionPhase(done)).toBe('done')
+
+    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(false)
+    expect(s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')).toBe(false)
+    expect(s.setOppositionSkillPoints(opp.id, mara, 1, 0, 'Mara')).toBe(false)
+    expect(s.setOppositionReady(opp.id, 'a', false, 'Mara')).toBe(false)
+    expect(s.rollOpposition(opp.id, 'a', 'Mara')).toBe(false)
+  })
+
+  test('someone who is not in the contest cannot commit to it', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    start(s, { charId: mara, ...ABILITIES }, { name: 'Guard', coreRank: 3, supportRank: 3 })
+    const opp = s.currentOpposition()!
+    expect(s.commitOppositionExertion(opp.id, jorik, 'core', 'stamina', 'Jorik')).toBe(false)
+    expect(s.setOppositionSkill(opp.id, jorik, 'athletics', 'Jorik')).toBe(false)
+  })
+
+  test('the core check decides when the two checks disagree', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    // Rolling is random, so keep contesting until a split turns up, then check which check won.
+    for (let i = 0; i < 400; i++) {
+      start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+      const done = resolve(s, s.currentOpposition()!.id)
+      const o = s.oppositionOutcome(done)!
+      if (!o.core.winner || !o.support.winner || o.core.winner === o.support.winner) continue
+      expect(o.decidedBy).toBe('core')
+      expect(o.winner).toBe(o.core.winner) // and not the side that took the support check
+      expect(o.degrees).toBe(Math.floor(Math.abs(o.core.margin) / 3)) // high stakes: one per 3
+      return
+    }
+    throw new Error('the two checks never disagreed')
+  })
+
+  test('a level core check falls through to the supporting one', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    for (let i = 0; i < 600; i++) {
+      start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+      const done = resolve(s, s.currentOpposition()!.id)
+      const o = s.oppositionOutcome(done)!
+      if (o.core.winner || !o.support.winner) continue
+      expect(o.decidedBy).toBe('support')
+      expect(o.winner).toBe(o.support.winner)
+      expect(o.degrees).toBe(Math.floor(Math.abs(o.support.margin) / 3))
+      return
+    }
+    throw new Error('the core check was never level with a decided support check')
+  })
+
+  test('level on both checks is a tie with no winner named', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    for (let i = 0; i < 2000; i++) {
+      start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+      const done = resolve(s, s.currentOpposition()!.id)
+      const o = s.oppositionOutcome(done)!
+      if (o.core.winner || o.support.winner) continue
+      expect(o.winner).toBeNull()
+      expect(o.decidedBy).toBeNull()
+      expect(o.degrees).toBe(0)
+      return
+    }
+    throw new Error('never rolled a dead heat on both checks')
+  })
+
+  test('survives a reopen, commitments and dice intact', async () => {
+    const { s, open, mara, jorik } = await twoPlayers()
+    s.train(mara, 'athletics', 6, 'Mara')
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES }, '  Shoving match  ')
+    const opp = s.currentOpposition()!
+    s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')
+    s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')
+    s.setOppositionSkillPoints(opp.id, mara, 2, 1, 'Mara')
+    const done = resolve(s, opp.id)
+
+    const replayed = open().currentOpposition()!
+    expect(replayed).toEqual(done)
+    expect(replayed.description).toBe('Shoving match')
+    expect(replayed.a.exertionCore).toBe(1)
+    expect([replayed.a.skillCore, replayed.a.skillSupport]).toEqual([2, 1])
+  })
+})
 
 describe('solo roll', () => {
   /** A finished character exists in these, but a solo roll never involves one. */

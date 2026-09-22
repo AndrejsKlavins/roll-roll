@@ -10,6 +10,9 @@ import {
   challengeTarget,
   isBaseField,
   MAX_CIRCUMSTANCE,
+  type Contestant,
+  type Opposition,
+  type OppositionSide,
   type SoloRoll,
   type Challenge,
   type ChallengeSide,
@@ -1162,6 +1165,487 @@ export function SoloRollDialog(props: { session: Session }) {
         <input type="hidden" name="visibility" x-model="visibility" />
         <button type="submit" class="primary">
           Roll
+        </button>
+      </form>
+    </dialog>
+  )
+}
+
+/**
+ * One contestant's column: who they are, their two checks, and — while committing — the controls
+ * for the player whose side it is. What has been committed is **hidden from everyone else until
+ * both sides are ready**, so the column shows a "committed" marker instead of the numbers.
+ */
+function ContestantColumn(props: {
+  session: Session
+  opp: Opposition
+  side: OppositionSide
+  role: 'gm' | 'player' | 'table'
+  viewerCharId?: string
+}) {
+  const { session, opp, side, role, viewerCharId } = props
+  const one = opp[side]
+  const phase = session.oppositionPhase(opp)
+  const outcome = session.oppositionOutcome(opp)
+  const open = session.oppositionCommitVisible(opp, side, role, viewerCharId)
+  const won = outcome?.winner === side
+  const mine = !!one.charId && one.charId === viewerCharId
+  // The player whose side it is commits; the GM can act for any side (an NPC has nobody else).
+  const acting = phase === 'committing' && !one.ready && (mine || role === 'gm')
+  const canReady = phase === 'committing' && (mine || role === 'gm')
+  const hidden = !open && (one.exertionCore + one.exertionSupport > 0 || !!one.skill)
+  const skill = one.charId ? session.oppositionSkillState(one) : null
+
+  const checkRow = (check: 'core' | 'support', label: string) => {
+    const rolled = check === 'core' ? one.core : one.support
+    const abilityId = check === 'core' ? one.coreAbility : one.supportAbility
+    const field = abilityId ? (session.rules.fields.get(abilityId) as NumberField | undefined) : undefined
+    const rank = check === 'core' ? one.coreRank : one.supportRank
+    const bonus = open
+      ? check === 'core'
+        ? one.exertionCore + one.skillCore
+        : one.exertionSupport + one.skillSupport
+      : 0
+    const sum = rolled ? session.oppositionSum(one, check) : null
+    const winsIt = outcome && (check === 'core' ? outcome.core.winner : outcome.support.winner) === side
+    return (
+      <div
+        class={`opp-check ${winsIt ? 'takes-it' : ''}`}
+        style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}
+      >
+        <div class="opp-check-head">
+          <span class="opp-check-label">{label}</span>
+          <IconChip icon={field?.icon} />
+          <span class="opp-ability">{field?.label ?? (rank !== null ? `Rank ${rank}` : '\u2014')}</span>
+        </div>
+        {rolled ? (
+          <>
+            <div class="dice-faces">
+              {rolled.dice.map((d, i) => (
+                <Die value={d} faceId={rolled.faces?.[i]} faces={session.rules.challenges.faces} />
+              ))}
+              {bonus !== 0 && <span class="skill-bonus">{signed(bonus)}</span>}
+            </div>
+            <div class="opp-sum">{sum}</div>
+          </>
+        ) : (
+          <div class="opp-waiting">{open && bonus !== 0 ? `committed ${signed(bonus)}` : '\u2014'}</div>
+        )}
+        {acting && <CommitControls session={session} opp={opp} one={one} check={check} />}
+      </div>
+    )
+  }
+
+  return (
+    <div class={`opp-side ${won ? 'won' : ''} ${outcome && !won && outcome.winner ? 'lost' : ''}`}>
+      <div class="opp-name">
+        <span>{one.name}</span>
+        {!one.charId && <span class="badge opp-npc">NPC</span>}
+        {one.ready && phase === 'committing' && <span class="badge opp-ready">Ready</span>}
+      </div>
+      {hidden && <p class="opp-hidden">Bonus committed — hidden until both are ready</p>}
+      {checkRow('core', 'Core')}
+      {checkRow('support', 'Support')}
+      {open && skill && one.skill && (
+        <p class="opp-skill-left">
+          {skill.label}: <b>{skill.left}</b> left of {skill.rank}
+        </p>
+      )}
+      {acting && one.charId && <SkillPick session={session} opp={opp} one={one} />}
+      {canReady && (
+        <button
+          type="button"
+          class={one.ready ? 'small' : 'primary'}
+          hx-post={`/gm/opposition/ready?side=${side}&to=${one.ready ? '0' : '1'}`}
+          hx-swap="none"
+        >
+          {one.ready ? 'Not ready after all' : 'Ready'}
+        </button>
+      )}
+      {phase === 'rolling' && !one.core && (mine || role === 'gm') && (
+        <button type="button" class="primary" hx-post={`/gm/opposition/roll?side=${side}`} hx-swap="none">
+          Roll
+        </button>
+      )}
+      {phase === 'rolling' && one.core && <p class="muted">Rolled — waiting for the other side</p>}
+    </div>
+  )
+}
+
+/** Stamina/willpower burned onto one check, and (for a skill) the points put on it. */
+function CommitControls(props: {
+  session: Session
+  opp: Opposition
+  one: Contestant
+  check: 'core' | 'support'
+}) {
+  const { session, opp, one, check } = props
+  if (!one.charId) return null // an NPC commits nothing
+  const char = session.characters.get(one.charId)
+  if (!char) return null
+  const side: OppositionSide = opp.a.charId === one.charId ? 'a' : 'b'
+  const skill = session.oppositionSkillState(one)
+  const onCheck = check === 'core' ? one.skillCore : one.skillSupport
+  const post = (path: string) => `/c/${one.charId}/opposition/${path}`
+  return (
+    <div class="opp-commit">
+      {session.rules.challenges.exertionSources.map((statId) => {
+        const stat = session.statOf(char, statId)
+        const field = session.rules.fields.get(statId)
+        if (!stat) return null
+        return (
+          <button
+            type="button"
+            class="exert-btn"
+            style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}
+            hx-post={`${post('exert')}?side=${side}&check=${check}`}
+            hx-vals={JSON.stringify({ stat: statId })}
+            hx-swap="none"
+            disabled={stat.current <= 0 || undefined}
+            title={`Burn 1 ${field?.label ?? statId} for +1 on this check`}
+          >
+            <IconChip icon={field?.icon} />
+            <span class="label">+1</span>
+          </button>
+        )
+      })}
+      {skill && one.skill && (
+        <span class="opp-skill-step">
+          <button
+            type="button"
+            class="circumstance-step"
+            hx-post={`${post('skill-points')}?side=${side}`}
+            hx-vals={JSON.stringify(
+              check === 'core'
+                ? { core: Math.max(0, onCheck - 1), support: one.skillSupport }
+                : { core: one.skillCore, support: Math.max(0, onCheck - 1) },
+            )}
+            hx-swap="none"
+            disabled={onCheck <= 0 || undefined}
+          >
+            {'\u2212'}
+          </button>
+          <output>{onCheck}</output>
+          <button
+            type="button"
+            class="circumstance-step"
+            hx-post={`${post('skill-points')}?side=${side}`}
+            hx-vals={JSON.stringify(
+              check === 'core'
+                ? { core: onCheck + 1, support: one.skillSupport }
+                : { core: one.skillCore, support: onCheck + 1 },
+            )}
+            hx-swap="none"
+            disabled={skill.left <= 0 || undefined}
+          >
+            +
+          </button>
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** Declares which trained skill this side is committing (its rank is then split per check). */
+function SkillPick(props: { session: Session; opp: Opposition; one: Contestant }) {
+  const { session, one } = props
+  const skills = [...session.rules.fields.values()].filter(
+    (f): f is NumberField => f.type === 'number' && f.trained,
+  )
+  if (!skills.length) return null
+  return (
+    <label class="skill-pick">
+      Skill bonus
+      <select
+        name="skill"
+        hx-post={`/c/${one.charId}/opposition/skill`}
+        hx-trigger="change"
+        hx-swap="none"
+      >
+        <option value="">None</option>
+        {skills.map((f) => (
+          <option value={f.id} selected={one.skill === f.id || undefined}>
+            {f.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+/** What the contest is waiting on, in a line everyone can read. */
+function oppositionStatus(session: Session, opp: Opposition) {
+  const phase = session.oppositionPhase(opp)
+  if (phase === 'committing') {
+    const waiting = [opp.a, opp.b].filter((o) => !o.ready).map((o) => o.name)
+    return `Committing — waiting on ${waiting.join(' and ')}`
+  }
+  if (phase === 'rolling') {
+    const waiting = [opp.a, opp.b].filter((o) => !o.core).map((o) => o.name)
+    return waiting.length ? `Both ready — waiting for ${waiting.join(' and ')} to roll` : 'Rolling\u2026'
+  }
+  const outcome = session.oppositionOutcome(opp)!
+  if (!outcome.winner) return 'Tie — the GM rules on it'
+  const winner = outcome.winner === 'a' ? opp.a.name : opp.b.name
+  const degrees = outcome.degrees === 0 ? 'by a hair' : `by ${outcome.degrees} degree${outcome.degrees > 1 ? 's' : ''}`
+  const split = outcome.decidedBy === 'support' ? ' (the core check was level)' : ''
+  return `${winner} wins ${degrees}${split}`
+}
+
+/**
+ * The opposition-roll section: the GM's "Start opposition roll" button and the contest itself.
+ * Its own swap target, and mounted on all three screens — a contest is public (the hidden part is
+ * only what each side has committed, until both are ready).
+ */
+export function OppositionBoard(props: {
+  session: Session
+  role: 'gm' | 'player' | 'table'
+  viewerCharId?: string
+  oob?: boolean
+}) {
+  const { session, role, viewerCharId } = props
+  const opp = session.currentOpposition()
+  const outcome = opp && session.oppositionOutcome(opp)
+  return (
+    <section id="opposition-board" class="opposition-board" hx-swap-oob={oobAttr(props.oob)}>
+      {role === 'gm' && (
+        <button type="button" class="small" onclick="document.getElementById('opposition-dialog').showModal()">
+          Start opposition roll
+        </button>
+      )}
+      {opp && (
+        <div class={`opposition ${outcome ? 'resolved' : ''}`}>
+          <div class="opp-head">
+            <h3 class="opp-description">{opp.description}</h3>
+            <span class="stakes stakes-high">High stakes</span>
+          </div>
+          <p class="opp-status">{oppositionStatus(session, opp)}</p>
+          <div class="opp-sides">
+            <ContestantColumn session={session} opp={opp} side="a" role={role} viewerCharId={viewerCharId} />
+            <span class="opp-versus">vs</span>
+            <ContestantColumn session={session} opp={opp} side="b" role={role} viewerCharId={viewerCharId} />
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** Clears the opposition dialog's picks after a contest starts, then closes it. */
+const AFTER_OPPOSITION = [
+  'if (!event.detail.successful) return;',
+  'const d = Alpine.$data(this);',
+  "Object.assign(d, { description: '',",
+  "  aKind: 'character', aChar: '', aCore: '', aSupport: '', aName: '', aCoreRank: d.defRank, aSupportRank: d.defRank,",
+  "  bKind: 'character', bChar: '', bCore: '', bSupport: '', bName: '', bCoreRank: d.defRank, bSupportRank: d.defRank });",
+  "this.closest('dialog').close()",
+].join(' ')
+
+/**
+ * One side of the opposition dialog: a player's character with two of its abilities, or an NPC
+ * with a name and two flat ranks. Everything is Alpine state on the form, under the `p` prefix
+ * ('a' or 'b'), so the two sides share this markup.
+ */
+function ContestantPicker(props: {
+  title: string
+  p: 'a' | 'b'
+  abilities: NumberField[]
+  characters: { id: string; name: string }[]
+  ranks: number[]
+  scale?: Record<number, string>
+}) {
+  const { title, p: side, abilities, characters, ranks, scale } = props
+  const kind = `${side}Kind`
+  const rankCol = (varName: string) => (
+    <div class="pick-col">
+      {ranks.map((r) => (
+        <button
+          type="button"
+          class="pick-btn"
+          x-bind:class={`{ on: ${varName} === ${r} }`}
+          x-on:click={`${varName} = ${r}`}
+        >
+          <span class="label">{scale?.[r] ?? `Rank ${r}`}</span>
+          <span class="diff-value">{r}</span>
+        </button>
+      ))}
+    </div>
+  )
+  const abilityCol = (varName: string) => (
+    <div class="pick-col">
+      {abilities.map((f) => (
+        <button
+          type="button"
+          class="pick-btn ability-btn"
+          style={f.color ? `--field-color: ${f.color}; --field-ink: ${f.ink}` : undefined}
+          x-bind:class={`{ on: ${varName} === '${f.id}' }`}
+          x-on:click={`${varName} = '${f.id}'`}
+        >
+          <IconChip icon={f.icon} />
+          <span class="label">{f.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+  return (
+    <section class="side-pick opp-pick">
+      <h4>{title}</h4>
+      <div class="opp-kind">
+        <button
+          type="button"
+          class="pick-btn"
+          x-bind:class={`{ on: ${kind} === 'character' }`}
+          x-on:click={`${kind} = 'character'`}
+        >
+          <span class="label">Player</span>
+        </button>
+        <button
+          type="button"
+          class="pick-btn"
+          x-bind:class={`{ on: ${kind} === 'npc' }`}
+          x-on:click={`${kind} = 'npc'`}
+        >
+          <span class="label">NPC</span>
+        </button>
+      </div>
+
+      <div x-show={`${kind} === 'character'`}>
+        {characters.length === 0 ? (
+          <p class="muted">No finished characters yet.</p>
+        ) : (
+          <div class="pick-col">
+            {characters.map((c) => (
+              <button
+                type="button"
+                class="pick-btn"
+                x-bind:class={`{ on: ${side}Char === '${c.id}' }`}
+                x-on:click={`${side}Char = '${c.id}'`}
+              >
+                <span class="label">{c.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <h5>Core ability</h5>
+        {abilityCol(`${side}Core`)}
+        <h5>Supporting ability</h5>
+        {abilityCol(`${side}Support`)}
+      </div>
+
+      <div x-show={`${kind} === 'npc'`} x-cloak>
+        <input
+          x-model={`${side}Name`}
+          placeholder="NPC name, e.g. Gate guard"
+          maxlength={40}
+          autocomplete="off"
+        />
+        <h5>Core rank</h5>
+        {rankCol(`${side}CoreRank`)}
+        <h5>Supporting rank</h5>
+        {rankCol(`${side}SupportRank`)}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * GM-only dialog for an opposition roll: two contestants, each a player's character with two
+ * abilities or an NPC with two ranks. No difficulty is picked — the two sides are compared with
+ * each other — and it is always high stakes, so nothing is chosen for either.
+ */
+export function OppositionDialog(props: { session: Session }) {
+  const { session } = props
+  const { rules } = session
+  const abilities = [...rules.fields.values()].filter((f): f is NumberField => isBaseField(f) && !f.trained)
+  const characters = [...session.characters.values()]
+    .filter((c) => c.status === 'active')
+    .map((c) => ({ id: c.id, name: c.name }))
+  const { min, max, def, scale } = abilityRankRange(rules)
+  const ranks = Array.from({ length: max - min + 1 }, (_, i) => min + i)
+  const state = {
+    description: '',
+    defRank: def,
+    aKind: 'character',
+    aChar: '',
+    aCore: '',
+    aSupport: '',
+    aName: '',
+    aCoreRank: def,
+    aSupportRank: def,
+    bKind: 'character',
+    bChar: '',
+    bCore: '',
+    bSupport: '',
+    bName: '',
+    bCoreRank: def,
+    bSupportRank: def,
+  }
+  // A side is settled once it is a character with both abilities, or an NPC (ranks always have
+  // a value, and the name falls back to "NPC" server-side).
+  const ready = (p: 'a' | 'b') => `(${p}Kind === 'npc' ? true : (${p}Char && ${p}Core && ${p}Support))`
+  return (
+    <dialog id="opposition-dialog" class="challenge-dialog opposition-dialog">
+      <form
+        hx-post="/gm/opposition/start"
+        hx-swap="none"
+        x-data={JSON.stringify(state)}
+        hx-on--after-request={AFTER_OPPOSITION}
+      >
+        <header class="dialog-head">
+          <h3>Opposition roll</h3>
+          <button type="button" class="small" x-on:click="$el.closest('dialog').close()">
+            Close
+          </button>
+        </header>
+
+        <label class="challenge-description-field">
+          <span>What is the contest?</span>
+          <input
+            name="description"
+            x-model="description"
+            placeholder="e.g. Arm wrestle over the last ration"
+            maxlength={200}
+            autocomplete="off"
+            required
+          />
+        </label>
+
+        <div class="opp-pickers">
+          <ContestantPicker
+            title="First side"
+            p="a"
+            abilities={abilities}
+            characters={characters}
+            ranks={ranks}
+            scale={scale}
+          />
+          <ContestantPicker
+            title="Second side"
+            p="b"
+            abilities={abilities}
+            characters={characters}
+            ranks={ranks}
+            scale={scale}
+          />
+        </div>
+
+        {(['a', 'b'] as const).map((p) => (
+          <>
+            <input type="hidden" name={`${p}_kind`} x-model={`${p}Kind`} />
+            <input type="hidden" name={`${p}_char`} x-model={`${p}Char`} />
+            <input type="hidden" name={`${p}_core`} x-model={`${p}Core`} />
+            <input type="hidden" name={`${p}_support`} x-model={`${p}Support`} />
+            <input type="hidden" name={`${p}_name`} x-model={`${p}Name`} />
+            <input type="hidden" name={`${p}_core_rank`} x-model={`${p}CoreRank`} />
+            <input type="hidden" name={`${p}_support_rank`} x-model={`${p}SupportRank`} />
+          </>
+        ))}
+        <button
+          type="submit"
+          class="primary"
+          x-bind:disabled={`!(description.trim() && ${ready('a')} && ${ready('b')})`}
+        >
+          Start contest
         </button>
       </form>
     </dialog>

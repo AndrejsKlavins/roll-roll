@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-22 (Solo roll: the GM rolls alone against a picked opposition number)
+Last updated: 2026-09-22 (Opposition roll: head-to-head, two checks, core decides)
 
 ---
 
@@ -474,6 +474,49 @@ already made to the ability dice (a discard, a reroll, a moved face) **stay** �
 results, and both events stay in the log — and it does not bypass `when`, so a `failure` approach on
 a roll that is now succeeding still shows `skipped` with no Activate button (raise the difficulties
 to test those faces). Players never see the row. Not undoable, like the rest of a challenge.
+
+**Opposition roll** (user-designed): a head-to-head contest with **no difficulty number at all** —
+the two sides are compared with each other. **Player vs player, player vs NPC or NPC vs NPC.** Its
+own **"Start opposition roll"** button opens `<dialog id="opposition-dialog">` (`OppositionDialog`),
+where each side is either a character with **two of its abilities** or an NPC with **two flat ranks**
+(held to the same `abilityRankRange` ladder as a solo roll). NPC ranks and names are the GM's; a
+character's ranks are read off the sheet **when it rolls**, so a wound taken between setup and roll
+counts.
+
+**Two checks per contestant** (user decision): a **core** ability and a **supporting** one, giving
+two head-to-head comparisons. **The core check decides** — when the two disagree it is the core one
+that names the winner. A level core check falls through to the supporting one rather than throwing
+that away, and only a contest level on both is a **tie**, which the app reports without naming a
+winner for the GM to rule on. It is **always high stakes** (no picker), so the deciding check's
+margin reads as **degrees of victory** — one per full 3 points, via `outcomeFor` like every other
+degree. The board says it in a line: "Mara wins by 1 degree", or "… (the core check was level)" when
+the support check had to decide.
+
+**Commit → Ready → Roll**, in three phases (`oppositionPhase`):
+
+| phase | what happens |
+|---|---|
+| `committing` | each player commits **before the dice**: pool points (stamina/willpower, +1 each) and a declared skill's rank, both split across the two checks. An NPC commits nothing. |
+| `rolling` | both sides have pressed **Ready**, which reveals the commitments and opens **Roll**; each side rolls its own two checks. |
+| `done` | both rolled. **Nothing can be changed** (user decision): no rerolls, no late exertion, no circumstance — every control disappears and the session refuses the routes. |
+
+**Commitments are hidden until both sides are ready** (user decision) — that is what makes Ready
+worth pressing. `oppositionCommitVisible(opp, side, role, viewerCharId)` decides it per viewer: a
+player always sees their own, the GM sees everything (refereeing, not competing), and the other
+contestant *and the shared screen* see only "Bonus committed — hidden until both are ready" until
+the reveal. Ready can be taken back only while the other side is still committing; once both are
+ready the commitments are out, so there is no going back from that.
+
+Exertion here is spent **before** the dice, unlike a challenge's (which is spent on a visible
+result), and `opposition_exerted` decrements the pool on the sheet the same way `challenge_exerted`
+does. The GM may Ready and Roll **either** side — an NPC has nobody else to do it, and the app has no
+permission system anyway.
+
+State lives in `oppositions` (`Opposition` with an `a` and a `b` `Contestant`); events are
+`opposition_started`, `opposition_exerted`, `opposition_skill_set`, `opposition_skill_points_set`,
+`opposition_ready_set` and `opposition_rolled`. `OppositionBoard` (`#opposition-board`) is its own
+swap target mounted on all three screens, so a contest never disturbs the challenge board or the
+solo board. Not undoable, like the rest.
 
 **Solo roll** (user-designed): the GM's own roll, for an NPC's attempt or a hidden check — no
 character, no approach, no exertion and **nobody joins it**. Its own **"Start solo roll"** button
