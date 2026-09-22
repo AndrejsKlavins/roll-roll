@@ -121,11 +121,30 @@ const APPROACH_WHEN: ApproachWhen[] = ['always', 'failure', 'choice']
  * - `raise_face` — the player taps `dice` dice; each moves one face up (a die already on the
  *   top face stays put and the pick is spent).
  * - `set_face` — the player taps `dice` dice; each is set to `toFace`, up or down.
+ *
+ * The last three are **two-step**: one effect, two picks that do different things (so `dice`
+ * does not apply — they always ask for exactly the picks listed).
+ * - `lower_raise` (Tweak) — tap a die to lower it one face, then another to raise it one face.
+ * - `match_highest` (Perfect balance) — pick one ability; its lowest die rises to the face of
+ *   its highest. One pick, but of an ability rather than a die.
+ * - `discard_double` (Perfect choice) — tap a die on one ability to discard it, then a die on
+ *   the **other** ability to copy it (the twin joins that side and counts).
+ *
  * `dice` is how many dice the effect involves: rolled (extra_dice) or tapped (raise/set).
  * The same die can't be tapped twice for one effect. Any cost ("payment") is settled at the
  * table; the app never deducts one.
  */
-export type ApproachEffectKind = 'none' | 'declare' | 'discard' | 'reroll' | 'extra_dice' | 'raise_face' | 'set_face'
+export type ApproachEffectKind =
+  | 'none'
+  | 'declare'
+  | 'discard'
+  | 'reroll'
+  | 'extra_dice'
+  | 'raise_face'
+  | 'set_face'
+  | 'lower_raise'
+  | 'match_highest'
+  | 'discard_double'
 export type ApproachEffect = {
   face: number
   kind: ApproachEffectKind
@@ -142,9 +161,14 @@ const APPROACH_EFFECT_KINDS: ApproachEffectKind[] = [
   'extra_dice',
   'raise_face',
   'set_face',
+  'lower_raise',
+  'match_highest',
+  'discard_double',
 ]
 /** Kinds whose `dice` counts dice the player taps (rather than dice rolled for them). */
 const TAP_KINDS: ApproachEffectKind[] = ['raise_face', 'set_face']
+/** Kinds that ask for two picks doing different things; `dice` does not apply to them. */
+const TWO_STEP_KINDS: ApproachEffectKind[] = ['lower_raise', 'discard_double']
 
 const plural = (n: number) => (n === 1 ? 'die' : 'dice')
 const defaultEffectLabel = (kind: ApproachEffectKind, dice: number, toFace: number) =>
@@ -158,9 +182,15 @@ const defaultEffectLabel = (kind: ApproachEffectKind, dice: number, toFace: numb
           ? `Raise ${dice} ${plural(dice)} one face`
           : kind === 'set_face'
             ? `Set ${dice} ${plural(dice)} to face ${toFace}`
-            : kind === 'declare'
-              ? 'A ruling, with no dice to change'
-              : 'Nothing happens'
+            : kind === 'lower_raise'
+              ? 'Lower one die a face, raise another'
+              : kind === 'match_highest'
+                ? "One ability's lowest die rises to its highest"
+                : kind === 'discard_double'
+                  ? 'Discard a die on one ability, copy one on the other'
+                  : kind === 'declare'
+                    ? 'A ruling, with no dice to change'
+                    : 'Nothing happens'
 
 /** The effect of the face this approach die landed on, or null when none is configured. */
 export const approachEffect = (approach: Approach, face: number) =>
@@ -169,8 +199,16 @@ export const approachEffect = (approach: Approach, face: number) =>
 /** How many picks (dice or an ability) applying this effect asks the player for. */
 export const effectPicks = (effect: ApproachEffect | null) => {
   if (!effect || effect.kind === 'none' || effect.kind === 'declare') return 0
+  if (TWO_STEP_KINDS.includes(effect.kind)) return 2
   return TAP_KINDS.includes(effect.kind) ? effect.dice : 1
 }
+
+/**
+ * Which step of a two-step effect the player is on, from the picks still to come: `'first'` while
+ * both are outstanding, `'second'` for the last one. Single-pick kinds are always `'first'`.
+ */
+export const effectStep = (effect: ApproachEffect | null, picksLeft: number) =>
+  effect && TWO_STEP_KINDS.includes(effect.kind) && picksLeft <= 1 ? 'second' : 'first'
 
 /** Whether applying this effect needs the player to pick a die or an ability first. */
 export const effectNeedsPick = (effect: ApproachEffect | null) => effectPicks(effect) > 0
@@ -492,6 +530,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
         return []
       }
       const dice = e?.dice === undefined ? 1 : Number(e.dice)
+      // lower_raise / match_highest / discard_double are fixed-shape, so they carry no dice count.
       const countsDice = kind === 'extra_dice' || TAP_KINDS.includes(kind)
       if (countsDice && (!Number.isInteger(dice) || dice < 1 || dice > 10)) {
         fail(`${at} (face ${face}): dice must be a whole number 1..10`)

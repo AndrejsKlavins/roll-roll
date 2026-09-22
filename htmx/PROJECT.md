@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-22 (Unbreakable face effects: declare, raise, squash)
+Last updated: 2026-09-22 (Tweak refuses dice with nowhere to go; exertion rerolls reach added dice)
 
 ---
 
@@ -337,20 +337,66 @@ challenges rolled before this existed). Two things are configured per approach i
 | `choice` | Exquisite | `ready` until the player activates it, then `active` |
 
 `effects` — what each **face** does, and therefore what the player is asked to tap after Activate.
-Both user-designed; Exquisite's are still open:
+All user-designed:
 
 | kind | after Activate | used by |
 |---|---|---|
-| `none` | nothing — no Activate button at all | Limitless 2, Unbreakable 1 |
+| `none` | nothing — no Activate button at all | Limitless 2, Unbreakable 1, Exquisite 1 |
 | `declare` | a ruling with no dice to change; Activate just records it ("In effect") | Unbreakable 2 (Unshakable) |
 | `discard` | tap a die; it stays on screen struck through and drops out of the sum | Limitless 1 |
 | `reroll` | tap a die; it is rolled again, **free of exertion** | Limitless 3 |
 | `extra_dice` | pick one of the two abilities; `dice` more dice are rolled at that ability's rank and join the side | Limitless 4/5 (1), 6 (2) |
 | `raise_face` | tap `dice` dice; each moves one face up. A die already on the **top face stays put** and the pick is still spent (user decision), so it gets no marker | Unbreakable 3/4 (2 dice) |
 | `set_face` | tap `dice` dice; each is set to `to_face`, **up or down** (user decision — a good die may be lowered) | Unbreakable 5/6 (2 dice → face 3) |
+| `lower_raise` | **two steps**: tap a die to lower it one face, then *another* to raise it one face | Exquisite 2 (Tweak) |
+| `match_highest` | pick one ability; its **lowest** die rises to the face of its **highest** (one pick, of an ability) | Exquisite 3/4 (Perfect balance) |
+| `discard_double` | **two steps**: tap a die on one ability to discard it, then a die on the **other** ability to copy it (the twin joins that side and counts) | Exquisite 5/6 (Perfect choice) |
 
 Any **cost is settled at the table** — the app never deducts one (user decision); the rules.yaml
 labels say so and nothing is spent automatically.
+
+**Two-step effects** (Exquisite, user-designed): the first three kinds above ask for N *identical*
+taps, which `dice` counts. The last three don't — they are fixed-shape effects whose picks do
+**different things**, so they ignore `dice` and `effectPicks` returns what they actually need (2, 1
+and 2). Which pick is outstanding comes from `effectStep(effect, picksLeft)` → `'first' | 'second'`,
+surfaced on `approachState` as `step` (with `firstPickSide`, the side the first pick landed on) so
+the board and the session agree on one answer:
+
+| face | effect | first pick | second pick |
+|---|---|---|---|
+| Exquisite 2 | Tweak (`lower_raise`) | tap a die → one face **down**, marker `lowered` | tap another → one face **up**, marker `raised` |
+| Exquisite 3/4 | Perfect balance (`match_highest`) | pick an **ability** → its lowest in-play die rises to its highest face, marker `matched` | — |
+| Exquisite 5/6 | Perfect choice (`discard_double`) | tap a die → discarded (as `discard`) | tap a die on the **other** ability → a twin joins that side, marker `copied` |
+
+Decisions inside those: Tweak **only offers a die that has somewhere to go** (user decision) — one
+already on the **worst** face cannot be lowered and one on the **best** face cannot be raised, since
+that tap would spend the pick and move nothing. It is per step, not a blanket ban: a die on the worst
+face is still a legal *raise* target. `session.tweakableDie(ch, side, index)` is the single rule, and
+the board asks it before making a die a button, so refused dice are simply not tappable;
+`anyTweakableDie(ch)` backs a status line for the (rare) case where no die qualifies, rather than
+prompting for a tap nothing can satisfy. Tweak-only — `raise_face` (Unbreakable) keeps its earlier
+decision of spending the pick on a top-face die. The one-pick-per-die rule still means the raise
+cannot undo the die just lowered. Perfect balance reads "choose your *lowest* skill result",
+but the app **lets the player pick either ability** — it is a notation tool, not a rules engine, and
+the GM keeps the ruling; a side whose dice already match spends the pick with nothing moved, and one
+with nothing in play can't be picked. Perfect choice **doubles by copying** (user decision): the twin
+carries the tapped die's face *and* its rank-shifted value, and it must be on the other ability — a
+tap on the discarded side is refused, and so is a copy taken before the discard.
+
+`DieMarker` therefore has five values (`raised`, `lowered`, `squashed`, `matched`, `copied`), named
+under the die by `markerLabel`; `lowered` reads in red and `copied` in purple, since neither is a
+plain bonus. Copies ride on `challenge_dice_added`, which grew an optional `markers[]` (what to show
+under each added die) and `from` (the index copied, so the pick is spent on that die rather than on
+an ability — `extra_dice` still has no `from`). Old events replay unchanged. The pick route
+`/c/:id/challenge/approach-pick` dispatches on `effect=`: `discard | reroll | face | copy | match`,
+or no `effect` at all for extra dice.
+
+One consequence of Exquisite finally having effects: its **blank face 1 no longer offers Activate**.
+Before, an approach with no `effects` fell back to `when === 'choice'` for the button, so every
+Exquisite face had one; now it behaves like Unbreakable 1 and Limitless 2 and reads "Nothing happens".
+
+A label containing a comma must be **quoted** in rules.yaml — unquoted inside `{ }` flow it ends at
+the comma, silently truncating (the Exquisite labels hit this; the older ones have no commas).
 
 Flow and state: **Activate** (`challenge_approach_activated`) sets `approachActivated` and
 `approachPicksLeft` = however many picks the effect wants (`effectPicks`). While picks are left the
@@ -379,12 +425,28 @@ person ("Player taps 2 dice to raise them one face"). Unknown `when`/`kind` valu
 a `set_face` whose `to_face` is not a configured face, and a face listed twice all fail startup. Not
 undoable, like the rest of a challenge.
 
+**Debug: set face** (GM screen only): a dashed row under the approach die with one button per
+face of the d6, so a face's effect can be tried without rolling for it. It posts
+`/gm/challenge/approach-die?face=N` → `session.setApproachDie` → `challenge_approach_die_set`, which
+sets `approachDie` and **re-arms Activate** (`approachActivated`, `approachPicksLeft` and
+`approachPicked` all reset), as if the die had just landed on that face. The current face is marked
+`on`; each button's tooltip names that face's effect. Only while the challenge is **rolled, has an
+approach and is not closed**, and only for faces 1–`APPROACH_DIE_SIDES` (6, the same constant
+`rollChallenge` rolls). Two things it deliberately does *not* do: changes an earlier activation
+already made to the ability dice (a discard, a reroll, a moved face) **stay** — they are rolled
+results, and both events stay in the log — and it does not bypass `when`, so a `failure` approach on
+a roll that is now succeeding still shows `skipped` with no Activate button (raise the difficulties
+to test those faces). Players never see the row. Not undoable, like the rest of a challenge.
+
 **Exertion** (user-designed): while a rolled challenge is open, the rolling player may burn one point
 of any pool stat listed in `challenges.exertion_sources` (rules.yaml: stamina, willpower) for one
 exertion — `challenge_exerted` both decrements the pool (`statAdj`, like `stat_set`) and adds to
 `exertionGained`, so the sheet and board move together. Exertion is spent either as **+1 on a side**
 (`challenge_exertion_spent` → `exertionMain`/`exertionSupport`, folded into `challengeOutcome`) or to
 **reroll one die** (`challenge_rerolled` → new face + rank-shifted value, side sum recomputed).
+Any die on the side may be rerolled, **including ones an approach effect added** (`extra_dice`,
+`discard_double`), which sit at index 2 and up; only a discarded die is refused, since it no longer
+counts. Both paths share `dieInPlay()`, so a side is never assumed to be a fixed pair.
 `availableExertion = gained − main − support − rerolls`. Exert buttons carry each stat's icon/colour
 and disable at 0; dice become reroll buttons only while exertion is in hand (a faint purple ring marks
 them, since phones have no hover). Repeatable while pools last. Every reroll — exertion or approach —

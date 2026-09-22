@@ -4,7 +4,15 @@
 import { raw } from 'hono/html'
 import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '../rules'
 import type { Child } from 'hono/jsx'
-import { isBaseField, type Challenge, type ChallengeSide, type DieMarker, type Session, type SideOutcome } from '../session'
+import {
+  APPROACH_DIE_SIDES,
+  isBaseField,
+  type Challenge,
+  type ChallengeSide,
+  type DieMarker,
+  type Session,
+  type SideOutcome,
+} from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 const signed = (n: number) => (n === 0 ? '0' : n > 0 ? `+${n}` : String(n))
@@ -45,7 +53,9 @@ function Die(props: {
       <span class="die-face">{props.value}</span>
       {face && <span class="die-name">{face.label}</span>}
       {!!props.rerolled && <span class="die-rerolls">Reroll {props.rerolled}</span>}
-      {props.changed && <span class="die-changed">{props.changed === 'raised' ? 'Raised' : 'Squashed'}</span>}
+      {props.changed && (
+        <span class={`die-changed die-changed-${props.changed}`}>{markerLabel(props.changed)}</span>
+      )}
     </>
   )
   const cls = ['die', props.discarded && 'die-discarded'].filter(Boolean).join(' ')
@@ -74,6 +84,18 @@ function Die(props: {
 
 /** What tapping a die does right now. `kind` only picks the highlight colour. */
 type DieAction = { kind: 'reroll' | 'discard' | 'face-change'; url: string; title: string }
+
+/** What an approach effect did to a die, named under it. */
+const markerLabel = (marker: NonNullable<DieMarker>) =>
+  marker === 'raised'
+    ? 'Raised'
+    : marker === 'lowered'
+      ? 'Lowered'
+      : marker === 'matched'
+        ? 'Matched'
+        : marker === 'copied'
+          ? 'Copy'
+          : 'Squashed'
 
 /** One side's big number: target, then (once rolled) dice, skill bonus, final sum and difference. */
 function DifficultyBox(props: {
@@ -194,6 +216,8 @@ function ApproachDie(props: {
   ch: Challenge
   /** The viewer is the rolling player and the challenge is still open. */
   acting: boolean
+  /** GM debug tool: offer a button per face, forcing the die onto it. */
+  debug?: boolean
   charId?: string
   abilities: { side: 'main' | 'support'; label: string; field: NumberField | undefined }[]
 }) {
@@ -215,20 +239,27 @@ function ApproachDie(props: {
       : state.status === 'skipped'
         ? 'Skipped — the roll succeeded'
         : 'Not activated'
+  // Tweak only offers dice that have somewhere to go, so it can run out of targets (every die at
+  // the worst face while lowering, say). Saying so beats prompting for a tap nothing can satisfy.
+  const stuck = pending && effect!.kind === 'lower_raise' && !session.anyTweakableDie(ch)
   // Where it stands: waiting for picks, applied, or left unused when the GM closed the challenge.
   const status = !effect
     ? null
-    : pending
-      ? pickPrompt(effect, state.picksLeft, acting)
-      : state.pending
-        ? 'Not used'
-        : ch.approachActivated
-          ? effect.kind === 'declare'
-            ? 'In effect'
-            : 'Done'
-          : state.status === 'skipped'
-            ? 'Skipped — the roll succeeded'
-            : null
+    : stuck
+      ? state.step === 'first'
+        ? 'No die can be lowered — every one is at its worst face'
+        : 'No die can be raised — every one is at its best face'
+      : pending
+        ? pickPrompt(effect, state.picksLeft, acting, state.step)
+        : state.pending
+          ? 'Not used'
+          : ch.approachActivated
+            ? effect.kind === 'declare'
+              ? 'In effect'
+              : 'Done'
+            : state.status === 'skipped'
+              ? 'Skipped — the roll succeeded'
+              : null
   const cls = ['approach-die', `approach-${state.status}`, pending && 'approach-pending'].filter(Boolean).join(' ')
   return (
     <div class={cls}>
@@ -248,15 +279,18 @@ function ApproachDie(props: {
           Activate result
         </button>
       )}
-      {/* Extra dice are the one effect with no die to tap: the player picks an ability here. */}
-      {acting && pending && effect!.kind === 'extra_dice' && (
+      {/* Two effects have no die to tap — the player picks an ability here instead: extra dice
+          (rolled for that ability) and Perfect balance (its lowest die rises to its highest). */}
+      {acting && pending && abilityPick(effect!.kind) && (
         <div class="approach-sides">
           {props.abilities.map((a) => (
             <button
               type="button"
               class="approach-side-btn"
               style={a.field?.color ? `--field-color: ${a.field.color}; --field-ink: ${a.field.ink}` : undefined}
-              hx-post={`/c/${props.charId}/challenge/approach-pick?side=${a.side}`}
+              hx-post={`/c/${props.charId}/challenge/approach-pick?side=${a.side}${
+                effect!.kind === 'match_highest' ? '&effect=match' : ''
+              }`}
               hx-swap="none"
             >
               <IconChip icon={a.field?.icon} />
@@ -265,15 +299,51 @@ function ApproachDie(props: {
           ))}
         </div>
       )}
+      {props.debug && <ApproachDieDebug approach={state.approach} die={state.die} />}
     </div>
   )
 }
 
 /**
- * What the player (or everyone else, watching) is told to do while an effect waits for a pick.
- * Effects over several dice count down, so the prompt always says how many are still to come.
+ * Debug tool, GM screen only: force the approach die onto any face to try that face's effect
+ * without rolling for it. The player's Activate comes back for the new face; anything an earlier
+ * activation already did to the ability dice stays.
  */
-function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean) {
+function ApproachDieDebug(props: { approach: { effects: ApproachEffect[] }; die: number }) {
+  const faces = Array.from({ length: APPROACH_DIE_SIDES }, (_, i) => i + 1)
+  return (
+    <div class="approach-debug">
+      <span class="approach-debug-legend">Debug: set face</span>
+      <div class="approach-debug-faces">
+        {faces.map((face) => {
+          const effect = props.approach.effects.find((e) => e.face === face) ?? null
+          const title = effect?.label || (effect ? effect.kind : 'no effect on this face')
+          return (
+            <button
+              type="button"
+              class={face === props.die ? 'approach-debug-btn on' : 'approach-debug-btn'}
+              title={`Face ${face} — ${title}`}
+              hx-post={`/gm/challenge/approach-die?face=${face}`}
+              hx-swap="none"
+            >
+              {face}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Effects whose pick is one of the two abilities rather than a die on the board. */
+const abilityPick = (kind: ApproachEffect['kind']) => kind === 'extra_dice' || kind === 'match_highest'
+
+/**
+ * What the player (or everyone else, watching) is told to do while an effect waits for a pick.
+ * Effects over several dice count down, so the prompt always says how many are still to come;
+ * two-step effects (Tweak, Perfect choice) name the step they are on instead.
+ */
+function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, step: 'first' | 'second') {
   const who = acting ? 'Tap' : 'Player taps'
   const dice = picksLeft === 1 ? 'a die' : `${picksLeft} dice`
   const them = picksLeft === 1 ? 'it' : 'them'
@@ -281,6 +351,18 @@ function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean) 
   if (effect.kind === 'reroll') return `${who} ${dice} to reroll ${them}`
   if (effect.kind === 'raise_face') return `${who} ${dice} to raise ${them} one face`
   if (effect.kind === 'set_face') return `${who} ${dice} to set ${them} to face ${effect.toFace}`
+  if (effect.kind === 'lower_raise') {
+    return step === 'first' ? `${who} a die to lower it one face` : `${who} another die to raise it one face`
+  }
+  if (effect.kind === 'discard_double') {
+    return step === 'first'
+      ? `${who} a die to discard it`
+      : `${who} a die on the other ability to copy it`
+  }
+  if (effect.kind === 'match_highest') {
+    const what = "whose lowest die rises to its highest"
+    return acting ? `Pick the ability ${what}` : `Player picks the ability ${what}`
+  }
   const n = effect.dice === 1 ? 'one extra die' : `${effect.dice} extra dice`
   return acting ? `Pick the ability to roll ${n} for` : `Player picks the ability for ${n}`
 }
@@ -445,6 +527,19 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
     if (pendingKind === 'set_face') {
       return tap('face-change', 'face', `Set this die to face ${approach!.effect!.toFace}`)
     }
+    // Tweak: the first tap lowers a die, the second raises another. A die already on the worst
+    // face (lowering) or the best one (raising) has nowhere to go, so it is not offered at all.
+    if (pendingKind === 'lower_raise') {
+      const lowering = approach!.step === 'first'
+      const tapper = tap('face-change', 'face', lowering ? 'Lower this die one face' : 'Raise this die one face')
+      return (index: number) => (session.tweakableDie(ch, side, index) ? tapper(index) : undefined)
+    }
+    // Perfect choice: discard on one ability, then copy a die on the other — so once the discard
+    // is made, that side's dice stop being buttons.
+    if (pendingKind === 'discard_double') {
+      if (approach!.step === 'first') return tap('discard', 'discard', 'Discard this die')
+      return approach!.firstPickSide === side ? undefined : tap('face-change', 'copy', 'Copy this die')
+    }
     if (!acting || approach?.pending || exertion <= 0) return undefined
     return (index: number): DieAction => ({
       kind: 'reroll',
@@ -496,7 +591,14 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           controls={sideControls('support')}
         />
       </div>
-      <ApproachDie session={session} ch={ch} acting={acting} charId={viewerCharId} abilities={abilities} />
+      <ApproachDie
+        session={session}
+        ch={ch}
+        acting={acting}
+        debug={role === 'gm' && !!ch.main && !ch.closed}
+        charId={viewerCharId}
+        abilities={abilities}
+      />
       {role !== 'player' && <ChallengeAbilities session={session} ch={ch} />}
       {isViewerTurn && !ch.main && (
         <ChallengeSetupControls session={session} ch={ch} charId={viewerCharId!} />

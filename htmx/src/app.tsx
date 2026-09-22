@@ -346,6 +346,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // One route for every pick an activated effect asks for. `effect` names what the tap does:
+  // a die (discard / reroll / face / copy) or an ability (match, or none at all = extra dice).
   app.post('/c/:id/challenge/approach-pick', (c) => {
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
@@ -361,8 +363,20 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
           ? session.approachReroll(ch.id, char.id, side, index, by)
           : effect === 'face'
             ? session.changeDieFace(ch.id, char.id, side, index, by)
-            : session.addApproachDice(ch.id, char.id, side, by)
+            : effect === 'copy'
+              ? session.duplicateDie(ch.id, char.id, side, index, by)
+              : effect === 'match'
+                ? session.matchHighestDie(ch.id, char.id, side, by)
+                : session.addApproachDice(ch.id, char.id, side, by)
     if (done) pushChallenge()
+    return noContent(c)
+  })
+
+  // GM debug tool: force the approach die onto a face so its effect can be tried on demand.
+  app.post('/gm/challenge/approach-die', (c) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    if (session.setApproachDie(ch.id, Number(c.req.query('face')), actorName(c))) pushChallenge()
     return noContent(c)
   })
 

@@ -352,6 +352,16 @@ challenges:
         - { face: 4, kind: raise_face, dice: 2 }
         - { face: 5, kind: set_face, dice: 2, to_face: 3 }
         - { face: 6, kind: set_face, dice: 2, to_face: 3 }
+    - id: precise
+      label: Precise
+      when: choice
+      effects:
+        - { face: 1, kind: none }
+        - { face: 2, kind: lower_raise }
+        - { face: 3, kind: match_highest }
+        - { face: 4, kind: match_highest }
+        - { face: 5, kind: discard_double }
+        - { face: 6, kind: discard_double }
     - id: tricky
       label: Tricky
       when: always
@@ -430,6 +440,22 @@ async function challengeWithFace(face: number, approach = 'tricky', difficulty =
     startAndRoll(s, id, approach, difficulty)
   }
   throw new Error(`approach die never landed on ${face}`)
+}
+
+/**
+ * The same thing without the loop: roll, then force the die onto `face` with the GM debug tool.
+ * Preferred for the two-step effects, whose steps are easier to read when the face is certain.
+ */
+async function challengeOnFace(face: number, approach = 'precise', difficulty = 9) {
+  const { s, id, open, ch } = await rolledChallenge(approach, difficulty)
+  if (!s.setApproachDie(ch.id, face, 'GM')) throw new Error(`could not set the approach die to ${face}`)
+  return { s, id, open, ch: s.currentChallenge()! }
+}
+
+/** Faces and values of one side, for before/after comparisons. */
+const snapshot = (s: Session, side: 'main' | 'support') => {
+  const rolled = s.currentChallenge()![side]!
+  return { faces: [...rolled.faces!], dice: [...rolled.dice], sum: rolled.sum }
 }
 
 describe('exertion', () => {
@@ -549,6 +575,371 @@ describe('approach die', () => {
     s.rollChallenge(ch.id, 'Mara')
     expect(s.currentChallenge()!.approachDie).toBeNull() // no approach picked
     expect(s.approachState(s.currentChallenge()!)).toBeNull()
+  })
+})
+
+/** Every die on the board, with the face it currently shows. */
+const boardDice = (s: Session) => {
+  const ch = s.currentChallenge()!
+  return (['main', 'support'] as const).flatMap((side) =>
+    ch[side]!.faces!.map((face, index) => ({ side, index, face })),
+  )
+}
+
+/** The first die Tweak's current step is allowed to move, or null when there is none. */
+const firstTweakable = (s: Session) => {
+  const ch = s.currentChallenge()!
+  return boardDice(s).find((d) => s.tweakableDie(ch, d.side, d.index)) ?? null
+}
+
+/**
+ * A rolled, activated Tweak challenge holding a die on `face`, plus another die the lowering step
+ * is allowed to move — so the raise step can be reached without spending the pick on the die under
+ * test. Rolls fresh challenges on one session until both turn up.
+ */
+async function tweakWithDieOn(face: number) {
+  const { s, id, open } = await rolledChallenge('precise', 9)
+  for (let i = 0; i < 600; i++) {
+    const ch = s.currentChallenge()!
+    const target = boardDice(s).find((d) => d.face === face)
+    const spare = boardDice(s).find(
+      (d) => d.face > 1 && !(d.side === target?.side && d.index === target.index),
+    )
+    if (target && spare) {
+      if (!s.setApproachDie(ch.id, 2, 'GM')) throw new Error('could not set the approach die')
+      if (!s.activateApproach(ch.id, id, 'Mara')) throw new Error('could not activate Tweak')
+      return { s, id, open, ch: s.currentChallenge()!, target, spare }
+    }
+    startAndRoll(s, id, 'precise', 9)
+  }
+  throw new Error(`never rolled a die on face ${face} alongside one Tweak could lower`)
+}
+
+describe('Tweak (lower_raise): one die down a face, another up', () => {
+  test('the first tap lowers, the second raises, and the effect is then done', async () => {
+    const { s, id, ch } = await challengeOnFace(2)
+    expect(s.approachState(ch)!.effect!.kind).toBe('lower_raise')
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.approachState(s.currentChallenge()!)!.step).toBe('first')
+
+    const low = firstTweakable(s)!
+    expect(low).not.toBeNull()
+    const beforeLow = snapshot(s, low.side)
+    expect(s.changeDieFace(ch.id, id, low.side, low.index, 'Mara')).toBe(true)
+    const lowered = s.currentChallenge()![low.side]!
+    // An offered die always has somewhere to go, so it moves exactly one face and is marked.
+    expect(lowered.faces![low.index]).toBe(beforeLow.faces[low.index]! - 1)
+    expect(lowered.dice[low.index]).toBe(beforeLow.dice[low.index]! - 1)
+    expect(lowered.changed![low.index]).toBe('lowered')
+
+    expect(s.approachState(s.currentChallenge()!)!.step).toBe('second')
+    const high = firstTweakable(s)!
+    expect(high).not.toBeNull()
+    const beforeHigh = snapshot(s, high.side)
+    expect(s.changeDieFace(ch.id, id, high.side, high.index, 'Mara')).toBe(true)
+    const raised = s.currentChallenge()![high.side]!
+    expect(raised.faces![high.index]).toBe(beforeHigh.faces[high.index]! + 1)
+    expect(raised.changed![high.index]).toBe('raised')
+
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(0)
+    expect(s.approachState(s.currentChallenge()!)!.pending).toBe(false)
+  })
+
+  test('a die already on the worst face is not a legal target for the lowering step', async () => {
+    const { s, id, ch, target } = await tweakWithDieOn(1)
+    expect(s.approachState(ch)!.step).toBe('first')
+    expect(s.tweakableDie(ch, target.side, target.index)).toBe(false) // so the board won't offer it
+    expect(s.changeDieFace(ch.id, id, target.side, target.index, 'Mara')).toBe(false)
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(2) // the pick is not spent
+    expect(s.currentChallenge()![target.side]!.changed?.[target.index] ?? null).toBeNull()
+  })
+
+  test('a die already on the best face is not a legal target for the raising step', async () => {
+    const { s, id, ch, target, spare } = await tweakWithDieOn(6)
+    // Lowering first, on a different die, so the raise step is the one under test.
+    expect(s.changeDieFace(ch.id, id, spare.side, spare.index, 'Mara')).toBe(true)
+    expect(s.approachState(s.currentChallenge()!)!.step).toBe('second')
+
+    const now = s.currentChallenge()!
+    expect(now[target.side]!.faces![target.index]).toBe(6) // still on the best face
+    expect(s.tweakableDie(now, target.side, target.index)).toBe(false)
+    expect(s.changeDieFace(ch.id, id, target.side, target.index, 'Mara')).toBe(false)
+    expect(now.approachPicksLeft).toBe(1) // still waiting for a legal raise
+  })
+
+  test('a die on the worst face can still be raised, and one on the best face lowered', async () => {
+    // The restriction is per step, not a blanket ban: the end a die sits at is only a problem for
+    // the direction that would push it further.
+    const worst = await tweakWithDieOn(1)
+    expect(worst.s.tweakableDie(worst.ch, worst.spare.side, worst.spare.index)).toBe(true)
+    worst.s.changeDieFace(worst.ch.id, worst.id, worst.spare.side, worst.spare.index, 'Mara')
+    const afterLower = worst.s.currentChallenge()!
+    expect(afterLower.approachPicksLeft).toBe(1)
+    expect(worst.s.tweakableDie(afterLower, worst.target.side, worst.target.index)).toBe(true)
+    expect(worst.s.changeDieFace(worst.ch.id, worst.id, worst.target.side, worst.target.index, 'Mara')).toBe(true)
+    expect(worst.s.currentChallenge()![worst.target.side]!.faces![worst.target.index]).toBe(2)
+
+    const best = await tweakWithDieOn(6)
+    expect(best.s.tweakableDie(best.ch, best.target.side, best.target.index)).toBe(true) // lowering
+    expect(best.s.changeDieFace(best.ch.id, best.id, best.target.side, best.target.index, 'Mara')).toBe(true)
+    expect(best.s.currentChallenge()![best.target.side]!.faces![best.target.index]).toBe(5)
+  })
+
+  test('the raise cannot reuse the die that was just lowered', async () => {
+    const { s, id, ch } = await challengeOnFace(2)
+    s.activateApproach(ch.id, id, 'Mara')
+    const low = firstTweakable(s)!
+    expect(s.changeDieFace(ch.id, id, low.side, low.index, 'Mara')).toBe(true)
+    expect(s.tweakableDie(s.currentChallenge()!, low.side, low.index)).toBe(false) // one pick per die
+    expect(s.changeDieFace(ch.id, id, low.side, low.index, 'Mara')).toBe(false)
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(1)
+  })
+
+  test('every face moved stays inside the configured range', async () => {
+    const { s, id, ch } = await challengeOnFace(2)
+    s.activateApproach(ch.id, id, 'Mara')
+    const low = firstTweakable(s)!
+    s.changeDieFace(ch.id, id, low.side, low.index, 'Mara')
+    const high = firstTweakable(s)!
+    s.changeDieFace(ch.id, id, high.side, high.index, 'Mara')
+    for (const side of ['main', 'support'] as const) {
+      for (const face of snapshot(s, side).faces) {
+        expect(face).toBeGreaterThanOrEqual(1)
+        expect(face).toBeLessThanOrEqual(6)
+      }
+    }
+  })
+})
+
+describe('Perfect balance (match_highest): the lowest die rises to the highest', () => {
+  test('picking an ability raises its lowest die to its highest face', async () => {
+    const { s, id, ch } = await challengeOnFace(3)
+    expect(s.approachState(ch)!.effect!.kind).toBe('match_highest')
+    s.activateApproach(ch.id, id, 'Mara')
+
+    const before = snapshot(s, 'main')
+    const low = Math.min(...before.faces)
+    const high = Math.max(...before.faces)
+    const lowIndex = before.faces.indexOf(low)
+
+    expect(s.matchHighestDie(ch.id, id, 'main', 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.main!
+    expect(after.faces![lowIndex]).toBe(high)
+    expect(after.changed![lowIndex]).toBe(low === high ? null : 'matched')
+    expect(after.sum).toBe(before.sum + (high - low))
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(0) // one pick, and it is an ability
+  })
+
+  test('face 4 does the same thing as face 3', async () => {
+    const { s, ch } = await challengeOnFace(4)
+    expect(s.approachState(ch)!.effect!.kind).toBe('match_highest')
+  })
+
+  test('the other ability is untouched, and the pick only comes once', async () => {
+    const { s, id, ch } = await challengeOnFace(3)
+    s.activateApproach(ch.id, id, 'Mara')
+    const support = snapshot(s, 'support')
+    expect(s.matchHighestDie(ch.id, id, 'main', 'Mara')).toBe(true)
+    expect(snapshot(s, 'support')).toEqual(support)
+    expect(s.matchHighestDie(ch.id, id, 'support', 'Mara')).toBe(false) // nothing left to pick
+  })
+
+  test('a side whose dice already match spends the pick with nothing moved', async () => {
+    for (let i = 0; i < 300; i++) {
+      const { s, id, ch } = await challengeOnFace(3)
+      const { faces, sum } = snapshot(s, 'main')
+      if (faces[0] !== faces[1]) continue
+      s.activateApproach(ch.id, id, 'Mara')
+      expect(s.matchHighestDie(ch.id, id, 'main', 'Mara')).toBe(true)
+      expect(s.currentChallenge()!.main!.sum).toBe(sum)
+      expect(s.currentChallenge()!.main!.changed![0]).toBeNull()
+      return
+    }
+    throw new Error('never rolled two equal dice on the main side')
+  })
+})
+
+describe('Perfect choice (discard_double): discard on one ability, copy on the other', () => {
+  test('the discard comes first, then a copy of a die on the other ability', async () => {
+    const { s, id, ch } = await challengeOnFace(5)
+    expect(s.approachState(ch)!.effect!.kind).toBe('discard_double')
+    s.activateApproach(ch.id, id, 'Mara')
+
+    const main = snapshot(s, 'main')
+    const support = snapshot(s, 'support')
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.main!.discarded![0]).toBe(true)
+    expect(s.currentChallenge()!.main!.sum).toBe(main.sum - main.dice[0]!)
+
+    expect(s.approachState(s.currentChallenge()!)!.step).toBe('second')
+    expect(s.duplicateDie(ch.id, id, 'support', 1, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.support!
+    expect(after.dice).toHaveLength(3)
+    expect(after.faces![2]).toBe(support.faces[1]) // a twin of the tapped die
+    expect(after.dice[2]).toBe(support.dice[1])
+    expect(after.changed![2]).toBe('copied')
+    expect(after.sum).toBe(support.sum + support.dice[1]!) // and it counts
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(0)
+  })
+
+  test('face 6 does the same thing as face 5', async () => {
+    const { s, ch } = await challengeOnFace(6)
+    expect(s.approachState(ch)!.effect!.kind).toBe('discard_double')
+  })
+
+  test('the copy has to be on the other ability', async () => {
+    const { s, id, ch } = await challengeOnFace(5)
+    s.activateApproach(ch.id, id, 'Mara')
+    s.discardDie(ch.id, id, 'main', 0, 'Mara')
+    expect(s.duplicateDie(ch.id, id, 'main', 1, 'Mara')).toBe(false) // same ability as the discard
+    expect(s.approachState(s.currentChallenge()!)!.firstPickSide).toBe('main')
+    expect(s.duplicateDie(ch.id, id, 'support', 0, 'Mara')).toBe(true)
+  })
+
+  test('the copy cannot be taken before the discard, and the discard only once', async () => {
+    const { s, id, ch } = await challengeOnFace(5)
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.duplicateDie(ch.id, id, 'support', 0, 'Mara')).toBe(false) // the discard comes first
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+    expect(s.discardDie(ch.id, id, 'main', 1, 'Mara')).toBe(false) // the second pick is the copy
+  })
+
+  test('a discarded die cannot be the one copied', async () => {
+    const { s, id, ch } = await challengeOnFace(5)
+    s.activateApproach(ch.id, id, 'Mara')
+    s.discardDie(ch.id, id, 'main', 0, 'Mara')
+    // main:0 is out of play and on the wrong side; both reasons refuse it.
+    expect(s.duplicateDie(ch.id, id, 'main', 0, 'Mara')).toBe(false)
+  })
+})
+
+describe('exertion rerolls reach every die on a side', () => {
+  /** Burns `n` pool points so there is exertion in hand to spend. */
+  const bank = (s: Session, chId: string, id: string, n: number) => {
+    for (let i = 0; i < n; i++) {
+      if (!s.exert(chId, id, i < 2 ? 'stamina' : 'willpower', 'Mara')) throw new Error('could not exert')
+    }
+  }
+
+  test('a die added by extra_dice can be rerolled with exertion', async () => {
+    // Limitless face 6 ("tricky" in the fixture) adds two dice to the ability the player picks.
+    const { s, id, ch } = await challengeOnFace(6, 'tricky')
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.addApproachDice(ch.id, id, 'main', 'Mara')).toBe(true)
+    const grown = s.currentChallenge()!.main!
+    expect(grown.dice).toHaveLength(4) // the original pair plus two
+
+    bank(s, ch.id, id, 2)
+    // The added dice are at index 2 and 3 — the bug refused anything but 0 and 1.
+    for (const index of [2, 3]) {
+      const before = s.currentChallenge()!.main!.dice[index]!
+      expect(s.rerollDie(ch.id, id, 'main', index, 'Mara')).toBe(true)
+      const after = s.currentChallenge()!.main!
+      expect(after.rerolled![index]).toBe(1)
+      expect(after.sum).toBe(sideSum(after))
+      expect(after.dice[index]).not.toBe(undefined)
+      expect(before).not.toBe(undefined)
+    }
+  })
+
+  test('a copy added by discard_double can be rerolled too', async () => {
+    const { s, id, ch } = await challengeOnFace(5)
+    s.activateApproach(ch.id, id, 'Mara')
+    s.discardDie(ch.id, id, 'main', 0, 'Mara')
+    expect(s.duplicateDie(ch.id, id, 'support', 0, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.support!.dice).toHaveLength(3)
+
+    bank(s, ch.id, id, 1)
+    expect(s.rerollDie(ch.id, id, 'support', 2, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.support!
+    expect(after.rerolled![2]).toBe(1)
+    expect(after.changed![2]).toBe('copied') // still a copy, now rolled again
+    expect(after.sum).toBe(sideSum(after))
+  })
+
+  test('a discarded die cannot be rerolled, and neither can an index off the side', async () => {
+    const { s, id, ch } = await challengeWithFace(1) // Limitless face 1 discards a die
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+
+    bank(s, ch.id, id, 2)
+    expect(s.rerollDie(ch.id, id, 'main', 0, 'Mara')).toBe(false) // out of play
+    expect(s.rerollDie(ch.id, id, 'main', 2, 'Mara')).toBe(false) // no such die
+    expect(s.rerollDie(ch.id, id, 'main', -1, 'Mara')).toBe(false)
+    expect(s.rerollDie(ch.id, id, 'main', 1.5, 'Mara')).toBe(false)
+    expect(s.availableExertion(s.currentChallenge()!)).toBe(2) // nothing was spent on a refusal
+    expect(s.rerollDie(ch.id, id, 'main', 1, 'Mara')).toBe(true) // the die still in play
+  })
+})
+
+describe('approach die debug tool', () => {
+  test('the GM forces the die onto any face, and that face is the one whose effect is offered', async () => {
+    const { s, ch } = await rolledChallenge('tricky')
+    expect(s.setApproachDie(ch.id, 4, 'GM')).toBe(true)
+    const state = s.approachState(s.currentChallenge()!)!
+    expect(state.die).toBe(4)
+    expect(state.effect!.kind).toBe('extra_dice')
+    expect(state.canActivate).toBe(true)
+  })
+
+  test('only faces of the die are accepted', async () => {
+    const { s, ch } = await rolledChallenge('tricky')
+    const was = s.currentChallenge()!.approachDie
+    for (const bad of [0, 7, -1, 2.5, Number.NaN]) {
+      expect(s.setApproachDie(ch.id, bad, 'GM')).toBe(false)
+    }
+    expect(s.currentChallenge()!.approachDie).toBe(was)
+  })
+
+  test('nothing to set before the roll, without an approach, or once the challenge is done', async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    const start = () =>
+      s.startChallenge(
+        {
+          description: 'Scale the wall',
+          mainAbility: 'strength',
+          supportAbility: 'agility',
+          mainDifficulty: 9,
+          supportDifficulty: 9,
+          stakes: 'normal',
+        },
+        'GM',
+      )
+
+    start()
+    const unrolled = s.currentChallenge()!
+    s.setChallengePlayer(unrolled.id, id, 'tricky', null, 'GM')
+    expect(s.setApproachDie(unrolled.id, 3, 'GM')).toBe(false) // not rolled yet
+    s.rollChallenge(unrolled.id, 'Mara')
+    expect(s.setApproachDie(unrolled.id, 3, 'GM')).toBe(true)
+    s.closeChallenge(unrolled.id, 'GM')
+    expect(s.setApproachDie(unrolled.id, 5, 'GM')).toBe(false) // done
+
+    start()
+    const noApproach = s.currentChallenge()!
+    s.setChallengePlayer(noApproach.id, id, null, null, 'GM')
+    s.rollChallenge(noApproach.id, 'Mara')
+    expect(s.setApproachDie(noApproach.id, 3, 'GM')).toBe(false)
+  })
+
+  test('a new face re-arms Activate and drops a pending pick, keeping what was already applied', async () => {
+    const { s, id, ch } = await challengeWithFace(1, 'tricky') // face 1: discard a die
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(1)
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+
+    expect(s.setApproachDie(ch.id, 6, 'GM')).toBe(true) // face 6: two extra dice
+    const after = s.currentChallenge()!
+    expect(after.approachActivated).toBe(false)
+    expect(after.approachPicksLeft).toBe(0)
+    expect(after.approachPicked).toEqual([])
+    expect(after.main!.discarded![0]).toBe(true) // the discard already happened
+    expect(s.approachState(after)!.canActivate).toBe(true)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(1) // one ability to pick for extra dice
   })
 })
 

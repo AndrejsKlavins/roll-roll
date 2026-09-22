@@ -107,6 +107,14 @@ challenges:
       label: Exquisite
       when: choice
       description: You choose whether to activate this dice.
+      effects:
+        - { face: 1, kind: none }
+        # Labels with a comma must be quoted: an unquoted one would end at the comma in { } flow.
+        - { face: 2, kind: lower_raise,    label: "Tweak — lower one die a face, raise another a face" }
+        - { face: 3, kind: match_highest,  label: "Perfect balance — lowest ability's lowest die rises to its highest" }
+        - { face: 4, kind: match_highest,  label: "Perfect balance — lowest ability's lowest die rises to its highest" }
+        - { face: 5, kind: discard_double, label: "Perfect choice — discard a die on one ability, copy one on the other" }
+        - { face: 6, kind: discard_double, label: "Perfect choice — discard a die on one ability, copy one on the other" }
     - id: limitless
       label: Limitless
       when: always
@@ -114,10 +122,10 @@ challenges:
       effects:
         - { face: 1, kind: discard }
         - { face: 2, kind: none }
-        - { face: 3, kind: reroll,     label: Reroll one die (pay at the table) }
-        - { face: 4, kind: extra_dice, dice: 1, label: One extra die (pay at the table) }
-        - { face: 5, kind: extra_dice, dice: 1, label: One extra die (pay at the table) }
-        - { face: 6, kind: extra_dice, dice: 2, label: Two extra dice (pay at the table) }
+        - { face: 3, kind: reroll,     label: Emotional outburst - Reroll one die and get a hindrance (-1 next roll) }
+        - { face: 4, kind: extra_dice, dice: 1, label: Wreck it - Roll one extra die and break something }
+        - { face: 5, kind: extra_dice, dice: 1, label: Push too far - Roll one extra die and lose a resource }
+        - { face: 6, kind: extra_dice, dice: 2, label: Lose your head - Roll two extra dice and get a light injury }
   # Pool stats a player can burn during a challenge: 1 point → 1 exertion, spent as +1 on a
   # side or to reroll one die. Must be pools (pool: true).
   exertion_sources: [stamina, willpower]

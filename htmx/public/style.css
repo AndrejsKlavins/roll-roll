@@ -362,6 +362,9 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .die-rerolls { font-size: 0.6rem; font-weight: 700; color: var(--secret); }
 /* An approach effect moved this die's face after the roll. */
 .die-changed { font-size: 0.6rem; font-weight: 700; color: var(--accent); }
+/* Lowering a die is the cost side of Tweak, so it does not read as a bonus; a copy is new dice. */
+.die-changed-lowered { color: var(--danger); }
+.die-changed-copied { color: var(--secret); }
 .dice-faces .skill-bonus { color: var(--accent); align-self: flex-start; line-height: 2.2rem; }
 /* The attempt's total, in the ability's colour like the target above it. */
 .difficulty-sum { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
@@ -401,6 +404,12 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .approach-side-btn { display: flex; align-items: center; gap: 0.4rem; color: var(--field-color, var(--text)); border-color: color-mix(in srgb, var(--field-color, var(--line)) 50%, var(--line)); }
 .approach-side-btn .field-icon { width: 24px; height: 24px; border-radius: 7px; }
 .approach-side-btn .field-icon svg, .approach-side-btn .field-icon img { width: 15px; height: 15px; }
+/* GM-only debug row: force the approach die onto any face. Deliberately drab — it is not play. */
+.approach-debug { display: grid; justify-items: center; gap: 0.25rem; margin-top: 0.4rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); width: 100%; }
+.approach-debug-legend { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.approach-debug-faces { display: flex; gap: 0.3rem; }
+.approach-debug-btn { min-height: 30px; width: 2rem; padding: 0; font-size: 0.85rem; font-weight: 700; color: var(--muted); }
+.approach-debug-btn.on { color: var(--text); border-color: var(--muted); background: var(--panel); }
 /* A discarded die stays visible (the table can see what was thrown away) but is out of the sum. */
 .die-discarded .die-face { border-style: dashed; opacity: 0.45; text-decoration: line-through; }
 .die-discarded .die-name { opacity: 0.45; text-decoration: line-through; }
