@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadRules, type NumberField } from './rules'
-import { rollChallengeSide, Session } from './session'
+import { rollChallengeSide, Session, sideSum } from './session'
 
 const RULES = `
 name: Test
@@ -319,7 +319,7 @@ describe('challenge dice', () => {
     expect(weak).toEqual({ faces: [2, 5], dice: [0, 3], sum: 3 })
 
     // A strong character's "poor" (face 2) beats a weak character's "great" (face 5).
-    expect(strong.dice[0]).toBeGreaterThan(weak.dice[1])
+    expect(strong.dice[0]!).toBeGreaterThan(weak.dice[1]!)
   })
 })
 
@@ -340,6 +340,18 @@ challenges:
     - { id: easy, label: Easy, value: 4 }
   approaches:
     - { id: bold, label: Bold }
+    - { id: stubborn, label: Stubborn, when: failure }
+    - { id: fancy, label: Fancy, when: choice }
+    - id: tricky
+      label: Tricky
+      when: always
+      effects:
+        - { face: 1, kind: discard }
+        - { face: 2, kind: none }
+        - { face: 3, kind: reroll }
+        - { face: 4, kind: extra_dice, dice: 1 }
+        - { face: 5, kind: extra_dice, dice: 1 }
+        - { face: 6, kind: extra_dice, dice: 2 }
   exertion_sources: [stamina, willpower]
   faces:
     - { value: 1, label: horrible, color: "#c0392b" }
@@ -365,29 +377,48 @@ describe('challenge setup', () => {
   })
 })
 
-describe('exertion', () => {
-  async function rolledChallenge() {
-    const { open } = await setup(CHALLENGE_RULES)
-    const s = open()
-    const id = s.createCharacter('Mara').id
-    s.finalizeCharacter(id, 'Mara')
-    s.startChallenge(
-      {
-        description: 'Scale the wall',
-        mainAbility: 'strength',
-        supportAbility: 'agility',
-        mainDifficulty: 9,
-        supportDifficulty: 9,
-        stakes: 'normal',
-      },
-      'GM',
-    )
-    const ch = s.currentChallenge()!
-    s.setChallengePlayer(ch.id, id, 'bold', null, 'GM')
-    s.rollChallenge(ch.id, 'Mara')
-    return { s, id, ch: s.currentChallenge()! }
-  }
+/** Starts a fresh challenge for `id` and rolls it; any earlier one falls into history. */
+function startAndRoll(s: Session, id: string, approach: string, difficulty: number) {
+  s.startChallenge(
+    {
+      description: 'Scale the wall',
+      mainAbility: 'strength',
+      supportAbility: 'agility',
+      mainDifficulty: difficulty,
+      supportDifficulty: difficulty,
+      stakes: 'normal',
+    },
+    'GM',
+  )
+  const ch = s.currentChallenge()!
+  s.setChallengePlayer(ch.id, id, approach, null, 'GM')
+  s.rollChallenge(ch.id, 'Mara')
+  return s.currentChallenge()!
+}
 
+/** A challenge already rolled by Mara. Difficulty 9 is a coin flip; 2/30 force pass/fail. */
+async function rolledChallenge(approach = 'bold', difficulty = 9) {
+  const { open } = await setup(CHALLENGE_RULES)
+  const s = open()
+  const id = s.createCharacter('Mara').id
+  s.finalizeCharacter(id, 'Mara')
+  return { s, id, open, ch: startAndRoll(s, id, approach, difficulty) }
+}
+
+/**
+ * The approach die is random, so to test one face's effect we keep rolling fresh challenges
+ * until it turns up (1-in-6 each time; 300 tries makes a miss vanishingly unlikely).
+ */
+async function challengeWithFace(face: number, approach = 'tricky', difficulty = 9) {
+  const { s, id, open } = await rolledChallenge(approach, difficulty)
+  for (let i = 0; i < 300; i++) {
+    if (s.currentChallenge()!.approachDie === face) return { s, id, open, ch: s.currentChallenge()! }
+    startAndRoll(s, id, approach, difficulty)
+  }
+  throw new Error(`approach die never landed on ${face}`)
+}
+
+describe('exertion', () => {
   test('burning a pool point yields exertion that can be added to a side', async () => {
     const { s, id, ch } = await rolledChallenge()
     const char = () => s.characters.get(id)!
@@ -414,9 +445,23 @@ describe('exertion', () => {
     expect(s.rerollDie(ch.id, id, 'main', 0, 'Mara')).toBe(true)
     const after = s.currentChallenge()!.main!
     expect(after.dice[1]).toBe(kept)
-    expect(after.sum).toBe(after.dice[0] + after.dice[1])
+    expect(after.sum).toBe(sideSum(after))
     expect(s.availableExertion(s.currentChallenge()!)).toBe(0)
     expect(s.rerollDie(ch.id, id, 'main', 0, 'Mara')).toBe(false) // nothing left
+  })
+
+  test('every reroll is counted on the die it replaced', async () => {
+    const { s, id, ch } = await rolledChallenge()
+    s.exert(ch.id, id, 'stamina', 'Mara') // stamina = 2 → two rerolls in hand
+    s.exert(ch.id, id, 'stamina', 'Mara')
+    expect(s.currentChallenge()!.main!.rerolled).toBeUndefined() // nothing rerolled yet
+
+    s.rerollDie(ch.id, id, 'main', 0, 'Mara')
+    expect(s.currentChallenge()!.main!.rerolled).toEqual([1, 0])
+    s.rerollDie(ch.id, id, 'main', 0, 'Mara') // the same die again
+    expect(s.currentChallenge()!.main!.rerolled).toEqual([2, 0])
+    expect(s.currentChallenge()!.support!.rerolled).toBeUndefined() // other side untouched
+    expect(s.availableExertion(s.currentChallenge()!)).toBe(0) // both exertions spent
   })
 
   test('a closed challenge takes no more input', async () => {
@@ -426,5 +471,159 @@ describe('exertion', () => {
     expect(s.closeChallenge(ch.id, 'GM')).toBe(false)
     expect(s.exert(ch.id, id, 'stamina', 'Mara')).toBe(false)
     expect(s.rerollDie(ch.id, id, 'main', 0, 'Mara')).toBe(false)
+  })
+})
+
+describe('approach die', () => {
+  test('rolling adds one plain d6 for the picked approach', async () => {
+    const { s } = await rolledChallenge()
+    const die = s.currentChallenge()!.approachDie!
+    expect(die).toBeGreaterThanOrEqual(1)
+    expect(die).toBeLessThanOrEqual(6)
+  })
+
+  test('an "always" approach is in effect as soon as it is rolled', async () => {
+    const { s } = await rolledChallenge('bold')
+    expect(s.approachState(s.currentChallenge()!)!.status).toBe('active')
+  })
+
+  test('a "failure" approach is in effect only while the roll fails', async () => {
+    const failing = await rolledChallenge('stubborn', 30)
+    expect(failing.s.approachState(failing.s.currentChallenge()!)!.status).toBe('active')
+
+    const passing = await rolledChallenge('stubborn', 2)
+    expect(passing.s.approachState(passing.s.currentChallenge()!)!.status).toBe('skipped')
+  })
+
+  test('a "choice" approach waits for the player to activate it', async () => {
+    const { s, id, ch } = await rolledChallenge('fancy')
+    expect(s.approachState(ch)!.status).toBe('ready')
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.approachState(s.currentChallenge()!)!.status).toBe('active')
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false) // only once
+  })
+
+  test('only the rolling player activates, and never on a closed or non-choice approach', async () => {
+    const other = await rolledChallenge('fancy')
+    expect(other.s.activateApproach(other.ch.id, 'nobody', 'Someone')).toBe(false)
+    other.s.closeChallenge(other.ch.id, 'GM')
+    expect(other.s.activateApproach(other.ch.id, other.id, 'Mara')).toBe(false)
+
+    const always = await rolledChallenge('bold')
+    expect(always.s.activateApproach(always.ch.id, always.id, 'Mara')).toBe(false)
+  })
+
+  test('an unrolled challenge, and one with no approach, have no die', async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    s.startChallenge(
+      {
+        description: 'Scale the wall',
+        mainAbility: 'strength',
+        supportAbility: 'agility',
+        mainDifficulty: 9,
+        supportDifficulty: 9,
+        stakes: 'normal',
+      },
+      'GM',
+    )
+    const ch = s.currentChallenge()!
+    s.setChallengePlayer(ch.id, id, null, null, 'GM')
+    expect(s.approachState(ch)).toBeNull() // not rolled yet
+    s.rollChallenge(ch.id, 'Mara')
+    expect(s.currentChallenge()!.approachDie).toBeNull() // no approach picked
+    expect(s.approachState(s.currentChallenge()!)).toBeNull()
+  })
+})
+
+describe('approach die effects', () => {
+  test('face 2 does nothing, so there is nothing to activate', async () => {
+    const { s, id, ch } = await challengeWithFace(2)
+    const state = s.approachState(ch)!
+    expect(state.effect!.kind).toBe('none')
+    expect(state.canActivate).toBe(false)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false)
+  })
+
+  test('face 1 discards a tapped die: it stops counting but stays on the side', async () => {
+    const { s, id, ch } = await challengeWithFace(1)
+    const before = s.currentChallenge()!.main!
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(false) // not activated yet
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.approachState(s.currentChallenge()!)!.pending).toBe(true)
+
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.main!
+    expect(after.dice).toEqual(before.dice) // the die is still shown
+    expect(after.discarded).toEqual([true, false])
+    expect(after.sum).toBe(after.dice[1]!)
+    expect(s.approachState(s.currentChallenge()!)!.pending).toBe(false)
+
+    // One pick only, and a discarded die can't be discarded again.
+    expect(s.discardDie(ch.id, id, 'main', 1, 'Mara')).toBe(false)
+  })
+
+  test('face 3 rerolls a tapped die without spending exertion', async () => {
+    const { s, id, ch } = await challengeWithFace(3)
+    const kept = s.currentChallenge()!.main!.dice[1]
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.approachReroll(ch.id, id, 'main', 0, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!
+    expect(after.main!.dice[1]).toBe(kept)
+    expect(after.main!.sum).toBe(sideSum(after.main!))
+    expect(after.rerolls).toBe(0) // free: exertion is untouched
+    expect(after.main!.rerolled).toEqual([1, 0]) // still counted on the die
+    expect(s.availableExertion(after)).toBe(0)
+    expect(s.approachReroll(ch.id, id, 'main', 0, 'Mara')).toBe(false) // one pick only
+  })
+
+  test('the pending effect only accepts its own kind of pick', async () => {
+    const { s, id, ch } = await challengeWithFace(3)
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(false)
+    expect(s.addApproachDice(ch.id, id, 'main', 'Mara')).toBe(false)
+    expect(s.approachReroll(ch.id, id, 'main', 5, 'Mara')).toBe(false) // no such die
+  })
+
+  test('faces 4 and 5 add one die to the chosen ability, face 6 adds two', async () => {
+    for (const [face, extra] of [[4, 1], [5, 1], [6, 2]] as const) {
+      const { s, id, ch } = await challengeWithFace(face)
+      s.activateApproach(ch.id, id, 'Mara')
+      expect(s.addApproachDice(ch.id, id, 'support', 'Mara')).toBe(true)
+      const after = s.currentChallenge()!
+      expect(after.support!.dice).toHaveLength(2 + extra)
+      expect(after.support!.faces).toHaveLength(2 + extra)
+      expect(after.support!.sum).toBe(sideSum(after.support!))
+      expect(after.main!.dice).toHaveLength(2) // the other ability is untouched
+      expect(s.challengeOutcome(after)!.support.sum).toBe(after.support!.sum)
+      expect(s.addApproachDice(ch.id, id, 'main', 'Mara')).toBe(false) // one pick only
+    }
+  })
+
+  test('extra dice take the ability rank shift, like the dice they join', async () => {
+    const { s, id, ch } = await challengeWithFace(6)
+    s.adjustBase(id, 'agility', 2, 'GM') // rank 5 → every face +2
+    s.activateApproach(ch.id, id, 'Mara')
+    s.addApproachDice(ch.id, id, 'support', 'Mara')
+    const side = s.currentChallenge()!.support!
+    for (const i of [2, 3]) expect(side.dice[i]).toBe(side.faces![i]! + 2)
+  })
+
+  test('effects survive a restart and never apply once the GM is done', async () => {
+    const { s, id, ch, open } = await challengeWithFace(1)
+    s.activateApproach(ch.id, id, 'Mara')
+    s.discardDie(ch.id, id, 'main', 1, 'Mara')
+    const sum = s.currentChallenge()!.main!.sum
+    s.closeChallenge(ch.id, 'GM')
+    expect(s.discardDie(ch.id, id, 'main', 0, 'Mara')).toBe(false)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false)
+
+    const replayed = open().currentChallenge()!
+    expect(replayed.main!.discarded).toEqual([false, true])
+    expect(replayed.main!.sum).toBe(sum)
+    expect(replayed.approachActivated).toBe(true)
+    expect(replayed.approachPending).toBe(false)
   })
 })

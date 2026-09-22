@@ -83,10 +83,34 @@ challenges:
     - { id: hard,        label: Hard,        value: 10 }
     - { id: very_hard,   label: Very hard,   value: 13 }
     - { id: epic,        label: Epic,        value: 16 }
+  # Each approach rolls its own d6 (the approach die) alongside the ability dice. "when" says
+  # whether that die's effect applies: always, only while the roll is failing (at least one side
+  # short of its target), or by the player's choice (an Activate button).
+  # "effects" says what each face of that approach's die does, and therefore what the player is
+  # asked to pick after pressing Activate: a die (discard, reroll) or an ability (extra_dice).
+  # Faces with no effect (or kind: none) offer no Activate button. Any cost for an effect is
+  # paid at the table — the app never deducts one.
+  # "description" is free text shown beside the pick button — say what the approach is for.
   approaches:
-    - { id: unbreakable, label: Unbreakable }
-    - { id: exquisite,   label: Exquisite }
-    - { id: limitless,   label: Limitless }
+    - id: unbreakable
+      label: Unbreakable
+      when: failure
+      description: The effect triggers only if you are failing.
+    - id: exquisite
+      label: Exquisite
+      when: choice
+      description: You choose whether to activate this dice.
+    - id: limitless
+      label: Limitless
+      when: always
+      description: Effect always happens.
+      effects:
+        - { face: 1, kind: discard }
+        - { face: 2, kind: none }
+        - { face: 3, kind: reroll,     label: Reroll one die (pay at the table) }
+        - { face: 4, kind: extra_dice, dice: 1, label: One extra die (pay at the table) }
+        - { face: 5, kind: extra_dice, dice: 1, label: One extra die (pay at the table) }
+        - { face: 6, kind: extra_dice, dice: 2, label: Two extra dice (pay at the table) }
   # Pool stats a player can burn during a challenge: 1 point → 1 exertion, spent as +1 on a
   # side or to reroll one die. Must be pools (pool: true).
   exertion_sources: [stamina, willpower]

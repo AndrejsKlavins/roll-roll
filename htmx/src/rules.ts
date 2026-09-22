@@ -93,8 +93,51 @@ export type Training = { pointsStat: string; rankCosts: number[]; thresholds: nu
 
 /** One rung of the challenge difficulty ladder — a GM-facing starting point, not a hard rule. */
 export type Difficulty = { id: string; label: string; value: number }
-/** A named approach offered to the rolling player (mechanically inert for now). */
-export type Approach = { id: string; label: string }
+/**
+ * A named approach the rolling player picks. Each one rolls its own d6 (the approach die);
+ * `when` says whether that die's effect applies: `always`, only while the roll is failing
+ * (`failure`), or by the player's `choice` (they press Activate). The effects themselves are
+ * not designed yet — for now the die is just a number.
+ */
+export type ApproachWhen = 'always' | 'failure' | 'choice'
+export type Approach = {
+  id: string
+  label: string
+  when: ApproachWhen
+  /** Free text shown next to the pick button; empty falls back to a hint made from `when`. */
+  description: string
+  effects: ApproachEffect[]
+}
+const APPROACH_WHEN: ApproachWhen[] = ['always', 'failure', 'choice']
+
+/**
+ * What one face of an approach die does, and what the player has to pick to apply it:
+ * - `none` — nothing happens, so there is nothing to activate.
+ * - `discard` — the player taps one rolled die; it stops counting.
+ * - `reroll` — the player taps one rolled die; it is rolled again.
+ * - `extra_dice` — the player picks one of the two abilities and rolls `dice` more for it.
+ * Any cost ("payment") is settled at the table; the app never deducts one.
+ */
+export type ApproachEffectKind = 'none' | 'discard' | 'reroll' | 'extra_dice'
+export type ApproachEffect = { face: number; kind: ApproachEffectKind; dice: number; label: string }
+const APPROACH_EFFECT_KINDS: ApproachEffectKind[] = ['none', 'discard', 'reroll', 'extra_dice']
+
+const defaultEffectLabel = (kind: ApproachEffectKind, dice: number) =>
+  kind === 'discard'
+    ? 'Discard one die'
+    : kind === 'reroll'
+      ? 'Reroll one die'
+      : kind === 'extra_dice'
+        ? `Roll ${dice} extra ${dice === 1 ? 'die' : 'dice'}`
+        : 'Nothing happens'
+
+/** The effect of the face this approach die landed on, or null when none is configured. */
+export const approachEffect = (approach: Approach, face: number) =>
+  approach.effects.find((e) => e.face === face) ?? null
+
+/** Whether applying this effect needs the player to pick a die or an ability first. */
+export const effectNeedsPick = (effect: ApproachEffect | null) =>
+  !!effect && effect.kind !== 'none'
 /** What a rolled die face is called, and the colour it reads in (red → green). */
 export type FaceName = { value: number; label: string; color: string; ink: string }
 
@@ -376,7 +419,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     return [{ id: t.id, label: String(t.label ?? t.id), cost, description, category, tags, modifiers }]
   })
 
-  // challenges: { difficulties: [{id, label, value}], approaches: [{id, label}] }
+  // challenges: { difficulties: [{id, label, value}], approaches: [{id, label, when}] }
   const rawChallenges = raw?.challenges ?? {}
   const difficulties: Difficulty[] = ((rawChallenges.difficulties ?? []) as any[]).flatMap((d: any, i: number) => {
     const where = `challenges.difficulties[${i}]`
@@ -391,7 +434,34 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   const approaches: Approach[] = ((rawChallenges.approaches ?? []) as any[]).flatMap((a: any, i: number) => {
     const where = `challenges.approaches[${i}]`
     if (!checkId(a?.id, where)) return []
-    return [{ id: a.id, label: String(a.label ?? a.id) }]
+    const when = String(a?.when ?? 'always') as ApproachWhen
+    if (!APPROACH_WHEN.includes(when)) {
+      fail(`${where} "${a.id}": when must be one of ${APPROACH_WHEN.join(', ')}`)
+      return []
+    }
+    // effects: [{ face, kind, dice, label }] — what each face of this approach's die does.
+    const effects: ApproachEffect[] = ((a?.effects ?? []) as any[]).flatMap((e: any, j: number) => {
+      const at = `${where}.effects[${j}]`
+      const face = Number(e?.face)
+      if (!Number.isFinite(face)) {
+        fail(`${at}: face must be a number`)
+        return []
+      }
+      const kind = String(e?.kind ?? 'none') as ApproachEffectKind
+      if (!APPROACH_EFFECT_KINDS.includes(kind)) {
+        fail(`${at} (face ${face}): kind must be one of ${APPROACH_EFFECT_KINDS.join(', ')}`)
+        return []
+      }
+      const dice = e?.dice === undefined ? 1 : Number(e.dice)
+      if (kind === 'extra_dice' && (!Number.isInteger(dice) || dice < 1 || dice > 10)) {
+        fail(`${at} (face ${face}): dice must be a whole number 1..10`)
+        return []
+      }
+      return [{ face, kind, dice, label: String(e?.label ?? defaultEffectLabel(kind, dice)) }]
+    })
+    const duplicate = effects.find((e, j) => effects.findIndex((o) => o.face === e.face) !== j)
+    if (duplicate) fail(`${where} "${a.id}": face ${duplicate.face} is listed twice in effects`)
+    return [{ id: a.id, label: String(a.label ?? a.id), when, description: String(a.description ?? '').trim(), effects }]
   })
   // challenges.faces: [{ value, label, color }] — names for rolled die faces.
   const faces: FaceName[] = ((rawChallenges.faces ?? []) as any[])

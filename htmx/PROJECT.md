@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-21 (challenge setup dialog; training log noise)
+Last updated: 2026-09-22 (approach pick buttons; per-die "Reroll N" counter)
 
 ---
 
@@ -316,6 +316,57 @@ session and are only summarised here; this covers the **GM setup flow**, which t
   when a character is finished) so the list stays current without closing an open dialog.
 - After a successful start the form clears its picks via `Alpine.$data(this)` and closes the dialog.
 
+**Approach die** (user-designed): the player picks an approach before rolling (Unbreakable /
+Exquisite / Limitless) from **one stacked button per approach, each with its `description` from
+rules.yaml to the left** (user-specified layout; `ChallengeSetupControls`). A pick posts straight to
+`/c/:id/challenge/setup` and the board comes back with that button marked `on` — no radios, no form,
+and the Skill boost select posts on `change` by itself. An approach with no `description` falls back
+to a hint made from `when`. `rollChallenge` then rolls **one plain d6** alongside the ability dice —
+no rank shift, stored as `approachDie` on `challenge_rolled` (absent when no approach is picked, and on
+challenges rolled before this existed). Two things are configured per approach in
+`challenges.approaches`:
+
+`when` — whether the die counts at all:
+
+| `when` | approach | status shown |
+|---|---|---|
+| `always` | Limitless | always `active` |
+| `failure` | Unbreakable | `active` while the roll fails (at least one side short of its target), `skipped` once it succeeds — derived, so it flips live as skill points/exertion move the sums |
+| `choice` | Exquisite | `ready` until the player presses **Activate result**, then `active` |
+
+`effects` — what each **face** does, and therefore what the player is asked to pick after Activate.
+Only Limitless has them so far (user-designed; Unbreakable and Exquisite are still open):
+
+| face | `kind` | after Activate |
+|---|---|---|
+| 1 | `discard` | the player taps any rolled die; it stays on screen struck through and drops out of the sum |
+| 2 | `none` | nothing happens — no Activate button at all |
+| 3 | `reroll` | the player taps any rolled die; it is rolled again, **free of exertion** |
+| 4, 5 | `extra_dice` (1) | the player picks one of the two abilities; one more die is rolled at that ability's rank and joins the side |
+| 6 | `extra_dice` (2) | the same, two dice |
+
+Any **cost is settled at the table** — the app never deducts one (user decision); the rules.yaml
+labels say so and nothing is spent automatically.
+
+Flow and state: **Activate** (`challenge_approach_activated`) sets `approachActivated`, and for an
+effect that needs a target also `approachPending`. While pending, the board waits: the dice become tap
+targets (`/c/:id/challenge/approach-pick?effect=…&side=…&index=…`) or the two abilities appear in the
+approach box, and the resolving event (`challenge_die_discarded`, `challenge_dice_added`, or
+`challenge_rerolled` with `source: 'approach'`, which costs no exertion) clears `approachPending`.
+One pick per activation. A pending effect owns the dice, so exertion rerolls stand down until it is
+resolved. "Challenge done" ends the pick too — the note then reads "… — not used".
+
+Because of `discard` and `extra_dice`, `ChallengeSide` is no longer a fixed pair: `dice`/`faces` are
+plain arrays with optional parallel `discarded` flags and `rerolled` counts, and **`sideSum()` is the
+only way to total a side** (every die that is not discarded). Old two-die events replay unchanged.
+
+`session.approachState(ch)` returns `{ approach, die, status, effect, canActivate, pending }` (null
+when nothing was rolled) and is the single place all of this is decided; `ApproachDie` in
+`views/challenge.tsx` renders it under the two result boxes on every screen, with the buttons only for
+the rolling player while the challenge is open — the GM and `/table` see the same prompt in the third
+person ("Player taps a die to discard it"). Unknown `when`/`kind` values, a bad `dice` count and a
+face listed twice all fail startup. Not undoable, like the rest of a challenge.
+
 **Exertion** (user-designed): while a rolled challenge is open, the rolling player may burn one point
 of any pool stat listed in `challenges.exertion_sources` (rules.yaml: stamina, willpower) for one
 exertion — `challenge_exerted` both decrements the pool (`statAdj`, like `stat_set`) and adds to
@@ -323,7 +374,10 @@ exertion — `challenge_exerted` both decrements the pool (`statAdj`, like `stat
 (`challenge_exertion_spent` → `exertionMain`/`exertionSupport`, folded into `challengeOutcome`) or to
 **reroll one die** (`challenge_rerolled` → new face + rank-shifted value, side sum recomputed).
 `availableExertion = gained − main − support − rerolls`. Exert buttons carry each stat's icon/colour
-and disable at 0; dice become reroll buttons only while exertion is in hand. Repeatable while pools last.
+and disable at 0; dice become reroll buttons only while exertion is in hand (a faint purple ring marks
+them, since phones have no hover). Repeatable while pools last. Every reroll — exertion or approach —
+is counted per die in `ChallengeSide.rerolled[i]` and shown under that die as **"Reroll N"**, so the
+table can see a 1 that was bought three times.
 **Challenge done** (GM only, `challenge_closed`) accepts the result: `closed` hides every player
 control and shows a "Done" badge. None of these are undoable.
 - Result boxes: "Player attempt" heads the rolled part on the GM and `/table` screens (the player

@@ -336,6 +336,33 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // Approach die: Activate applies the face's effect. Ones that need a target (discard a die,
+  // reroll it, add dice to an ability) leave the challenge pending until the player picks below.
+  app.post('/c/:id/challenge/activate-approach', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    if (session.activateApproach(ch.id, char.id, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/approach-pick', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    const side = c.req.query('side') === 'support' ? 'support' : 'main'
+    const index = Number(c.req.query('index'))
+    const by = actorName(c)
+    const done =
+      c.req.query('effect') === 'discard'
+        ? session.discardDie(ch.id, char.id, side, index, by)
+        : c.req.query('effect') === 'reroll'
+          ? session.approachReroll(ch.id, char.id, side, index, by)
+          : session.addApproachDice(ch.id, char.id, side, by)
+    if (done) pushChallenge()
+    return noContent(c)
+  })
+
   app.post('/gm/challenge/done', (c) => {
     const ch = session.currentChallenge()
     if (!ch) return c.notFound()

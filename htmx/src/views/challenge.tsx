@@ -2,7 +2,7 @@
 // and a history log of past challenges. Shared between /table (the shared screen), /gm (setup +
 // oversight) and the player's own page (join/roll controls) — role picks what's interactive.
 import { raw } from 'hono/html'
-import type { FaceName, Icon, NumberField } from '../rules'
+import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '../rules'
 import type { Child } from 'hono/jsx'
 import { isBaseField, type Challenge, type ChallengeSide, type Session, type SideOutcome } from '../session'
 
@@ -27,29 +27,50 @@ function faceName(faces: FaceName[], faceId: number | undefined): FaceName | nul
  * One rolled die: the square shows the shifted value that counts in the check, the name below
  * comes from the raw face id, so "poor" on a strong character can still beat "good" on a weak one.
  */
-function Die(props: { value: number; faceId?: number; faces: FaceName[]; reroll?: string }) {
+function Die(props: {
+  value: number
+  faceId?: number
+  faces: FaceName[]
+  discarded?: boolean
+  /** How many times this die has been rolled again; shown under it. */
+  rerolled?: number
+  action?: DieAction
+}) {
   const face = faceName(props.faces, props.faceId)
   const style = face?.color ? `--face-color: ${face.color}` : undefined
   const inner = (
     <>
       <span class="die-face">{props.value}</span>
       {face && <span class="die-name">{face.label}</span>}
+      {!!props.rerolled && <span class="die-rerolls">Reroll {props.rerolled}</span>}
     </>
   )
-  // With exertion in hand the die itself is the reroll button.
-  if (props.reroll) {
+  const cls = ['die', props.discarded && 'die-discarded'].filter(Boolean).join(' ')
+  // While something can be done to a die (exertion reroll, a pending approach effect) the die
+  // itself is the button.
+  if (props.action) {
     return (
-      <button type="button" class="die die-reroll" style={style} hx-post={props.reroll} hx-swap="none" title="Reroll with exertion">
+      <button
+        type="button"
+        class={`${cls} die-tappable die-${props.action.kind}`}
+        style={style}
+        hx-post={props.action.url}
+        hx-swap="none"
+        title={props.action.title}
+      >
         {inner}
       </button>
     )
   }
   return (
-    <span class="die" style={style}>
+    <span class={cls} style={style}>
       {inner}
     </span>
   )
 }
+
+/** What tapping a die does right now. `kind` only picks the highlight colour. */
+type DieAction = { kind: 'reroll' | 'discard'; url: string; title: string }
 
 /** One side's big number: target, then (once rolled) dice, skill bonus, final sum and difference. */
 function DifficultyBox(props: {
@@ -63,8 +84,8 @@ function DifficultyBox(props: {
   stakes: string
   faces: FaceName[]
   exertion: number
-  /** Set when the viewer may spend exertion here: posts a reroll for die `i`. */
-  rerollUrl?: (index: number) => string
+  /** Set when the viewer may act on the dice here (exertion reroll, pending approach effect). */
+  dieAction?: (index: number) => DieAction | undefined
   /** GM and table screens name the result; the player sees their own controls instead. */
   attemptLabel?: boolean
   controls?: Child
@@ -86,7 +107,14 @@ function DifficultyBox(props: {
           {props.attemptLabel && <div class="attempt-label">Player attempt</div>}
           <div class="dice-faces">
             {side.dice.map((d, i) => (
-              <Die value={d} faceId={side.faces?.[i]} faces={props.faces} reroll={props.rerollUrl?.(i)} />
+              <Die
+                value={d}
+                faceId={side.faces?.[i]}
+                faces={props.faces}
+                discarded={side.discarded?.[i]}
+                rerolled={side.rerolled?.[i]}
+                action={side.discarded?.[i] ? undefined : props.dieAction?.(i)}
+              />
             ))}
             {skillPoints !== 0 && <span class="skill-bonus">{signed(skillPoints)}</span>}
             {props.exertion !== 0 && <span class="exert-bonus">{signed(props.exertion)}</span>}
@@ -101,24 +129,41 @@ function DifficultyBox(props: {
   )
 }
 
-/** Approach + skill pick, then Roll — shown to the joined player before rolling. */
+/** When an approach's die counts, in the player's words. */
+const whenHint = (when: ApproachWhen) =>
+  when === 'always' ? 'always counts' : when === 'failure' ? 'only when failing' : 'your choice'
+
+/**
+ * Approach + skill pick, then Roll — shown to the joined player before rolling. One stacked
+ * button per approach, its description to the left; picking posts straight away (the pick lives
+ * on the challenge, so the board comes back with the chosen one marked).
+ */
 function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId: string }) {
   const { session, ch, charId } = props
   const { rules } = session
   const skills = [...rules.fields.values()].filter((f): f is NumberField => f.type === 'number' && f.trained)
   return (
-    <form class="challenge-player-setup" hx-post={`/c/${charId}/challenge/setup`} hx-trigger="change" hx-swap="none">
-      <fieldset class="approach-pick">
-        <legend>Approach</legend>
+    <div class="challenge-player-setup">
+      <div class="approach-pick">
+        <span class="approach-legend">Approach</span>
         {rules.challenges.approaches.map((a) => (
-          <label>
-            <input type="radio" name="approach" value={a.id} checked={ch.approach === a.id || undefined} required /> {a.label}
-          </label>
+          <div class="approach-row">
+            <p class="approach-desc">{a.description || whenHint(a.when)}</p>
+            <button
+              type="button"
+              class={ch.approach === a.id ? 'approach-btn on' : 'approach-btn'}
+              hx-post={`/c/${charId}/challenge/setup`}
+              hx-vals={JSON.stringify({ approach: a.id })}
+              hx-swap="none"
+            >
+              {a.label}
+            </button>
+          </div>
         ))}
-      </fieldset>
+      </div>
       <label class="skill-pick">
         Skill boost
-        <select name="skill">
+        <select name="skill" hx-post={`/c/${charId}/challenge/setup`} hx-trigger="change" hx-swap="none">
           <option value="">None</option>
           {skills.map((f) => (
             <option value={f.id} selected={ch.skill === f.id || undefined}>
@@ -130,8 +175,93 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
       <button type="button" class="primary" hx-post={`/c/${charId}/challenge/roll`} hx-swap="none" disabled={!ch.approach || undefined}>
         Roll
       </button>
-    </form>
+    </div>
   )
+}
+
+/**
+ * The approach die: one plain d6 rolled with the ability dice. When it counts follows the
+ * approach's `when` (always / only while failing / the player's choice); what it does on that
+ * face comes from `effects` in rules.yaml. Effects that need a target put the board in a pending
+ * state — the dice become tappable, or the two abilities appear here for extra dice.
+ */
+function ApproachDie(props: {
+  session: Session
+  ch: Challenge
+  /** The viewer is the rolling player and the challenge is still open. */
+  acting: boolean
+  charId?: string
+  abilities: { side: 'main' | 'support'; label: string; field: NumberField | undefined }[]
+}) {
+  const { session, ch, acting } = props
+  const state = session.approachState(ch)
+  if (!state) return null
+  const { effect } = state
+  // "Challenge done" ends the pick too: an effect nobody applied in time simply went unused.
+  const pending = state.pending && !!effect && !ch.closed
+  const note = pending
+    ? pickPrompt(effect!, acting)
+    : effect
+      ? state.pending
+        ? `${effect.label} — not used`
+        : ch.approachActivated
+          ? `${effect.label} — done`
+          : effect.label
+      : state.status === 'active'
+        ? ch.approachActivated
+          ? 'Activated'
+          : state.approach.when === 'failure'
+            ? 'In effect — the roll is failing'
+            : 'In effect'
+        : state.status === 'skipped'
+          ? 'Skipped — the roll succeeded'
+          : 'Not activated'
+  const cls = ['approach-die', `approach-${state.status}`, pending && 'approach-pending'].filter(Boolean).join(' ')
+  return (
+    <div class={cls}>
+      <div class="approach-label">{state.approach.label}</div>
+      <span class="die">
+        <span class="die-face">{state.die}</span>
+      </span>
+      <div class="approach-note">{note}</div>
+      {acting && state.canActivate && (
+        <button
+          type="button"
+          class="approach-activate"
+          hx-post={`/c/${props.charId}/challenge/activate-approach`}
+          hx-swap="none"
+        >
+          Activate result
+        </button>
+      )}
+      {/* Extra dice are the one effect with no die to tap: the player picks an ability here. */}
+      {acting && pending && effect!.kind === 'extra_dice' && (
+        <div class="approach-sides">
+          {props.abilities.map((a) => (
+            <button
+              type="button"
+              class="approach-side-btn"
+              style={a.field?.color ? `--field-color: ${a.field.color}; --field-ink: ${a.field.ink}` : undefined}
+              hx-post={`/c/${props.charId}/challenge/approach-pick?side=${a.side}`}
+              hx-swap="none"
+            >
+              <IconChip icon={a.field?.icon} />
+              <span class="label">{a.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** What the player (or everyone else, watching) is told to do while an effect waits for a pick. */
+function pickPrompt(effect: ApproachEffect, acting: boolean) {
+  const who = acting ? 'Tap' : 'Player taps'
+  if (effect.kind === 'discard') return `${who} a die to discard it`
+  if (effect.kind === 'reroll') return `${who} a die to reroll it`
+  const n = effect.dice === 1 ? 'one extra die' : `${effect.dice} extra dice`
+  return acting ? `Pick the ability to roll ${n} for` : `Player picks the ability for ${n}`
 }
 
 /** Skill bonus left to spend on the two sides (the declared skill's rank, minus what is spent). */
@@ -273,10 +403,30 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
       </>
     )
   }
-  const rerollUrl = (side: 'main' | 'support') =>
-    acting && exertion > 0
-      ? (index: number) => `/c/${viewerCharId}/challenge/reroll?side=${side}&index=${index}`
-      : undefined
+  // A pending approach effect owns the dice while it lasts (it is the step the board is waiting
+  // on); otherwise they are exertion reroll buttons whenever exertion is in hand.
+  const approach = session.approachState(ch)
+  const pendingKind = acting && approach?.pending ? approach.effect?.kind : undefined
+  const dieAction = (side: 'main' | 'support') => {
+    if (pendingKind === 'discard' || pendingKind === 'reroll') {
+      const verb = pendingKind === 'discard' ? 'Discard this die' : 'Reroll this die'
+      return (index: number): DieAction => ({
+        kind: pendingKind,
+        url: `/c/${viewerCharId}/challenge/approach-pick?effect=${pendingKind}&side=${side}&index=${index}`,
+        title: `${verb} (${approach!.approach.label})`,
+      })
+    }
+    if (!acting || approach?.pending || exertion <= 0) return undefined
+    return (index: number): DieAction => ({
+      kind: 'reroll',
+      url: `/c/${viewerCharId}/challenge/reroll?side=${side}&index=${index}`,
+      title: 'Reroll with exertion',
+    })
+  }
+  const abilities = [
+    { side: 'main' as const, label: mainField?.label ?? ch.mainAbility, field: mainField },
+    { side: 'support' as const, label: supportField?.label ?? ch.supportAbility, field: supportField },
+  ]
   return (
     <div class="challenge">
       {ch.description && <h3 class="challenge-description">{ch.description}</h3>}
@@ -297,7 +447,7 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           stakes={ch.stakes}
           faces={session.rules.challenges.faces}
           exertion={ch.exertionMain}
-          rerollUrl={rerollUrl('main')}
+          dieAction={dieAction('main')}
           attemptLabel={role !== 'player'}
           controls={sideControls('main')}
         />
@@ -312,11 +462,12 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           stakes={ch.stakes}
           faces={session.rules.challenges.faces}
           exertion={ch.exertionSupport}
-          rerollUrl={rerollUrl('support')}
+          dieAction={dieAction('support')}
           attemptLabel={role !== 'player'}
           controls={sideControls('support')}
         />
       </div>
+      <ApproachDie session={session} ch={ch} acting={acting} charId={viewerCharId} abilities={abilities} />
       {role !== 'player' && <ChallengeAbilities session={session} ch={ch} />}
       {isViewerTurn && !ch.main && (
         <ChallengeSetupControls session={session} ch={ch} charId={viewerCharId!} />

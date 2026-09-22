@@ -358,6 +358,8 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .die { display: grid; justify-items: center; gap: 0.15rem; }
 .die-face { display: grid; place-items: center; width: 2.2rem; height: 2.2rem; background: var(--panel); border: 1px solid var(--face-color, var(--line)); border-radius: 8px; color: var(--face-color, var(--text)); }
 .die-name { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--face-color, var(--muted)); }
+/* How many times this die was rolled again (exertion or an approach effect). */
+.die-rerolls { font-size: 0.6rem; font-weight: 700; color: var(--secret); }
 .dice-faces .skill-bonus { color: var(--accent); align-self: flex-start; line-height: 2.2rem; }
 /* The attempt's total, in the ability's colour like the target above it. */
 .difficulty-sum { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
@@ -370,9 +372,36 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .challenge-player-name { font-weight: 700; color: var(--text); }
 
 .challenge-join, .challenge-player-setup, .challenge-skill-points { display: grid; gap: 0.6rem; }
-.approach-pick { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.8rem; }
-.approach-pick legend { color: var(--muted); font-size: 0.8rem; padding: 0; width: 100%; }
-.approach-pick label { display: flex; align-items: center; gap: 0.3rem; }
+/* Approach pick: one button per approach, stacked, each with its description to the left. */
+.approach-pick { display: grid; gap: 0.5rem; }
+.approach-legend { color: var(--muted); font-size: 0.8rem; }
+.approach-row { display: flex; align-items: center; gap: 0.8rem; }
+.approach-desc { flex: 1; margin: 0; color: var(--muted); font-size: 0.8rem; font-weight: 700; line-height: 1.3; }
+.approach-btn { flex: none; width: 7.5rem; font-weight: 700; }
+.approach-btn.on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+
+/* ---- approach die: one d6 for the picked approach, under the two results ---- */
+.approach-die { display: grid; justify-items: center; gap: 0.35rem; padding: 0.7rem; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); }
+.approach-label { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.approach-die .die-face { font-size: 1.3rem; font-weight: 700; width: 2.6rem; height: 2.6rem; }
+.approach-note { font-size: 0.8rem; color: var(--muted); }
+.approach-active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.approach-active .approach-label, .approach-active .approach-note, .approach-active .die-face { color: var(--accent); }
+.approach-active .die-face { border-color: var(--accent); }
+.approach-skipped { opacity: 0.55; }
+.approach-activate { min-height: 34px; padding: 0.2rem 0.7rem; font-size: 0.8rem; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+/* Waiting for the player to pick a die or an ability: the prompt is the loudest thing on the board. */
+.approach-pending { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+.approach-pending .approach-note { color: var(--accent); font-weight: 700; }
+.approach-sides { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+.approach-side-btn { display: flex; align-items: center; gap: 0.4rem; color: var(--field-color, var(--text)); border-color: color-mix(in srgb, var(--field-color, var(--line)) 50%, var(--line)); }
+.approach-side-btn .field-icon { width: 24px; height: 24px; border-radius: 7px; }
+.approach-side-btn .field-icon svg, .approach-side-btn .field-icon img { width: 15px; height: 15px; }
+/* A discarded die stays visible (the table can see what was thrown away) but is out of the sum. */
+.die-discarded .die-face { border-style: dashed; opacity: 0.45; text-decoration: line-through; }
+.die-discarded .die-name { opacity: 0.45; text-decoration: line-through; }
+.die-discard .die-face { box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 40%, transparent); }
+.die-discard:hover .die-face { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 45%, transparent); }
 .skill-pick { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
 /* Skill bonus split: − / + under each result, with what is left named below the boxes. */
 .skill-alloc { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 0.2rem; }
@@ -383,7 +412,9 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 
 /* ---- exertion ---- */
 .dice-faces .exert-bonus { color: var(--secret); align-self: flex-start; line-height: 2.2rem; }
-.die-reroll { padding: 0; background: none; border: none; min-height: 0; cursor: pointer; }
+.die-tappable { padding: 0; background: none; border: none; min-height: 0; cursor: pointer; }
+/* Tappable dice carry a faint ring so they read as buttons on touch screens too. */
+.die-reroll .die-face { box-shadow: 0 0 0 1px color-mix(in srgb, var(--secret) 40%, transparent); }
 .die-reroll:hover .die-face { border-color: var(--secret); box-shadow: 0 0 0 2px color-mix(in srgb, var(--secret) 45%, transparent); }
 .exert-spend { min-height: 34px; padding: 0.2rem 0.6rem; margin-top: 0.3rem; font-size: 0.8rem; color: var(--secret); border-color: color-mix(in srgb, var(--secret) 50%, var(--line)); }
 .exertion { display: grid; gap: 0.5rem; }
