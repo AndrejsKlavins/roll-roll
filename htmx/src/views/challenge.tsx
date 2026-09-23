@@ -1,13 +1,13 @@
-// Public challenge board: big main/supporting difficulty numbers, the joined player's roll,
-// and a history log of past challenges. Shared between /table (the shared screen), /gm (setup +
-// oversight) and the player's own page (join/roll controls) — role picks what's interactive.
+// Public challenge board: the challenge's one difficulty with the skill and circumstance working
+// under it, the framing and resolution rolls beside each other, and a history log of past
+// challenges. Shared between /table (the shared screen), /gm (setup + oversight) and the player's
+// own page (pick/roll controls) — role picks what's interactive.
 import { raw } from 'hono/html'
 import { abilityRankRange } from '../rules'
 import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '../rules'
 import type { Child } from 'hono/jsx'
 import {
   APPROACH_DIE_SIDES,
-  challengeTarget,
   isBaseField,
   MAX_CIRCUMSTANCE,
   type Contestant,
@@ -15,6 +15,7 @@ import {
   type OppositionSide,
   type SoloRoll,
   type Challenge,
+  type ChallengeMath,
   type ChallengeSide,
   type DieMarker,
   type Session,
@@ -25,10 +26,11 @@ const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
 const signed = (n: number) => (n === 0 ? '0' : n > 0 ? `+${n}` : String(n))
 const stakesLabel = (s: string) => s[0]!.toUpperCase() + s.slice(1)
 
-function degreeText(outcome: SideOutcome, stakes: string) {
-  if (stakes === 'low' || outcome.degrees === 0) return null
-  const n = Math.abs(outcome.degrees)
-  const word = outcome.degrees > 0 ? 'boon' : 'complication'
+/** Boons / complications in words: the stakes' own, plus whatever the framing rung added. */
+function degreeText(degrees: number) {
+  if (degrees === 0) return null
+  const n = Math.abs(degrees)
+  const word = degrees > 0 ? 'boon' : 'complication'
   return `${n} ${word}${n > 1 ? 's' : ''}`
 }
 
@@ -104,54 +106,92 @@ const markerLabel = (marker: NonNullable<DieMarker>) =>
           ? 'Copy'
           : 'Squashed'
 
-/** One side's big number: target, then (once rolled) dice, skill bonus, final sum and difference. */
-function DifficultyBox(props: {
+/**
+ * The challenge's one difficulty, shown as the sum it actually is: the GM's number, less the
+ * player's skill rank, plus the circumstance modifier — with the result in big type. Everyone
+ * sees the working (user requirement); only the GM gets the stepper.
+ */
+function DifficultyPanel(props: { math: ChallengeMath; tier: string | null; controls?: Child }) {
+  const { math, tier } = props
+  return (
+    <div class="difficulty-panel">
+      <div class="difficulty-label">
+        <span>Difficulty</span>
+      </div>
+      <div class="difficulty-target">
+        {math.target}
+        {tier && <span class="difficulty-tier">({tier})</span>}
+      </div>
+      {/* The skill is a bonus on the rolls (it shows beside the dice), so only the GM's
+          circumstance moves this number — and then everyone sees the working. */}
+      {math.circumstance !== 0 && (
+        <p class="difficulty-calc">
+          <span class="calc-part">{math.difficulty}</span>
+          <span class={math.circumstance > 0 ? 'calc-part hinder' : 'calc-part help'}>
+            {math.circumstance > 0 ? '+' : '−'} {Math.abs(math.circumstance)} circumstance
+          </span>
+          <span class="calc-part calc-total">= {math.target}</span>
+        </p>
+      )}
+      {math.skillBonus > 0 && (
+        <p class="difficulty-note">
+          {math.skillLabel} {signed(math.skillBonus)} on every result
+        </p>
+      )}
+      {props.controls}
+    </div>
+  )
+}
+
+/**
+ * One of the two rolls: its ability, the number it goes against, its dice and (once they are in)
+ * the sum and how far off the target it landed. The framing box carries the rung it landed on
+ * below its number; the resolution box carries the final verdict.
+ */
+function RollBox(props: {
   field: NumberField | undefined
   label: string
-  /** The number to beat, circumstance already applied (see challengeTarget). */
+  /** "Framing" / "Resolution" — which of the two this is, above the ability's name. */
+  kind: string
   target: number
-  /** The GM's difficulty before the circumstance came off it — named by `tier`. */
-  baseTarget: number
-  /** The circumstance modifier itself; shown to everyone when it is not 0. */
-  circumstance: number
-  /** The GM's − / + buttons, when the viewer is the GM. */
-  circumstanceControls?: Child
-  tier: string | null
+  /** What the framing rung did to this target, when it moved it. */
+  targetShift?: number
   side: ChallengeSide | null
-  skillPoints: number
   outcome: SideOutcome | null
-  stakes: string
   faces: FaceName[]
+  /** The declared skill's rank: a bonus on this result, shown beside the dice. */
+  skillBonus: number
   exertion: number
   /** Set when the viewer may act on the dice here (exertion reroll, pending approach effect). */
   dieAction?: (index: number) => DieAction | undefined
   /** GM and table screens name the result; the player sees their own controls instead. */
   attemptLabel?: boolean
+  note?: Child
   controls?: Child
 }) {
-  const { field, label, target, tier, side, skillPoints, outcome, stakes } = props
+  const { field, label, target, side, outcome } = props
   const cls = ['difficulty-box', outcome && (outcome.success ? 'success' : 'failure')].filter(Boolean).join(' ')
   return (
     <div class={cls} style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}>
+      <div class="roll-kind">{props.kind}</div>
       <div class="difficulty-label">
         <IconChip icon={field?.icon} />
         <span>{label}</span>
       </div>
       <div class="difficulty-target">
         {target}
-        {tier && <span class="difficulty-tier">({tier})</span>}
-        {props.circumstance !== 0 && (
+        {!!props.targetShift && (
           <span
-            class={props.circumstance > 0 ? 'circumstance hinder' : 'circumstance help'}
-            title={`Circumstance ${signed(props.circumstance)} — difficulty ${props.baseTarget} ${
-              props.circumstance > 0 ? 'raised to' : 'lowered to'
-            } ${target}`}
+            class={props.targetShift > 0 ? 'circumstance hinder' : 'circumstance help'}
+            title={`The framing ${props.targetShift > 0 ? 'raised' : 'lowered'} this target by ${Math.abs(
+              props.targetShift,
+            )}`}
           >
-            {signed(props.circumstance)}
+            {signed(props.targetShift)}
           </span>
         )}
       </div>
-      {props.circumstanceControls}
+      {props.note}
       {side && outcome && (
         <div class="difficulty-result">
           {props.attemptLabel && <div class="attempt-label">Player attempt</div>}
@@ -167,12 +207,15 @@ function DifficultyBox(props: {
                 action={side.discarded?.[i] ? undefined : props.dieAction?.(i)}
               />
             ))}
-            {skillPoints !== 0 && <span class="skill-bonus">{signed(skillPoints)}</span>}
+            {props.skillBonus !== 0 && (
+              <span class="skill-bonus" title="Skill bonus">
+                {signed(props.skillBonus)}
+              </span>
+            )}
             {props.exertion !== 0 && <span class="exert-bonus">{signed(props.exertion)}</span>}
           </div>
           <div class="difficulty-sum">{outcome.sum}</div>
           <div class="difficulty-diff">{signed(outcome.difference)}</div>
-          {degreeText(outcome, stakes) && <div class="difficulty-degree">{degreeText(outcome, stakes)}</div>}
           {props.controls}
         </div>
       )}
@@ -181,21 +224,22 @@ function DifficultyBox(props: {
 }
 
 /**
- * GM only: nudges one side's circumstance modifier. It is added to the difficulty, so a plus makes
- * the check harder and a minus makes it easier. Offered from the moment the challenge exists until
- * it is closed — a ruling can land before the roll or part-way through it — and every screen shows
- * the result. The legend sits above the buttons so the row stays narrow enough for the GM column.
+ * GM only: nudges the challenge's circumstance modifier. It is added to the difficulty, so a plus
+ * makes the challenge harder and a minus makes it easier. Offered from the moment the challenge
+ * exists until it is closed — a ruling can land before the rolls or between them — and every
+ * screen shows it in the calculation above. The legend sits above the buttons so the row stays
+ * narrow enough for the GM column.
  */
-function CircumstanceControls(props: { side: 'main' | 'support'; value: number }) {
-  const { side, value } = props
+function CircumstanceControls(props: { value: number }) {
+  const { value } = props
   const step = (delta: number, label: string, disabled: boolean) => (
     <button
       type="button"
       class="circumstance-step"
-      hx-post={`/gm/challenge/circumstance?side=${side}&delta=${delta}`}
+      hx-post={`/gm/challenge/circumstance?delta=${delta}`}
       hx-swap="none"
       disabled={disabled || undefined}
-      title={delta > 0 ? 'Circumstance against the player' : 'Circumstance in the player\u2019s favour'}
+      title={delta > 0 ? 'Circumstance against the player' : 'Circumstance in the player’s favour'}
     >
       {label}
     </button>
@@ -204,7 +248,7 @@ function CircumstanceControls(props: { side: 'main' | 'support'; value: number }
     <div class="circumstance-set">
       <span class="circumstance-legend">Circumstance</span>
       <div class="circumstance-controls">
-        {step(-1, '\u2212', value <= -MAX_CIRCUMSTANCE)}
+        {step(-1, '−', value <= -MAX_CIRCUMSTANCE)}
         <output>{signed(value)}</output>
         {step(1, '+', value >= MAX_CIRCUMSTANCE)}
       </div>
@@ -217,9 +261,12 @@ const whenHint = (when: ApproachWhen) =>
   when === 'always' ? 'always counts' : when === 'failure' ? 'only when failing' : 'your choice'
 
 /**
- * Approach + skill pick, then Roll — shown to the joined player before rolling. One stacked
+ * Approach + skill pick, then the roll — shown to the player before they roll. One stacked
  * button per approach, its description to the left; picking posts straight away (the pick lives
  * on the challenge, so the board comes back with the chosen one marked).
+ *
+ * Everything here is declared **before** the dice and nothing after: the approach die is rolled
+ * with them, and the skill is a bonus on results that would otherwise already be on the table.
  */
 function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId: string }) {
   const { session, ch, charId } = props
@@ -228,7 +275,7 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
   return (
     <div class="challenge-player-setup">
       <div class="approach-pick">
-        <span class="approach-legend">Approach</span>
+        <span class="approach-legend">Approach (resolution roll)</span>
         {rules.challenges.approaches.map((a) => (
           <div class="approach-row">
             <p class="approach-desc">{a.description || whenHint(a.when)}</p>
@@ -245,7 +292,7 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
         ))}
       </div>
       <label class="skill-pick">
-        Skill boost
+        Skill
         <select name="skill" hx-post={`/c/${charId}/challenge/setup`} hx-trigger="change" hx-swap="none">
           <option value="">None</option>
           {skills.map((f) => (
@@ -255,18 +302,25 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
           ))}
         </select>
       </label>
-      <button type="button" class="primary" hx-post={`/c/${charId}/challenge/roll`} hx-swap="none" disabled={!ch.approach || undefined}>
-        Roll
+      {/* One press lands both checks together (user decision). */}
+      <button
+        type="button"
+        class="primary"
+        hx-post={`/c/${charId}/challenge/roll`}
+        hx-swap="none"
+        disabled={!ch.approach || undefined}
+      >
+        {ch.framingAbility ? 'Roll framing and resolution' : 'Roll'}
       </button>
     </div>
   )
 }
 
 /**
- * The approach die: one plain d6 rolled with the ability dice. When it counts follows the
+ * The approach die: one plain d6 rolled with the **resolution** dice. When it counts follows the
  * approach's `when` (always / only while failing / the player's choice); what it does on that
- * face comes from `effects` in rules.yaml. Effects that need a target put the board in a pending
- * state — the dice become tappable, or the two abilities appear here for extra dice.
+ * face comes from `effects` in rules.yaml. Effects that need a die put the board in a pending
+ * state and the resolution dice become tappable; the rest apply the moment Activate is pressed.
  */
 function ApproachDie(props: {
   session: Session
@@ -276,7 +330,6 @@ function ApproachDie(props: {
   /** GM debug tool: offer a button per face, forcing the die onto it. */
   debug?: boolean
   charId?: string
-  abilities: { side: 'main' | 'support'; label: string; field: NumberField | undefined }[]
 }) {
   const { session, ch, acting } = props
   const state = session.approachState(ch)
@@ -291,10 +344,10 @@ function ApproachDie(props: {
       ? ch.approachActivated
         ? 'Activated'
         : state.approach.when === 'failure'
-          ? 'In effect — the roll is failing'
+          ? 'In effect — the resolution is failing'
           : 'In effect'
       : state.status === 'skipped'
-        ? 'Skipped — the roll succeeded'
+        ? 'Skipped — the resolution succeeded'
         : 'Not activated'
   // Tweak only offers dice that have somewhere to go, so it can run out of targets (every die at
   // the worst face while lowering, say). Saying so beats prompting for a tap nothing can satisfy.
@@ -315,7 +368,7 @@ function ApproachDie(props: {
               ? 'In effect'
               : 'Done'
             : state.status === 'skipped'
-              ? 'Skipped — the roll succeeded'
+              ? 'Skipped — the resolution succeeded'
               : null
   const cls = ['approach-die', `approach-${state.status}`, pending && 'approach-pending'].filter(Boolean).join(' ')
   return (
@@ -335,26 +388,6 @@ function ApproachDie(props: {
         >
           Activate result
         </button>
-      )}
-      {/* Two effects have no die to tap — the player picks an ability here instead: extra dice
-          (rolled for that ability) and Perfect balance (its lowest die rises to its highest). */}
-      {acting && pending && abilityPick(effect!.kind) && (
-        <div class="approach-sides">
-          {props.abilities.map((a) => (
-            <button
-              type="button"
-              class="approach-side-btn"
-              style={a.field?.color ? `--field-color: ${a.field.color}; --field-ink: ${a.field.ink}` : undefined}
-              hx-post={`/c/${props.charId}/challenge/approach-pick?side=${a.side}${
-                effect!.kind === 'match_highest' ? '&effect=match' : ''
-              }`}
-              hx-swap="none"
-            >
-              <IconChip icon={a.field?.icon} />
-              <span class="label">{a.label}</span>
-            </button>
-          ))}
-        </div>
       )}
       {props.debug && <ApproachDieDebug approach={state.approach} die={state.die} />}
     </div>
@@ -392,13 +425,11 @@ function ApproachDieDebug(props: { approach: { effects: ApproachEffect[] }; die:
   )
 }
 
-/** Effects whose pick is one of the two abilities rather than a die on the board. */
-const abilityPick = (kind: ApproachEffect['kind']) => kind === 'extra_dice' || kind === 'match_highest'
-
 /**
- * What the player (or everyone else, watching) is told to do while an effect waits for a pick.
+ * What the player (or everyone else, watching) is told to tap while an effect waits for a die.
  * Effects over several dice count down, so the prompt always says how many are still to come;
- * two-step effects (Tweak, Perfect choice) name the step they are on instead.
+ * two-step effects (Tweak, Perfect choice) name the step they are on instead. Effects that need
+ * no die never get here — they apply on Activate.
  */
 function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, step: 'first' | 'second') {
   const who = acting ? 'Tap' : 'Player taps'
@@ -411,26 +442,7 @@ function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, 
   if (effect.kind === 'lower_raise') {
     return step === 'first' ? `${who} a die to lower it one face` : `${who} another die to raise it one face`
   }
-  if (effect.kind === 'discard_double') {
-    return step === 'first'
-      ? `${who} a die to discard it`
-      : `${who} a die on the other ability to copy it`
-  }
-  if (effect.kind === 'match_highest') {
-    const what = "whose lowest die rises to its highest"
-    return acting ? `Pick the ability ${what}` : `Player picks the ability ${what}`
-  }
-  const n = effect.dice === 1 ? 'one extra die' : `${effect.dice} extra dice`
-  return acting ? `Pick the ability to roll ${n} for` : `Player picks the ability for ${n}`
-}
-
-/** Skill bonus left to spend on the two sides (the declared skill's rank, minus what is spent). */
-function skillBonusState(session: Session, ch: Challenge) {
-  const char = ch.charId ? session.characters.get(ch.charId) : null
-  const skillField = ch.skill ? (session.rules.fields.get(ch.skill) as NumberField | undefined) : undefined
-  if (!char || !skillField) return null
-  const rank = Math.round(Number(session.baseOf(char, skillField)))
-  return { label: skillField.label, rank, left: rank - ch.mainSkillPoints - ch.supportSkillPoints }
+  return step === 'first' ? `${who} a die to discard it` : `${who} another die to copy it`
 }
 
 /**
@@ -474,58 +486,41 @@ function ExertionControls(props: { session: Session; ch: Challenge; charId: stri
   )
 }
 
-/** − / + for one side's skill bonus: spends from the shared pool, never below what it holds. */
-function SkillBonusControls(props: { ch: Challenge; charId: string; side: 'main' | 'support'; left: number }) {
-  const { ch, charId, side, left } = props
-  const points = side === 'main' ? ch.mainSkillPoints : ch.supportSkillPoints
-  const vals = (delta: number) => {
-    const next = { main: ch.mainSkillPoints, support: ch.supportSkillPoints }
-    next[side] += delta
-    return JSON.stringify(next)
-  }
-  return (
-    <div class="skill-alloc">
-      <button
-        type="button"
-        hx-post={`/c/${charId}/challenge/skill-points`}
-        hx-vals={vals(-1)}
-        hx-swap="none"
-        disabled={points <= 0 || undefined}
-        aria-label="Remove skill bonus"
-      >
-        −
-      </button>
-      <span class="skill-alloc-value">{signed(points)}</span>
-      <button
-        type="button"
-        hx-post={`/c/${charId}/challenge/skill-points`}
-        hx-vals={vals(1)}
-        hx-swap="none"
-        disabled={left <= 0 || undefined}
-        aria-label="Add skill bonus"
-      >
-        +
-      </button>
-    </div>
-  )
-}
-
-/** The joined player's own ability values for the two sides in play. */
+/** The rolling player's own ability values for the rolls in play (framing only when there is one). */
 function ChallengeAbilities(props: { session: Session; ch: Challenge }) {
   const { session, ch } = props
   const char = ch.charId ? session.characters.get(ch.charId) : null
   if (!char) return null
-  const mainField = session.rules.fields.get(ch.mainAbility) as NumberField
-  const supportField = session.rules.fields.get(ch.supportAbility) as NumberField
+  const ability = (id: string | null) => (id ? (session.rules.fields.get(id) as NumberField | undefined) : undefined)
+  const fields = [ability(ch.framingAbility), ability(ch.resolutionAbility)].filter(Boolean) as NumberField[]
   return (
     <div class="challenge-abilities">
       <span class="challenge-player-name">{char.name}</span>
-      <span>
-        {mainField.label} {session.valueOf(char, mainField)}
+      {fields.map((f) => (
+        <span>
+          {f.label} {session.valueOf(char, f)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * What the framing roll did to the resolution roll, in the ladder rung's own words — shown
+ * between the two boxes on every screen. It is derived, so a reroll or a point of exertion on the
+ * framing moves it (and the resolution's target) the moment it lands.
+ */
+function FramingResult(props: { math: ChallengeMath }) {
+  const { math } = props
+  if (!math.framing || !math.rung) return null
+  const shift = math.rungDifficulty
+  const tone = shift < 0 ? 'help' : shift > 0 || math.rung.degrees < 0 ? 'hinder' : 'even'
+  return (
+    <div class={`framing-result framing-${tone}`}>
+      <span class="framing-margin" title="How far the framing roll landed from the difficulty">
+        Framing {signed(math.framing.difference)}
       </span>
-      <span>
-        {supportField.label} {session.valueOf(char, supportField)}
-      </span>
+      <span class="framing-label">{math.rung.label}</span>
     </div>
   )
 }
@@ -533,51 +528,56 @@ function ChallengeAbilities(props: { session: Session; ch: Challenge }) {
 /** Full board for the current (last-started) challenge. Interactive parts only for role "player". */
 function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' | 'player' | 'table'; viewerCharId?: string }) {
   const { session, ch, role, viewerCharId } = props
-  const mainField = session.rules.fields.get(ch.mainAbility) as NumberField | undefined
-  const supportField = session.rules.fields.get(ch.supportAbility) as NumberField | undefined
-  const outcome = session.challengeOutcome(ch)
-  // Challenges store the number; name the tier it came from when one matches exactly.
-  const tierOf = (value: number) =>
-    session.rules.challenges.difficulties.find((d) => d.value === value)?.label ?? null
+  const ability = (id: string | null) => (id ? (session.rules.fields.get(id) as NumberField | undefined) : undefined)
+  const framingField = ability(ch.framingAbility)
+  const resolutionField = ability(ch.resolutionAbility)
+  const math = session.challengeMath(ch)
+  const rolled = session.challengePhase(ch) !== 'setup'
+  // Challenges store the number; name the tier the GM's own difficulty came from when one matches.
+  const tier = session.rules.challenges.difficulties.find((d) => d.value === ch.difficulty)?.label ?? null
   const isViewerTurn = role === 'player' && !!viewerCharId && ch.charId === viewerCharId
-  const bonus = skillBonusState(session, ch)
-  // Only the player who rolled acts on it, and only after the dice are in, until the GM closes it.
-  const acting = isViewerTurn && !!ch.main && !ch.closed
-  const allocating = acting && !!ch.skill && !!bonus
+  // Only the player who rolled acts on it, and only once the dice are in, until the GM closes it.
+  const acting = isViewerTurn && rolled && !ch.closed
   const exertion = session.availableExertion(ch)
-  const sideControls = (side: 'main' | 'support') => {
-    if (!acting) return undefined
-    return (
-      <>
-        {allocating && <SkillBonusControls ch={ch} charId={viewerCharId!} side={side} left={bonus!.left} />}
-        <button
-          type="button"
-          class="exert-spend"
-          hx-post={`/c/${viewerCharId}/challenge/spend-exertion`}
-          hx-vals={JSON.stringify({ side })}
-          hx-swap="none"
-          disabled={exertion <= 0 || undefined}
-        >
-          + exertion
-        </button>
-      </>
-    )
-  }
-  // A pending approach effect owns the dice while it lasts (it is the step the board is waiting
-  // on); otherwise they are exertion reroll buttons whenever exertion is in hand.
+  const spendControls = (roll: 'framing' | 'resolution') =>
+    acting ? (
+      <button
+        type="button"
+        class="exert-spend"
+        hx-post={`/c/${viewerCharId}/challenge/spend-exertion`}
+        hx-vals={JSON.stringify({ roll })}
+        hx-swap="none"
+        disabled={exertion <= 0 || undefined}
+      >
+        + exertion
+      </button>
+    ) : undefined
   const approach = session.approachState(ch)
+  // Whenever exertion is in hand and no approach effect is waiting, a roll's dice are reroll
+  // buttons — on both rolls, since both are on the table at once.
+  const rerollAction = (roll: 'framing' | 'resolution') => {
+    if (!acting || approach?.pending || exertion <= 0) return undefined
+    return (index: number): DieAction => ({
+      kind: 'reroll',
+      url: `/c/${viewerCharId}/challenge/reroll?roll=${roll}&index=${index}`,
+      title: 'Reroll with exertion',
+    })
+  }
+  // A pending approach effect owns the resolution dice while it lasts — it is the step the board
+  // is waiting on, so it takes those dice over from the reroll buttons. The framing roll is never
+  // an approach target, so its dice stay rerollable throughout.
   const pendingKind = acting && approach?.pending ? approach.effect?.kind : undefined
   // Multi-die effects never take the same die twice, so dice already used drop out.
-  const picked = (side: 'main' | 'support', index: number) => ch.approachPicked.includes(`${side}:${index}`)
-  const dieAction = (side: 'main' | 'support') => {
-    const tap = (kind: DieAction['kind'], effect: string, title: string) => (index: number) =>
-      picked(side, index)
-        ? undefined
-        : {
-            kind,
-            url: `/c/${viewerCharId}/challenge/approach-pick?effect=${effect}&side=${side}&index=${index}`,
-            title: `${title} (${approach!.approach.label})`,
-          }
+  const picked = (index: number) => ch.approachPicked.includes(`resolution:${index}`)
+  const tap = (kind: DieAction['kind'], effect: string, title: string) => (index: number) =>
+    picked(index)
+      ? undefined
+      : {
+          kind,
+          url: `/c/${viewerCharId}/challenge/approach-pick?effect=${effect}&index=${index}`,
+          title: `${title} (${approach!.approach.label})`,
+        }
+  const resolutionDieAction = () => {
     if (pendingKind === 'discard') return tap('discard', 'discard', 'Discard this die')
     if (pendingKind === 'reroll') return tap('reroll', 'reroll', 'Reroll this die')
     if (pendingKind === 'raise_face') return tap('face-change', 'face', 'Raise this die one face')
@@ -589,96 +589,80 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
     if (pendingKind === 'lower_raise') {
       const lowering = approach!.step === 'first'
       const tapper = tap('face-change', 'face', lowering ? 'Lower this die one face' : 'Raise this die one face')
-      return (index: number) => (session.tweakableDie(ch, side, index) ? tapper(index) : undefined)
+      return (index: number) => (session.tweakableDie(ch, index) ? tapper(index) : undefined)
     }
-    // Perfect choice: discard on one ability, then copy a die on the other — so once the discard
-    // is made, that side's dice stop being buttons.
+    // Perfect choice: discard one die, then copy another (the discarded one is already spent).
     if (pendingKind === 'discard_double') {
-      if (approach!.step === 'first') return tap('discard', 'discard', 'Discard this die')
-      return approach!.firstPickSide === side ? undefined : tap('face-change', 'copy', 'Copy this die')
+      return approach!.step === 'first'
+        ? tap('discard', 'discard', 'Discard this die')
+        : tap('face-change', 'copy', 'Copy this die')
     }
-    if (!acting || approach?.pending || exertion <= 0) return undefined
-    return (index: number): DieAction => ({
-      kind: 'reroll',
-      url: `/c/${viewerCharId}/challenge/reroll?side=${side}&index=${index}`,
-      title: 'Reroll with exertion',
-    })
+    return rerollAction('resolution')
   }
-  const abilities = [
-    { side: 'main' as const, label: mainField?.label ?? ch.mainAbility, field: mainField },
-    { side: 'support' as const, label: supportField?.label ?? ch.supportAbility, field: supportField },
-  ]
   return (
     <div class="challenge">
       {ch.description && <h3 class="challenge-description">{ch.description}</h3>}
       <div class="challenge-head">
         <span class={`stakes stakes-${ch.stakes}`}>{stakesLabel(ch.stakes)} stakes</span>
-        {outcome && <span class={outcome.success ? 'result success' : 'result failure'}>{outcome.success ? 'Success' : 'Failure'}</span>}
+        {math.success !== null && (
+          <span class={math.success ? 'result success' : 'result failure'}>
+            {math.success ? 'Success' : 'Failure'}
+          </span>
+        )}
+        {degreeText(math.degrees) && <span class="challenge-degree">{degreeText(math.degrees)}</span>}
         {ch.closed && <span class="badge closed">Done</span>}
       </div>
-      <div class="challenge-numbers">
-        <DifficultyBox
-          field={mainField}
-          label={mainField?.label ?? ch.mainAbility}
-          target={challengeTarget(ch, 'main')}
-          baseTarget={ch.mainDifficulty}
-          circumstance={ch.mainCircumstance}
-          circumstanceControls={
-            role === 'gm' && !ch.closed ? <CircumstanceControls side="main" value={ch.mainCircumstance} /> : undefined
-          }
-          tier={tierOf(ch.mainDifficulty)}
-          side={ch.main}
-          skillPoints={ch.mainSkillPoints}
-          outcome={outcome?.main ?? null}
-          stakes={ch.stakes}
+      <DifficultyPanel
+        math={math}
+        tier={tier}
+        controls={role === 'gm' && !ch.closed ? <CircumstanceControls value={ch.circumstance} /> : undefined}
+      />
+      {/* One box when the GM skipped framing, two when they didn't. */}
+      <div class={framingField ? 'challenge-numbers' : 'challenge-numbers solo'}>
+        {framingField && (
+          <RollBox
+            kind="Framing"
+            field={framingField}
+            label={framingField.label}
+            target={math.target}
+            side={ch.framing}
+            outcome={math.framing}
+            faces={session.rules.challenges.faces}
+            skillBonus={math.skillBonus}
+            exertion={ch.exertionFraming}
+            dieAction={rerollAction('framing')}
+            attemptLabel={role !== 'player'}
+            controls={spendControls('framing')}
+          />
+        )}
+        <RollBox
+          kind="Resolution"
+          field={resolutionField}
+          label={resolutionField?.label ?? ch.resolutionAbility}
+          target={math.resolutionTarget}
+          targetShift={math.rungDifficulty}
+          side={ch.resolution}
+          outcome={math.resolution}
           faces={session.rules.challenges.faces}
-          exertion={ch.exertionMain}
-          dieAction={dieAction('main')}
+          skillBonus={math.skillBonus}
+          exertion={ch.exertionResolution}
+          dieAction={resolutionDieAction()}
           attemptLabel={role !== 'player'}
-          controls={sideControls('main')}
-        />
-        <DifficultyBox
-          field={supportField}
-          label={supportField?.label ?? ch.supportAbility}
-          target={challengeTarget(ch, 'support')}
-          baseTarget={ch.supportDifficulty}
-          circumstance={ch.supportCircumstance}
-          circumstanceControls={
-            role === 'gm' && !ch.closed ? (
-              <CircumstanceControls side="support" value={ch.supportCircumstance} />
-            ) : undefined
-          }
-          tier={tierOf(ch.supportDifficulty)}
-          side={ch.support}
-          skillPoints={ch.supportSkillPoints}
-          outcome={outcome?.support ?? null}
-          stakes={ch.stakes}
-          faces={session.rules.challenges.faces}
-          exertion={ch.exertionSupport}
-          dieAction={dieAction('support')}
-          attemptLabel={role !== 'player'}
-          controls={sideControls('support')}
+          controls={spendControls('resolution')}
         />
       </div>
+      <FramingResult math={math} />
       <ApproachDie
         session={session}
         ch={ch}
         acting={acting}
-        debug={role === 'gm' && !!ch.main && !ch.closed}
+        debug={role === 'gm' && rolled && !ch.closed}
         charId={viewerCharId}
-        abilities={abilities}
       />
       {role !== 'player' && <ChallengeAbilities session={session} ch={ch} />}
-      {isViewerTurn && !ch.main && (
-        <ChallengeSetupControls session={session} ch={ch} charId={viewerCharId!} />
-      )}
-      {allocating && (
-        <p class="skill-bonus-left">
-          {bonus!.label} bonus: <b>{bonus!.left}</b> left of {bonus!.rank}
-        </p>
-      )}
+      {isViewerTurn && !rolled && <ChallengeSetupControls session={session} ch={ch} charId={viewerCharId!} />}
       {acting && <ExertionControls session={session} ch={ch} charId={viewerCharId!} />}
-      {role === 'gm' && ch.main && !ch.closed && (
+      {role === 'gm' && rolled && !ch.closed && (
         <button type="button" class="primary" hx-post="/gm/challenge/done" hx-swap="none">
           Challenge done
         </button>
@@ -694,20 +678,27 @@ function ChallengeLog(props: { session: Session; entries: Challenge[] }) {
   return (
     <ul class="challenge-log">
       {entries.map((ch) => {
-        const outcome = session.challengeOutcome(ch)
-        const mainField = session.rules.fields.get(ch.mainAbility)
-        const supportField = session.rules.fields.get(ch.supportAbility)
+        const math = session.challengeMath(ch)
+        const framingField = ch.framingAbility ? session.rules.fields.get(ch.framingAbility) : undefined
+        const resolutionField = session.rules.fields.get(ch.resolutionAbility)
         const char = ch.charId ? session.characters.get(ch.charId) : null
         return (
-          <li class={outcome ? (outcome.success ? 'success' : 'failure') : undefined}>
+          <li class={math.success === null ? undefined : math.success ? 'success' : 'failure'}>
             <span class="challenge-log-what">{ch.description || '—'}</span>
-            <span class="challenge-log-who">{char?.name ?? 'Nobody joined'}</span>
+            <span class="challenge-log-who">{char?.name ?? 'Nobody rolled'}</span>
+            {/* The effective number, not the GM's raw one — hence the note when something moved it. */}
             <span class="challenge-log-numbers">
-              {mainField?.label} {challengeTarget(ch, 'main')} / {supportField?.label}{' '}
-              {challengeTarget(ch, 'support')} · {stakesLabel(ch.stakes)}
-              {(ch.mainCircumstance !== 0 || ch.supportCircumstance !== 0) && ' · circumstance'}
+              {math.resolutionTarget} ·{framingField ? ` ${framingField.label} /` : ''}{' '}
+              {resolutionField?.label} · {stakesLabel(ch.stakes)}
+              {ch.circumstance !== 0 && ' · circumstance'}
+              {math.skillBonus > 0 && ` · ${math.skillLabel?.toLowerCase()}`}
             </span>
-            {outcome && <span class="challenge-log-result">{outcome.success ? 'Success' : 'Failure'}</span>}
+            {math.success !== null && (
+              <span class="challenge-log-result">
+                {math.success ? 'Success' : 'Failure'}
+                {degreeText(math.degrees) && ` · ${degreeText(math.degrees)}`}
+              </span>
+            )}
           </li>
         )
       })}
@@ -726,28 +717,26 @@ function IconChip(props: { icon?: Icon }) {
 }
 
 /**
- * One side of the setup dialog: a big indicator of what is picked, an ability column and a
- * difficulty column. All picking is Alpine state on the form (vars named by `ability`/`diff`).
+ * One ability column of the setup dialog: a big indicator of what is picked above a list of the
+ * sheet's abilities. Picking is Alpine state on the form (the var named by `abilityVar`).
  */
-function SidePicker(props: {
+function AbilityPicker(props: {
   title: string
+  hint: string
   abilityVar: string
-  diffVar: string
-  diffValueVar: string
   abilities: NumberField[]
-  difficulties: { id: string; label: string; value: number }[]
+  /** Offers a "No framing" button that clears the pick; only the framing roll is skippable. */
+  skippable?: boolean
 }) {
-  const { title, abilityVar, diffVar, diffValueVar, abilities, difficulties } = props
+  const { title, abilityVar, abilities } = props
   const picked = `(abilities.find((a) => a.id === ${abilityVar}) || {})`
+  const empty = props.skippable ? 'No framing roll' : 'Pick an ability'
   return (
     <section class="side-pick">
       <h4>{title}</h4>
+      <p class="side-hint">{props.hint}</p>
       <div class="big-indicator">
-        <span class="bi-ability" x-text={`${picked}.label || 'Pick an ability'`} x-bind:style={`${picked}.color && 'color: ' + ${picked}.color`}>
-          Pick an ability
-        </span>
-        {/* The number takes the ability's colour and is preceded by that ability's icon. Every
-            icon is rendered and only the picked one is shown, so no SVG is needed client-side. */}
+        {/* Every icon is rendered and only the picked one is shown, so no SVG is needed client-side. */}
         <span class="bi-value" x-bind:style={`${picked}.color && 'color: ' + ${picked}.color`}>
           {abilities.map((f) => (
             <span
@@ -759,43 +748,70 @@ function SidePicker(props: {
               <IconChip icon={f.icon} />
             </span>
           ))}
-          <span x-text={`${diffValueVar} === '' ? '–' : ${diffValueVar}`}>–</span>
+          <span x-text={`${picked}.label || '${empty}'`}>{empty}</span>
+        </span>
+      </div>
+      <div class="pick-col">
+        {props.skippable && (
+          <button
+            type="button"
+            class="pick-btn skip-btn"
+            x-bind:class={`{ on: !${abilityVar} }`}
+            x-on:click={`${abilityVar} = ''`}
+          >
+            <span class="label">No framing — resolution only</span>
+          </button>
+        )}
+        {abilities.map((f) => (
+          <button
+            type="button"
+            class="pick-btn ability-btn"
+            style={f.color ? `--field-color: ${f.color}; --field-ink: ${f.ink}` : undefined}
+            x-bind:class={`{ on: ${abilityVar} === '${f.id}' }`}
+            x-on:click={`${abilityVar} = '${f.id}'`}
+          >
+            <IconChip icon={f.icon} />
+            <span class="label">{f.label}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * The challenge's one difficulty: a tier off the rules.yaml ladder, shown as its number. The GM
+ * nudges it afterwards with the board's circumstance stepper rather than here, so there is one
+ * place a number moves and everyone sees why.
+ */
+function DifficultyPicker(props: { difficulties: { id: string; label: string; value: number }[] }) {
+  return (
+    <section class="side-pick">
+      <h4>Difficulty</h4>
+      <p class="side-hint">One number for the whole challenge — both rolls go against it.</p>
+      <div class="big-indicator">
+        <span class="bi-value">
+          <span x-text="diffValue === '' ? '–' : diffValue">–</span>
           <span
             class="bi-tier"
             x-cloak
-            x-show={diffVar}
-            x-text={`'(' + ((difficulties.find((d) => d.id === ${diffVar}) || {}).label || '') + ')'`}
+            x-show="diff"
+            x-text="'(' + ((difficulties.find((d) => d.id === diff) || {}).label || '') + ')'"
           ></span>
         </span>
       </div>
-      <div class="pick-columns">
-        <div class="pick-col">
-          {abilities.map((f) => (
-            <button
-              type="button"
-              class="pick-btn ability-btn"
-              style={f.color ? `--field-color: ${f.color}; --field-ink: ${f.ink}` : undefined}
-              x-bind:class={`{ on: ${abilityVar} === '${f.id}' }`}
-              x-on:click={`${abilityVar} = '${f.id}'`}
-            >
-              <IconChip icon={f.icon} />
-              <span class="label">{f.label}</span>
-            </button>
-          ))}
-        </div>
-        <div class="pick-col">
-          {difficulties.map((d) => (
-            <button
-              type="button"
-              class="pick-btn diff-btn"
-              x-bind:class={`{ on: ${diffVar} === '${d.id}' }`}
-              x-on:click={`${diffVar} = '${d.id}'; ${diffValueVar} = ${d.value}`}
-            >
-              <span class="label">{d.label}</span>
-              <span class="diff-value">{d.value}</span>
-            </button>
-          ))}
-        </div>
+      <div class="pick-col">
+        {props.difficulties.map((d) => (
+          <button
+            type="button"
+            class="pick-btn diff-btn"
+            x-bind:class={`{ on: diff === '${d.id}' }`}
+            x-on:click={`diff = '${d.id}'; diffValue = ${d.value}`}
+          >
+            <span class="label">{d.label}</span>
+            <span class="diff-value">{d.value}</span>
+          </button>
+        ))}
       </div>
     </section>
   )
@@ -805,8 +821,8 @@ function SidePicker(props: {
 const AFTER_START = [
   'if (!event.detail.successful) return;',
   'const d = Alpine.$data(this);',
-  "Object.assign(d, { description: '', stakes: 'normal', mainAbility: '', mainDiff: '', mainValue: '',",
-  "  supportAbility: '', supportDiff: '', supportValue: '', charId: '' });",
+  "Object.assign(d, { description: '', stakes: 'normal', diff: '', diffValue: '',",
+  "  framingAbility: '', resolutionAbility: '', charId: '' });",
   "this.closest('dialog').close()",
 ].join(' ')
 
@@ -845,12 +861,10 @@ export function ChallengeSetupDialog(props: { session: Session }) {
   const state = {
     description: '',
     stakes: 'normal',
-    mainAbility: '',
-    mainDiff: '',
-    mainValue: '',
-    supportAbility: '',
-    supportDiff: '',
-    supportValue: '',
+    diff: '',
+    diffValue: '',
+    framingAbility: '',
+    resolutionAbility: '',
     charId: '',
     abilities: abilities.map((f) => ({ id: f.id, label: f.label, color: f.color ?? '' })),
     difficulties: difficulties.map((d) => ({ id: d.id, label: d.label, value: d.value })),
@@ -870,15 +884,15 @@ export function ChallengeSetupDialog(props: { session: Session }) {
           </button>
         </header>
 
+        {/* Optional (user decision): a quick challenge at the table needs no name. */}
         <label class="challenge-description-field">
-          <span>What is the challenge?</span>
+          <span>What is the challenge? (optional)</span>
           <input
             name="description"
             x-model="description"
             placeholder="e.g. Climb the cliff before the tide turns"
             maxlength={200}
             autocomplete="off"
-            required
           />
         </label>
 
@@ -895,21 +909,19 @@ export function ChallengeSetupDialog(props: { session: Session }) {
           ))}
         </div>
 
-        <SidePicker
-          title="Main ability"
-          abilityVar="mainAbility"
-          diffVar="mainDiff"
-          diffValueVar="mainValue"
+        <DifficultyPicker difficulties={difficulties} />
+        <AbilityPicker
+          title="Framing ability (optional)"
+          hint="How far it lands from the difficulty sets the resolution's target. Skip it and the resolution check is the whole challenge."
+          abilityVar="framingAbility"
           abilities={abilities}
-          difficulties={difficulties}
+          skippable
         />
-        <SidePicker
-          title="Supporting ability"
-          abilityVar="supportAbility"
-          diffVar="supportDiff"
-          diffValueVar="supportValue"
+        <AbilityPicker
+          title="Resolution ability"
+          hint="This is the one that decides it. Both checks are rolled together."
+          abilityVar="resolutionAbility"
           abilities={abilities}
-          difficulties={difficulties}
         />
 
         <section class="side-pick player-pick">
@@ -918,15 +930,14 @@ export function ChallengeSetupDialog(props: { session: Session }) {
         </section>
 
         <input type="hidden" name="stakes" x-model="stakes" />
-        <input type="hidden" name="main_ability" x-model="mainAbility" />
-        <input type="hidden" name="main_difficulty" x-model="mainValue" />
-        <input type="hidden" name="support_ability" x-model="supportAbility" />
-        <input type="hidden" name="support_difficulty" x-model="supportValue" />
+        <input type="hidden" name="difficulty" x-model="diffValue" />
+        <input type="hidden" name="framing_ability" x-model="framingAbility" />
+        <input type="hidden" name="resolution_ability" x-model="resolutionAbility" />
         <input type="hidden" name="char_id" x-model="charId" />
         <button
           type="submit"
           class="primary"
-          x-bind:disabled="!(description.trim() && mainAbility && mainDiff && supportAbility && supportDiff && charId)"
+          x-bind:disabled="!(diff && resolutionAbility && charId)"
         >
           Start challenge
         </button>
@@ -934,7 +945,6 @@ export function ChallengeSetupDialog(props: { session: Session }) {
     </dialog>
   )
 }
-
 /**
  * The GM's solo roll: the opposition number it went against, the two dice, the total and whether
  * it beat the number. Shown on the GM board always, and on the player/table screens only once the

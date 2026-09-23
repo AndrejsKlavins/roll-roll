@@ -117,18 +117,18 @@ const APPROACH_WHEN: ApproachWhen[] = ['always', 'failure', 'choice']
  *   records that it was used and asks for nothing.
  * - `discard` — the player taps one rolled die; it stops counting.
  * - `reroll` — the player taps one rolled die; it is rolled again.
- * - `extra_dice` — the player picks one of the two abilities and rolls `dice` more for it.
+ * - `extra_dice` — `dice` more dice are rolled with the resolution on Activate.
  * - `raise_face` — the player taps `dice` dice; each moves one face up (a die already on the
  *   top face stays put and the pick is spent).
  * - `set_face` — the player taps `dice` dice; each is set to `toFace`, up or down.
  *
- * The last three are **two-step**: one effect, two picks that do different things (so `dice`
- * does not apply — they always ask for exactly the picks listed).
+ * Two of them are **two-step**: one effect, two taps that do different things (so `dice` does
+ * not apply — they always ask for exactly the picks listed).
  * - `lower_raise` (Tweak) — tap a die to lower it one face, then another to raise it one face.
- * - `match_highest` (Perfect balance) — pick one ability; its lowest die rises to the face of
- *   its highest. One pick, but of an ability rather than a die.
- * - `discard_double` (Perfect choice) — tap a die on one ability to discard it, then a die on
- *   the **other** ability to copy it (the twin joins that side and counts).
+ * - `match_highest` (Perfect balance) — the resolution's lowest die rises to the face of its
+ *   highest. Nothing to tap, so it applies on Activate.
+ * - `discard_double` (Perfect choice) — tap a die to discard it, then another to copy (the twin
+ *   joins the resolution roll and counts).
  *
  * `dice` is how many dice the effect involves: rolled (extra_dice) or tapped (raise/set).
  * The same die can't be tapped twice for one effect. Any cost ("payment") is settled at the
@@ -185,9 +185,9 @@ const defaultEffectLabel = (kind: ApproachEffectKind, dice: number, toFace: numb
             : kind === 'lower_raise'
               ? 'Lower one die a face, raise another'
               : kind === 'match_highest'
-                ? "One ability's lowest die rises to its highest"
+                ? 'The lowest die rises to the highest'
                 : kind === 'discard_double'
-                  ? 'Discard a die on one ability, copy one on the other'
+                  ? 'Discard one die, copy another'
                   : kind === 'declare'
                     ? 'A ruling, with no dice to change'
                     : 'Nothing happens'
@@ -196,9 +196,14 @@ const defaultEffectLabel = (kind: ApproachEffectKind, dice: number, toFace: numb
 export const approachEffect = (approach: Approach, face: number) =>
   approach.effects.find((e) => e.face === face) ?? null
 
-/** How many picks (dice or an ability) applying this effect asks the player for. */
+/**
+ * How many dice applying this effect asks the player to tap. The approach die belongs to the
+ * **resolution** roll alone, so the kinds that used to ask which of two abilities to act on
+ * (`extra_dice`, `match_highest`) have only one side to land on and apply on Activate.
+ */
 export const effectPicks = (effect: ApproachEffect | null) => {
   if (!effect || effect.kind === 'none' || effect.kind === 'declare') return 0
+  if (effect.kind === 'extra_dice' || effect.kind === 'match_highest') return 0
   if (TWO_STEP_KINDS.includes(effect.kind)) return 2
   return TAP_KINDS.includes(effect.kind) ? effect.dice : 1
 }
@@ -215,12 +220,45 @@ export const effectNeedsPick = (effect: ApproachEffect | null) => effectPicks(ef
 
 /** Whether this face is worth an Activate button at all (a blank face is not). */
 export const effectCanActivate = (effect: ApproachEffect | null) => !!effect && effect.kind !== 'none'
+/**
+ * One rung of the framing ladder: what a framing margin of `from` or better (but short of the
+ * next rung) does to the resolution roll. Both effects are **arithmetic only**, because the two
+ * rolls land together and the rung is recomputed live — exertion on the framing can move the
+ * resolution's target after the dice are down, which nothing dice-shaped could follow.
+ *
+ * - `difficulty` — moves the resolution's target; a plus makes it harder.
+ * - `degrees` — a boon (positive) or a complication (negative), **added** to whatever the
+ *   resolution's stakes produce.
+ */
+export type FramingRung = {
+  /** The lowest margin this rung covers. The bottom rung catches everything below it. */
+  from: number
+  difficulty: number
+  degrees: number
+  label: string
+}
+/**
+ * How the framing roll's margin sets up the resolution roll: a list of rungs by threshold, so
+ * the bands need not be evenly spaced (the user's ladder has a narrow −1/−2 rung under an even
+ * 0/+1/+2 one).
+ */
+export type FramingLadder = { rungs: FramingRung[] }
+
+/** The rung a framing margin lands on: the last one it reaches, or the bottom rung below them all. */
+export function framingRung(ladder: FramingLadder, margin: number): FramingRung | null {
+  const { rungs } = ladder
+  if (!rungs.length) return null
+  return rungs.findLast((r) => margin >= r.from) ?? rungs[0]!
+}
+
 /** What a rolled die face is called, and the colour it reads in (red → green). */
 export type FaceName = { value: number; label: string; color: string; ink: string }
 
 export type ChallengesConfig = {
   difficulties: Difficulty[]
   approaches: Approach[]
+  /** What the framing roll's margin does to the resolution roll. */
+  framing: FramingLadder
   /** Names/colours per die face, sorted by value; faces outside the list clamp to the ends. */
   faces: FaceName[]
   /** Pool stats a player may burn for exertion during a challenge (e.g. stamina, willpower). */
@@ -595,6 +633,27 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     }
   }
 
+  // challenges.framing: { ladder: [{ from, difficulty, degrees, label }] } — what the framing
+  // roll's margin does to the resolution roll. Each rung covers "from" up to the next rung's
+  // "from", and the bottom one catches everything below it, so the bands need not be even.
+  const rungs: FramingRung[] = (((rawChallenges.framing ?? {}).ladder ?? []) as any[])
+    .flatMap((r: any, i: number) => {
+      const where = `challenges.framing.ladder[${i}]`
+      const from = Number(r?.from)
+      if (!Number.isInteger(from)) {
+        fail(`${where}: from must be a whole number (the lowest margin this rung covers)`)
+        return []
+      }
+      const difficulty = Number(r?.difficulty ?? 0)
+      const degrees = Number(r?.degrees ?? 0)
+      if (!Number.isInteger(difficulty)) fail(`${where} (from ${from}): difficulty must be a whole number`)
+      if (!Number.isInteger(degrees)) fail(`${where} (from ${from}): degrees must be a whole number`)
+      return [{ from, difficulty, degrees, label: String(r?.label ?? '') }]
+    })
+    .sort((a, b) => a.from - b.from)
+  const duplicateRung = rungs.find((r, i) => i > 0 && r.from === rungs[i - 1]!.from)
+  if (duplicateRung) fail(`challenges.framing.ladder: two rungs start at ${duplicateRung.from}`)
+
   // challenges.exertion_sources: [stamina, willpower] — must be pool stats (spend 1, gain exertion).
   const exertionSources: string[] = ((rawChallenges.exertion_sources ?? []) as any[]).flatMap((id: any, i: number) => {
     const statId = String(id)
@@ -623,7 +682,14 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     traits,
     traitCategories,
     powerLevel,
-    challenges: { difficulties, approaches, faces, exertionSources, rankStep },
+    challenges: {
+      difficulties,
+      approaches,
+      framing: { rungs },
+      faces,
+      exertionSources,
+      rankStep,
+    },
   }
 }
 

@@ -17,10 +17,12 @@ import {
   effectCanActivate,
   effectPicks,
   effectStep,
+  framingRung,
   isBaseField,
   type Approach,
   type ApproachEffect,
   type Field,
+  type FramingRung,
   type NumberField,
   type Rules,
   type Trait,
@@ -64,61 +66,64 @@ export type ChallengeSide = {
 /** How far a circumstance modifier may be pushed in either direction. */
 export const MAX_CIRCUMSTANCE = 5
 
-/**
- * The number a side actually has to reach: its difficulty plus the GM's circumstance modifier, so
- * a plus makes the check harder and a minus makes it easier. Every screen and the outcome go
- * through this, so a circumstance can never be applied twice or missed.
- */
-export function challengeTarget(ch: Challenge, side: 'main' | 'support') {
-  return side === 'main'
-    ? ch.mainDifficulty + ch.mainCircumstance
-    : ch.supportDifficulty + ch.supportCircumstance
-}
-
 /** A side's total: every die that has not been discarded. */
 export function sideSum(side: ChallengeSide) {
   return side.dice.reduce((total, die, i) => (side.discarded?.[i] ? total : total + die), 0)
 }
+
+/** Which of a challenge's two rolls something applies to. */
+export type ChallengeRoll = 'framing' | 'resolution'
+
+/**
+ * A standard challenge. The GM sets **one difficulty** for the whole thing, names the
+ * **resolution** ability that decides it, and may also name a **framing** ability that colours
+ * how it goes. Both are rolled **at the same time** and shown together (user decision).
+ *
+ * The GM's circumstance modifier is added to the difficulty, giving the number both rolls go
+ * against; the player's declared skill is a **bonus on each rolled result** (user decision — it
+ * used to come off the difficulty). The framing roll's margin then moves the resolution's target
+ * up or down the framing ladder (rules.yaml), and may add a complication. That is worked out
+ * live, so exertion spent on the framing after the dice are down moves the resolution's target.
+ */
 export type Challenge = {
   id: string
-  /** What the challenge is, in the GM's words — shown on every screen. */
+  /** What the challenge is, in the GM's words. Optional — a quick challenge needs no name. */
   description: string
-  mainAbility: string
-  supportAbility: string
-  mainDifficulty: number
-  supportDifficulty: number
+  /** null when the GM skipped framing: the resolution check is the whole challenge. */
+  framingAbility: string | null
+  resolutionAbility: string
+  /** The GM's one difficulty for the whole challenge, before skill and circumstance move it. */
+  difficulty: number
   /**
-   * The GM's circumstance modifier per side, set after the difficulties are chosen. It is **added
-   * to the difficulty** (user decision): a plus raises the number the side has to reach and so
-   * works against the player, a minus lowers it and helps them. Always use challengeTarget().
+   * The GM's circumstance modifier, set after the difficulty is chosen. It is **added to the
+   * difficulty** (user decision): a plus raises the number to reach and so works against the
+   * player, a minus lowers it. Always read it through challengeMath().
    */
-  mainCircumstance: number
-  supportCircumstance: number
+  circumstance: number
   stakes: ChallengeStakes
   charId: string | null
+  /** The approach belongs to the **resolution** roll — its die lands with the resolution dice. */
   approach: string | null
-  /** The approach's own d6 (1–6), rolled with the ability dice. null until rolled / no approach. */
+  /** The approach's own d6 (1–6), rolled with the resolution dice. null until then / no approach. */
   approachDie: number | null
   /** The player pressed Activate on the approach die. */
   approachActivated: boolean
-  /** Picks the activated effect is still waiting for (a die or an ability); 0 = nothing pending. */
+  /** Dice the activated effect is still waiting to be tapped; 0 = nothing pending. */
   approachPicksLeft: number
-  /** Dice already tapped for this effect, as "side:index" — no die may be picked twice. */
+  /** Dice already tapped for this effect, as "roll:index" — no die may be picked twice. */
   approachPicked: string[]
-  /** A trained skill whose rank is split between the two sides (see the skillPoints fields). */
+  /** A trained skill declared before the roll; its rank is a bonus on both rolled results. */
   skill: string | null
-  mainSkillPoints: number
-  supportSkillPoints: number
-  /** Exertion: pool points burned (gained), how much was added to each side, and rerolls used. */
+  /** Exertion: pool points burned (gained), how much was added to each roll, and rerolls used. */
   exertionGained: number
-  exertionMain: number
-  exertionSupport: number
+  exertionFraming: number
+  exertionResolution: number
   rerolls: number
   /** The GM has accepted the result: nothing more can be spent or rerolled. */
   closed: boolean
-  /** null until rolled. Once rolled, skill points can still change (see setChallengeSkillPoints). */
-  main: ChallengeSide | null
-  support: ChallengeSide | null
+  /** Both are set by the one roll; `framing` stays null when the GM skipped it. */
+  framing: ChallengeSide | null
+  resolution: ChallengeSide | null
   by: string
 }
 /** Who sees a solo roll. The GM always does; `public` also shows it to players and /table. */
@@ -229,7 +234,32 @@ export type OppositionOutcome = {
 /** One side's result against its target: difference, pass/fail, and stakes-scaled degrees
  *  (positive = boons, negative = complications; see outcomeFor()). */
 export type SideOutcome = { sum: number; target: number; difference: number; success: boolean; degrees: number }
-export type ChallengeOutcome = { main: SideOutcome; support: SideOutcome; success: boolean }
+
+/**
+ * Everything a challenge's numbers add up to — the one place the arithmetic lives, so a skill,
+ * a circumstance or a framing rung can never be applied twice or missed.
+ */
+export type ChallengeMath = {
+  /** The GM's difficulty for the whole challenge, before anything moves it. */
+  difficulty: number
+  circumstance: number
+  /** The declared skill's rank — a bonus **on each rolled result**, not a cut in the difficulty. */
+  skillBonus: number
+  skillLabel: string | null
+  /** The framing roll's number to beat: difficulty + circumstance. */
+  target: number
+  framing: SideOutcome | null
+  /** The rung the framing margin landed on; null with no framing roll (or none configured). */
+  rung: FramingRung | null
+  /** What that rung does to the resolution's target (a plus makes it harder). */
+  rungDifficulty: number
+  resolutionTarget: number
+  resolution: SideOutcome | null
+  /** Boons (positive) / complications (negative): the resolution's stakes **plus** the rung's. */
+  degrees: number
+  /** null until the dice are rolled. */
+  success: boolean | null
+}
 
 /**
  * Rolls one side: 2 d6, each face shifted by (rank − 3) — average (rank 3) is a plain d6, each
@@ -307,30 +337,37 @@ export type EventData =
   | { type: 'skill_points_granted'; charId: string; amount: number; reason: 'creation' | 'level' | 'gm'; by: string }
   // Training: points assigned to a trained field (from/to are point totals).
   | { type: 'skill_trained'; charId: string; skill: string; from: number; to: number; by: string }
-  // Challenges (public-screen board): starting one, a player joining it (charId/approach/skill
-  // all set together, any may be null), rolling it, then optionally re-splitting skill points.
+  // Challenges (public-screen board): starting one, a player being put on it (charId/approach/
+  // skill all set together, any may be null), then the one roll that lands both checks.
   | {
       type: 'challenge_started'
       challengeId: string
       description: string
-      mainAbility: string
-      supportAbility: string
-      mainDifficulty: number
-      supportDifficulty: number
+      /** null when the GM skipped framing — the resolution check is the whole challenge. */
+      framingAbility: string | null
+      resolutionAbility: string
+      difficulty: number
       stakes: ChallengeStakes
       by: string
     }
   | { type: 'challenge_player_set'; challengeId: string; charId: string | null; approach: string | null; skill: string | null; by: string }
-  // approachDie is absent on challenges rolled before approach dice existed (or with no approach).
-  | { type: 'challenge_rolled'; challengeId: string; main: ChallengeSide; support: ChallengeSide; approachDie?: number; by: string }
+  // Both checks land together (user decision), so one event carries them: `framing` is absent on
+  // a challenge with no framing ability, and `approachDie` when no approach was picked.
+  | {
+      type: 'challenge_rolled'
+      challengeId: string
+      framing?: ChallengeSide
+      resolution: ChallengeSide
+      approachDie?: number
+      by: string
+    }
   | { type: 'challenge_approach_activated'; challengeId: string; by: string }
-  // GM circumstance modifier on one side. `value` is the whole new modifier, not a step, so a
-  // replay lands on the same number however many times it was nudged.
-  | { type: 'challenge_circumstance_set'; challengeId: string; side: 'main' | 'support'; value: number; by: string }
+  // GM circumstance modifier. `value` is the whole new modifier, not a step, so a replay lands
+  // on the same number however many times it was nudged.
+  | { type: 'challenge_circumstance_set'; challengeId: string; value: number; by: string }
   // GM debug tool: the approach die is forced onto a face, re-arming Activate (see setApproachDie).
   | { type: 'challenge_approach_die_set'; challengeId: string; die: number; by: string }
-  | { type: 'challenge_skill_points_set'; challengeId: string; mainSkillPoints: number; supportSkillPoints: number; by: string }
-  // Exertion: burn a pool point for one exertion, then spend it on a side or on rerolling a die.
+  // Exertion: burn a pool point for one exertion, then spend it on a roll or on rerolling a die.
   | {
       type: 'challenge_exerted'
       challengeId: string
@@ -341,11 +378,11 @@ export type EventData =
       to: number
       by: string
     }
-  | { type: 'challenge_exertion_spent'; challengeId: string; side: 'main' | 'support'; by: string }
+  | { type: 'challenge_exertion_spent'; challengeId: string; roll: ChallengeRoll; by: string }
   | {
       type: 'challenge_rerolled'
       challengeId: string
-      side: 'main' | 'support'
+      roll: ChallengeRoll
       index: number
       face: number
       value: number
@@ -353,12 +390,12 @@ export type EventData =
       source?: 'exertion' | 'approach'
       by: string
     }
-  // Approach-die effects: one die stops counting, its face moves, or extra dice join one side.
-  | { type: 'challenge_die_discarded'; challengeId: string; side: 'main' | 'support'; index: number; by: string }
+  // Approach-die effects: one die stops counting, its face moves, or extra dice join the roll.
+  | { type: 'challenge_die_discarded'; challengeId: string; roll: ChallengeRoll; index: number; by: string }
   | {
       type: 'challenge_face_changed'
       challengeId: string
-      side: 'main' | 'support'
+      roll: ChallengeRoll
       index: number
       /** The face id the die now shows, and its rank-shifted value. Equal to the old ones when
        *  the effect could not move it (e.g. raising a die already on the top face). */
@@ -371,13 +408,13 @@ export type EventData =
   | {
       type: 'challenge_dice_added'
       challengeId: string
-      side: 'main' | 'support'
+      roll: ChallengeRoll
       faces: number[]
       values: number[]
       /** What to show under each added die; absent for plain extra dice, which carry no marker. */
       markers?: DieMarker[]
       /** Set when the dice are copies: the index of the die they were copied from, so the pick
-       *  is spent on it (`discard_double`). Absent for `extra_dice`, which picks an ability. */
+       *  is spent on it (`discard_double`). Absent for `extra_dice`, which needs no pick. */
       from?: number
       by: string
     }
@@ -698,15 +735,17 @@ export class Session {
         break
       }
       case 'challenge_started':
+        // Challenges logged before the framing redesign carry two difficulties and no resolution
+        // ability; there is no sensible way to read them as one, so they are dropped (user
+        // decision: no migration). Their later events then find no challenge and do nothing.
+        if (!e.resolutionAbility) break
         this.challenges.push({
           id: e.challengeId,
           description: e.description ?? '',
-          mainAbility: e.mainAbility,
-          supportAbility: e.supportAbility,
-          mainDifficulty: e.mainDifficulty,
-          supportDifficulty: e.supportDifficulty,
-          mainCircumstance: 0,
-          supportCircumstance: 0,
+          framingAbility: e.framingAbility ?? null,
+          resolutionAbility: e.resolutionAbility,
+          difficulty: e.difficulty,
+          circumstance: 0,
           stakes: e.stakes,
           charId: null,
           approach: null,
@@ -715,15 +754,13 @@ export class Session {
           approachPicksLeft: 0,
           approachPicked: [],
           skill: null,
-          mainSkillPoints: 0,
-          supportSkillPoints: 0,
           exertionGained: 0,
-          exertionMain: 0,
-          exertionSupport: 0,
+          exertionFraming: 0,
+          exertionResolution: 0,
           rerolls: 0,
           closed: false,
-          main: null,
-          support: null,
+          framing: null,
+          resolution: null,
           by: e.by,
         })
         break
@@ -734,7 +771,13 @@ export class Session {
       }
       case 'challenge_rolled': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
-        if (ch) Object.assign(ch, { main: e.main, support: e.support, approachDie: e.approachDie ?? null })
+        if (ch) {
+          Object.assign(ch, {
+            framing: e.framing ?? null,
+            resolution: e.resolution,
+            approachDie: e.approachDie ?? null,
+          })
+        }
         break
       }
       case 'challenge_approach_activated': {
@@ -754,14 +797,7 @@ export class Session {
       }
       case 'challenge_circumstance_set': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
-        if (!ch) break
-        if (e.side === 'main') ch.mainCircumstance = e.value
-        else ch.supportCircumstance = e.value
-        break
-      }
-      case 'challenge_skill_points_set': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
-        if (ch) Object.assign(ch, { mainSkillPoints: e.mainSkillPoints, supportSkillPoints: e.supportSkillPoints })
+        if (ch) ch.circumstance = e.value
         break
       }
       case 'challenge_exerted': {
@@ -774,13 +810,13 @@ export class Session {
       case 'challenge_exertion_spent': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
         if (!ch) break
-        if (e.side === 'main') ch.exertionMain += 1
-        else ch.exertionSupport += 1
+        if (e.roll === 'framing') ch.exertionFraming += 1
+        else ch.exertionResolution += 1
         break
       }
       case 'challenge_rerolled': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
-        const side = ch && ch[e.side]
+        const side = ch && ch[e.roll]
         if (!ch || !side) break
         side.dice[e.index] = e.value
         if (side.faces) side.faces[e.index] = e.face
@@ -788,35 +824,35 @@ export class Session {
         side.rerolled[e.index] = (side.rerolled[e.index] ?? 0) + 1
         side.sum = sideSum(side)
         // An approach reroll is free; only exertion rerolls count against what was burned.
-        if (e.source === 'approach') this.spendApproachPick(ch, e.side, e.index)
+        if (e.source === 'approach') this.spendApproachPick(ch, e.roll, e.index)
         else ch.rerolls += 1
         break
       }
       case 'challenge_die_discarded': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
-        const side = ch && ch[e.side]
+        const side = ch && ch[e.roll]
         if (!ch || !side) break
         side.discarded = side.discarded ?? side.dice.map(() => false)
         side.discarded[e.index] = true
         side.sum = sideSum(side)
-        this.spendApproachPick(ch, e.side, e.index)
+        this.spendApproachPick(ch, e.roll, e.index)
         break
       }
       case 'challenge_face_changed': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
-        const side = ch && ch[e.side]
+        const side = ch && ch[e.roll]
         if (!ch || !side) break
         side.dice[e.index] = e.value
         if (side.faces) side.faces[e.index] = e.face
         side.changed = side.changed ?? side.dice.map(() => null)
         side.changed[e.index] = e.marker
         side.sum = sideSum(side)
-        this.spendApproachPick(ch, e.side, e.index)
+        this.spendApproachPick(ch, e.roll, e.index)
         break
       }
       case 'challenge_dice_added': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
-        const side = ch && ch[e.side]
+        const side = ch && ch[e.roll]
         if (!ch || !side) break
         // A marked die (a copy) needs the `changed` array even if nothing had moved before.
         if (e.markers?.some(Boolean)) side.changed = side.changed ?? side.dice.map(() => null)
@@ -826,9 +862,8 @@ export class Session {
         if (side.rerolled) side.rerolled.push(...e.values.map(() => 0))
         if (side.changed) side.changed.push(...e.values.map((_, i) => e.markers?.[i] ?? null))
         side.sum = sideSum(side)
-        // Copies are picked by tapping a die, so that die is spent; extra dice pick an ability.
-        if (e.from !== undefined) this.spendApproachPick(ch, e.side, e.from)
-        else ch.approachPicksLeft = Math.max(0, ch.approachPicksLeft - 1)
+        // Copies are picked by tapping a die, so that die is spent; extra dice need no pick.
+        if (e.from !== undefined) this.spendApproachPick(ch, e.roll, e.from)
         break
       }
       case 'challenge_closed': {
@@ -896,10 +931,15 @@ export class Session {
     }
   }
 
-  /** One pick of an approach effect is used up on that die; a die is never picked twice. */
-  private spendApproachPick(ch: Challenge, side: 'main' | 'support', index: number) {
-    ch.approachPicksLeft = Math.max(0, ch.approachPicksLeft - 1)
-    ch.approachPicked.push(`${side}:${index}`)
+  /**
+   * One pick of an approach effect is used up on that die; a die is never picked twice. Effects
+   * that apply on Activate (extra_dice, match_highest) have no pick outstanding, so their events
+   * pass through here without spending one.
+   */
+  private spendApproachPick(ch: Challenge, roll: ChallengeRoll, index: number) {
+    if (ch.approachPicksLeft <= 0) return
+    ch.approachPicksLeft -= 1
+    ch.approachPicked.push(`${roll}:${index}`)
   }
 
   /** trait_added/trait_removed: a change targets base (ability), skillPoints (skill) or statBonus (derived). */
@@ -1262,40 +1302,49 @@ export class Session {
     return !!f && isBaseField(f) && !f.trained
   }
 
-  /** Starts a new challenge, becoming the current one (any previous one falls into history). */
+  /**
+   * Starts a new challenge, becoming the current one (any previous one falls into history).
+   * One difficulty covers the whole thing. The resolution ability is what decides it; the
+   * **framing ability is optional** (user decision) — skip it and the resolution check is the
+   * whole challenge. The name is optional too: a quick challenge needs none.
+   */
   startChallenge(
     opts: {
-      description: string
-      mainAbility: string
-      supportAbility: string
-      mainDifficulty: number
-      supportDifficulty: number
+      description?: string
+      framingAbility?: string | null
+      resolutionAbility: string
+      difficulty: number
       stakes: ChallengeStakes
     },
     by: string,
   ) {
-    if (!this.isAbilityField(opts.mainAbility) || !this.isAbilityField(opts.supportAbility)) return null
-    if (!Number.isFinite(opts.mainDifficulty) || !Number.isFinite(opts.supportDifficulty)) return null
-    const description = opts.description.trim().slice(0, 200)
-    if (!description) return null // the GM names every challenge
-    const challengeId = crypto.randomUUID().slice(0, 8)
+    const framingAbility = opts.framingAbility || null
+    if (framingAbility !== null && !this.isAbilityField(framingAbility)) return null
+    if (!this.isAbilityField(opts.resolutionAbility)) return null
+    if (!Number.isFinite(opts.difficulty)) return null
     return this.append({
       type: 'challenge_started',
-      challengeId,
-      description,
-      mainAbility: opts.mainAbility,
-      supportAbility: opts.supportAbility,
-      mainDifficulty: Math.round(opts.mainDifficulty),
-      supportDifficulty: Math.round(opts.supportDifficulty),
+      challengeId: crypto.randomUUID().slice(0, 8),
+      description: (opts.description ?? '').trim().slice(0, 200),
+      framingAbility,
+      resolutionAbility: opts.resolutionAbility,
+      difficulty: Math.round(opts.difficulty),
       stakes: opts.stakes,
       by,
     })
   }
 
-  /** Sets who's rolling and their approach/skill. Any of the three may be cleared with null. */
+  /**
+   * Sets who's rolling and their approach/skill. Any of the three may be cleared with null.
+   * All of it is declared before the dice and locked once they land — see below.
+   */
   setChallengePlayer(challengeId: string, charId: string | null, approach: string | null, skill: string | null, by: string) {
     const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch) return null
+    if (!ch || ch.closed) return null
+    // Everything here is declared before the dice: the approach die is rolled with them, the
+    // skill is a bonus on results that are already on the table, and the player is the one who
+    // rolled. None of it moves once the roll is in.
+    if (ch.resolution) return null
     if (charId !== null && !this.characters.has(charId)) return null
     if (approach !== null && !this.rules.challenges.approaches.some((a) => a.id === approach)) return null
     if (skill !== null) {
@@ -1305,20 +1354,39 @@ export class Session {
     return this.append({ type: 'challenge_player_set', challengeId, charId, approach, skill, by })
   }
 
-  /** Rolls both sides for the joined player's current ability values. Once per challenge. */
+  /** Where a challenge has got to: picking, rolled, closed. */
+  challengePhase(ch: Challenge): 'setup' | 'rolled' | 'done' {
+    if (ch.closed) return 'done'
+    return ch.resolution ? 'rolled' : 'setup'
+  }
+
+  /** The rolling player's current rank in one of the challenge's abilities. */
+  private challengeRank(ch: Challenge, roll: ChallengeRoll) {
+    const char = ch.charId ? this.characters.get(ch.charId) : null
+    const abilityId = roll === 'framing' ? ch.framingAbility : ch.resolutionAbility
+    const field = abilityId ? this.rules.fields.get(abilityId) : undefined
+    return char && field && field.type === 'number' ? Number(this.valueOf(char, field)) : null
+  }
+
+  /**
+   * Rolls the challenge: the framing check (when there is one) and the resolution check **at the
+   * same time**, in one event, so the table sees both results together (user decision). Nothing
+   * the framing does to the resolution touches its dice — the ladder is arithmetic, worked out
+   * live in challengeMath() — so a later exertion on the framing still moves the target.
+   * The approach die is a plain d6, no rank shift. Once per challenge.
+   */
   rollChallenge(challengeId: string, by: string) {
     const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch || !ch.charId || ch.main) return null
-    const char = this.characters.get(ch.charId)
-    if (!char) return null
-    const mainRank = Number(this.valueOf(char, this.rules.fields.get(ch.mainAbility) as NumberField))
-    const supportRank = Number(this.valueOf(char, this.rules.fields.get(ch.supportAbility) as NumberField))
+    if (!ch || ch.closed || !ch.charId || ch.resolution) return null
+    const resolutionRank = this.challengeRank(ch, 'resolution')
+    if (resolutionRank === null) return null
+    const framingRank = ch.framingAbility ? this.challengeRank(ch, 'framing') : null
+    if (ch.framingAbility && framingRank === null) return null
     return this.append({
       type: 'challenge_rolled',
       challengeId,
-      main: rollChallengeSide(mainRank),
-      support: rollChallengeSide(supportRank),
-      // The approach die is a plain d6 — no rank shift; what its face does is in rules.yaml.
+      framing: framingRank === null ? undefined : rollChallengeSide(framingRank),
+      resolution: rollChallengeSide(resolutionRank),
       approachDie: ch.approach ? cryptoRng(APPROACH_DIE_SIDES) : undefined,
       by,
     })
@@ -1334,16 +1402,17 @@ export class Session {
    * How the approach die stands right now. Nothing applies by itself — the player presses
    * Activate — and `when` decides whether that button is offered at all:
    * - `always` (Limitless): as soon as it is rolled.
-   * - `failure` (Unbreakable): only while the roll fails, i.e. at least one side is short of its
-   *   target. A successful roll `skips` it, and that flips live as the sums change — but once
-   *   activated the die stays `active`, so an effect that turns the roll into a success (raising
-   *   dice, say) doesn't grey out the very thing that caused it.
+   * - `failure` (Unbreakable): only while the resolution roll is short of its target. A
+   *   successful roll `skips` it, and that flips live as the sum changes — but once activated
+   *   the die stays `active`, so an effect that turns the roll into a success (raising dice,
+   *   say) doesn't grey out the very thing that caused it.
    * - `choice` (Exquisite): whenever the player likes.
    *
    * `effect` is what this face does (null when the approach has none configured), `canActivate`
-   * says whether the button belongs on screen, and `picksLeft` counts the dice (or the one
-   * ability) an activated effect is still waiting for.
-   * Returns null when nothing was rolled (no approach, or a pre-approach-die challenge).
+   * says whether the button belongs on screen, and `picksLeft` counts the dice an activated
+   * effect is still waiting to be tapped.
+   * Returns null until the resolution is rolled (the approach die lands with it), and for a
+   * challenge with no approach at all.
    */
   approachState(ch: Challenge): {
     approach: Approach
@@ -1355,9 +1424,6 @@ export class Session {
     picksLeft: number
     /** Which pick of a two-step effect is outstanding; always 'first' for single-pick kinds. */
     step: 'first' | 'second'
-    /** The side a two-step effect's first pick landed on — `discard_double`'s second pick must
-     *  go on the other one. null until that first pick is made. */
-    firstPickSide: 'main' | 'support' | null
   } | null {
     if (ch.approachDie === null || !ch.approach) return null
     const approach = this.rules.challenges.approaches.find((a) => a.id === ch.approach)
@@ -1368,7 +1434,7 @@ export class Session {
         ? 'active'
         : approach.when === 'choice'
           ? 'ready'
-          : this.challengeOutcome(ch)?.success
+          : this.challengeMath(ch).success
             ? 'skipped'
             : 'active'
     const effect = approachEffect(approach, ch.approachDie)
@@ -1384,14 +1450,15 @@ export class Session {
       pending: ch.approachPicksLeft > 0,
       picksLeft: ch.approachPicksLeft,
       step: effectStep(effect, ch.approachPicksLeft),
-      firstPickSide: this.firstPickSide(ch),
     }
   }
 
   /**
-   * Presses Activate on the approach die. Effects that need targets (a die to discard, reroll or
-   * change, an ability for extra dice) leave that many `approachPicksLeft`; the rest are done
-   * here. One way only, and never after the GM closes the challenge.
+   * Presses Activate on the approach die. Effects that need a die tapped (discard, reroll, a
+   * face change) leave that many `approachPicksLeft`; the rest are done here and now — including
+   * `extra_dice` and `match_highest`, which used to ask which ability to act on and no longer
+   * have a choice, since the approach belongs to the resolution roll alone.
+   * One way only, and never after the GM closes the challenge.
    */
   activateApproach(challengeId: string, charId: string, by: string) {
     const acting = this.actingCharacter(challengeId, charId)
@@ -1399,19 +1466,21 @@ export class Session {
     const state = this.approachState(acting.ch)
     if (!state?.canActivate) return false
     this.append({ type: 'challenge_approach_activated', challengeId, by })
+    if (state.effect?.kind === 'extra_dice') this.applyExtraDice(acting.ch, state.effect, by)
+    if (state.effect?.kind === 'match_highest') this.applyMatchHighest(acting.ch, by)
     return true
   }
 
   /**
    * GM debug tool: forces the approach die onto `die` so a face's effect can be tried without
-   * rolling for it. Only while the challenge is rolled, has an approach and is still open.
-   * Activate is re-armed (as if the die had just landed on that face), but changes an earlier
-   * activation already made to the ability dice — discards, rerolls, moved faces — stay: they
-   * are rolled results, and the log keeps both events.
+   * rolling for it. Only while the resolution is rolled, the challenge has an approach and it is
+   * still open. Activate is re-armed (as if the die had just landed on that face), but changes an
+   * earlier activation already made to the resolution dice — discards, rerolls, moved faces —
+   * stay: they are rolled results, and the log keeps both events.
    */
   setApproachDie(challengeId: string, die: number, by: string) {
     const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch || ch.closed || !ch.main || !ch.approach) return false
+    if (!ch || ch.closed || !ch.resolution || !ch.approach) return false
     if (!Number.isInteger(die) || die < 1 || die > APPROACH_DIE_SIDES) return false
     this.append({ type: 'challenge_approach_die_set', challengeId, die, by })
     return true
@@ -1426,20 +1495,21 @@ export class Session {
   }
 
   /**
-   * A die that is on the board and still counting. A side is not a fixed pair — `extra_dice` and
-   * `discard_double` grow it — so the index is checked against what the side actually holds now.
+   * A die that is on the board and still counting. A roll is not a fixed pair — the framing
+   * ladder and `extra_dice`/`discard_double` grow it — so the index is checked against what that
+   * roll actually holds now.
    */
-  private dieInPlay(ch: Challenge, side: 'main' | 'support', index: number) {
-    const rolled = ch[side]
+  private dieInPlay(ch: Challenge, roll: ChallengeRoll, index: number) {
+    const rolled = ch[roll]
     if (!rolled || !Number.isInteger(index) || index < 0 || index >= rolled.dice.length) return null
     return rolled.discarded?.[index] ? null : rolled // discarded dice are out of play
   }
 
   /** A die the effect may still be pointed at: in play, and not already picked. */
-  private pickableDie(ch: Challenge, side: 'main' | 'support', index: number) {
-    const rolled = this.dieInPlay(ch, side, index)
+  private pickableDie(ch: Challenge, index: number) {
+    const rolled = this.dieInPlay(ch, 'resolution', index)
     if (!rolled) return null
-    return ch.approachPicked.includes(`${side}:${index}`) ? null : rolled // one pick per die
+    return ch.approachPicked.includes(`resolution:${index}`) ? null : rolled // one pick per die
   }
 
   /**
@@ -1451,10 +1521,10 @@ export class Session {
    * Only Tweak works this way — `raise_face` (Unbreakable) still spends its pick on a top-face die
    * by an earlier decision, and its prompt counts those taps down.
    */
-  tweakableDie(ch: Challenge, side: 'main' | 'support', index: number) {
-    if (!this.pickableDie(ch, side, index)) return false
-    const face = ch[side]?.faces?.[index]
-    if (face === undefined) return false // pre-`faces` challenges have no face to compare
+  tweakableDie(ch: Challenge, index: number) {
+    if (!this.pickableDie(ch, index)) return false
+    const face = ch.resolution?.faces?.[index]
+    if (face === undefined) return false
     const { faces } = this.rules.challenges
     if (faces.length === 0) return true // no faces configured, so nothing to be at the end of
     return this.stepOf(ch) === 'first' ? face > faces[0]!.value : face < faces.at(-1)!.value
@@ -1462,21 +1532,19 @@ export class Session {
 
   /** Whether any die on the board is still a legal target for Tweak's current step. */
   anyTweakableDie(ch: Challenge) {
-    return (['main', 'support'] as const).some((side) =>
-      (ch[side]?.dice ?? []).some((_, index) => this.tweakableDie(ch, side, index)),
-    )
+    return (ch.resolution?.dice ?? []).some((_, index) => this.tweakableDie(ch, index))
   }
 
   /**
    * Approach effect: the tapped die stops counting (it stays on screen, struck through).
-   * Also the **first** step of `discard_double`, whose second step copies a die on the other side.
+   * Also the **first** step of `discard_double`, whose second step copies another die.
    */
-  discardDie(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
+  discardDie(challengeId: string, charId: string, index: number, by: string) {
     const pending = this.pendingEffect(challengeId, charId, ['discard', 'discard_double'])
-    if (!pending || !this.pickableDie(pending.ch, side, index)) return false
+    if (!pending || !this.pickableDie(pending.ch, index)) return false
     // discard_double discards on its first pick only; the second one is the copy.
     if (pending.effect.kind === 'discard_double' && this.stepOf(pending.ch) !== 'first') return false
-    this.append({ type: 'challenge_die_discarded', challengeId, side, index, by })
+    this.append({ type: 'challenge_die_discarded', challengeId, roll: 'resolution', index, by })
     return true
   }
 
@@ -1485,22 +1553,14 @@ export class Session {
     return effectStep(this.approachEffectOf(ch), ch.approachPicksLeft)
   }
 
-  /** The side a two-step effect's first pick was made on ("side:index"), or null before it. */
-  private firstPickSide(ch: Challenge): 'main' | 'support' | null {
-    const key = ch.approachPicked[0]
-    return key?.startsWith('main:') ? 'main' : key?.startsWith('support:') ? 'support' : null
-  }
-
   /** Approach effect: the tapped die is rolled again, free of exertion. */
-  approachReroll(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
+  approachReroll(challengeId: string, charId: string, index: number, by: string) {
     const pending = this.pendingEffect(challengeId, charId, ['reroll'])
-    if (!pending || !this.pickableDie(pending.ch, side, index)) return false
-    const field = this.rules.fields.get(side === 'main' ? pending.ch.mainAbility : pending.ch.supportAbility) as
-      | NumberField
-      | undefined
-    if (!field) return false
-    const { face, value } = rollOneFace(Number(this.valueOf(pending.char, field)))
-    this.append({ type: 'challenge_rerolled', challengeId, side, index, face, value, source: 'approach', by })
+    if (!pending || !this.pickableDie(pending.ch, index)) return false
+    const rank = this.challengeRank(pending.ch, 'resolution')
+    if (rank === null) return false
+    const { face, value } = rollOneFace(rank)
+    this.append({ type: 'challenge_rerolled', challengeId, roll: 'resolution', index, face, value, source: 'approach', by })
     return true
   }
 
@@ -1510,15 +1570,15 @@ export class Session {
    * step with how that die was rolled. A raise that can't go higher still spends the pick, and
    * the die then carries no marker because nothing moved.
    */
-  changeDieFace(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
+  changeDieFace(challengeId: string, charId: string, index: number, by: string) {
     const pending = this.pendingEffect(challengeId, charId, ['raise_face', 'set_face', 'lower_raise'])
-    const rolled = pending && this.pickableDie(pending.ch, side, index)
-    if (!pending || !rolled?.faces) return false // pre-`faces` challenges have no face to move
+    const rolled = pending && this.pickableDie(pending.ch, index)
+    if (!pending || !rolled?.faces) return false
     const was = rolled.faces[index]!
     const { kind } = pending.effect
     // Tweak (`lower_raise`) lowers on its first pick and raises on its second, and refuses a die
     // that is already at the end it would move toward (see tweakableDie).
-    if (kind === 'lower_raise' && !this.tweakableDie(pending.ch, side, index)) return false
+    if (kind === 'lower_raise' && !this.tweakableDie(pending.ch, index)) return false
     const lowering = kind === 'lower_raise' && this.stepOf(pending.ch) === 'first'
     const face = lowering
       ? Math.max(this.bottomFace(was), was - 1)
@@ -1528,7 +1588,16 @@ export class Session {
     const shift = rolled.dice[index]! - was
     const moved: DieMarker = lowering ? 'lowered' : kind === 'set_face' ? 'squashed' : 'raised'
     const marker: DieMarker = face === was ? null : moved
-    this.append({ type: 'challenge_face_changed', challengeId, side, index, face, value: face + shift, marker, by })
+    this.append({
+      type: 'challenge_face_changed',
+      challengeId,
+      roll: 'resolution',
+      index,
+      face,
+      value: face + shift,
+      marker,
+      by,
+    })
     return true
   }
 
@@ -1537,49 +1606,46 @@ export class Session {
   private bottomFace = (fallback: number) => this.rules.challenges.faces[0]?.value ?? fallback
 
   /**
-   * Approach effect `match_highest` (Perfect balance): the player picks an ability, and that
-   * side's **lowest** die rises to the face of its **highest**. Discarded dice are out of it on
-   * both counts. A side whose dice already match spends the pick with nothing moved (like a raise
-   * on the top face); a side with nothing in play cannot be picked at all.
+   * Approach effect `match_highest` (Perfect balance): the resolution roll's **lowest** die
+   * rises to the face of its **highest**. Discarded dice are out of it on both counts. The
+   * approach only ever acts on the resolution roll, so there is no ability to pick and this
+   * applies the moment the player presses Activate; a roll whose dice already match moves
+   * nothing, and one with nothing in play does nothing at all.
    */
-  matchHighestDie(challengeId: string, charId: string, side: 'main' | 'support', by: string) {
-    const pending = this.pendingEffect(challengeId, charId, ['match_highest'])
-    const rolled = pending?.ch[side]
-    if (!pending || !rolled?.faces) return false // pre-`faces` challenges have no face to move
+  private applyMatchHighest(ch: Challenge, by: string) {
+    const rolled = ch.resolution
+    if (!rolled?.faces) return
     const inPlay = rolled.faces.flatMap((face, i) => (rolled.discarded?.[i] ? [] : [{ face, i }]))
-    if (inPlay.length === 0) return false
+    if (inPlay.length === 0) return
     const lowest = inPlay.reduce((low, d) => (d.face < low.face ? d : low))
     const highest = inPlay.reduce((high, d) => (d.face > high.face ? d : high))
+    if (highest.face === lowest.face) return // nothing to rise to
     const shift = rolled.dice[lowest.i]! - lowest.face
-    const marker: DieMarker = highest.face === lowest.face ? null : 'matched'
     this.append({
       type: 'challenge_face_changed',
-      challengeId,
-      side,
+      challengeId: ch.id,
+      roll: 'resolution',
       index: lowest.i,
       face: highest.face,
       value: highest.face + shift,
-      marker,
+      marker: 'matched',
       by,
     })
-    return true
   }
 
   /**
-   * Second step of `discard_double` (Perfect choice): a twin of the tapped die joins its side and
-   * counts. It has to be on the **other** ability from the die discarded first — that is what
-   * makes the face a choice — so a tap on the discarded side is refused.
+   * Second step of `discard_double` (Perfect choice): a twin of the tapped die joins the
+   * resolution roll and counts. The one-pick-per-die rule keeps it off the die just discarded.
    */
-  duplicateDie(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
+  duplicateDie(challengeId: string, charId: string, index: number, by: string) {
     const pending = this.pendingEffect(challengeId, charId, ['discard_double'])
-    const rolled = pending && this.pickableDie(pending.ch, side, index)
+    const rolled = pending && this.pickableDie(pending.ch, index)
     if (!pending || !rolled?.faces) return false
     if (this.stepOf(pending.ch) !== 'second') return false // the discard comes first
-    if (this.firstPickSide(pending.ch) === side) return false // the copy goes on the other ability
     this.append({
       type: 'challenge_dice_added',
       challengeId,
-      side,
+      roll: 'resolution',
       faces: [rolled.faces[index]!],
       values: [rolled.dice[index]!],
       markers: ['copied'],
@@ -1589,73 +1655,81 @@ export class Session {
     return true
   }
 
-  /** Approach effect: extra dice for the ability the player picked, rolled at its rank. */
-  addApproachDice(challengeId: string, charId: string, side: 'main' | 'support', by: string) {
-    const pending = this.pendingEffect(challengeId, charId, ['extra_dice'])
-    if (!pending || !pending.ch[side]) return false
-    const field = this.rules.fields.get(side === 'main' ? pending.ch.mainAbility : pending.ch.supportAbility) as
-      | NumberField
-      | undefined
-    if (!field) return false
-    const rank = Number(this.valueOf(pending.char, field))
-    const rolls = Array.from({ length: pending.effect.dice }, () => rollOneFace(rank))
+  /** Approach effect `extra_dice`: more dice for the resolution roll, at its ability's rank. */
+  private applyExtraDice(ch: Challenge, effect: ApproachEffect, by: string) {
+    const rank = this.challengeRank(ch, 'resolution')
+    if (rank === null || !ch.resolution) return
+    const rolls = Array.from({ length: effect.dice }, () => rollOneFace(rank))
     this.append({
       type: 'challenge_dice_added',
-      challengeId,
-      side,
+      challengeId: ch.id,
+      roll: 'resolution',
       faces: rolls.map((r) => r.face),
       values: rolls.map((r) => r.value),
       by,
     })
-    return true
   }
 
-  /** Re-splits the declared skill's rank between the two sides (each clamped to 0..rank). */
-  setChallengeSkillPoints(challengeId: string, mainPoints: number, supportPoints: number, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch || !ch.main || !ch.skill || !ch.charId) return null
-    const char = this.characters.get(ch.charId)
-    const skillField = this.rules.fields.get(ch.skill) as NumberField | undefined
-    if (!char || !skillField) return null
-    const rank = Math.round(Number(this.baseOf(char, skillField)))
-    const clamp = (n: number, max: number) => Math.max(0, Math.min(max, Math.round(Number(n) || 0)))
-    const main = clamp(mainPoints, rank)
-    const support = clamp(supportPoints, rank - main)
-    if (main === ch.mainSkillPoints && support === ch.supportSkillPoints) return null
-    return this.append({
-      type: 'challenge_skill_points_set',
-      challengeId,
-      mainSkillPoints: main,
-      supportSkillPoints: support,
-      by,
-    })
+  /**
+   * The declared skill's rank, which is added to **each rolled result** — one point per rank.
+   * 0 when no skill is declared (or the character/field has since gone).
+   */
+  challengeSkillBonus(ch: Challenge) {
+    const char = ch.charId ? this.characters.get(ch.charId) : null
+    const field = ch.skill ? (this.rules.fields.get(ch.skill) as NumberField | undefined) : undefined
+    if (!char || !field) return { bonus: 0, label: null as string | null }
+    return { bonus: Math.max(0, Math.round(Number(this.baseOf(char, field)))), label: field.label }
   }
 
-  /** Full outcome (both sides + overall success) for a rolled challenge; null until rolled. */
-  challengeOutcome(ch: Challenge): ChallengeOutcome | null {
-    if (!ch.main || !ch.support) return null
-    const main = outcomeFor(
-      ch.main.sum + ch.mainSkillPoints + ch.exertionMain,
-      challengeTarget(ch, 'main'),
-      ch.stakes,
-    )
-    const support = outcomeFor(
-      ch.support.sum + ch.supportSkillPoints + ch.exertionSupport,
-      challengeTarget(ch, 'support'),
-      ch.stakes,
-    )
-    return { main, support, success: main.success && support.success }
+  /**
+   * Everything the challenge's numbers add up to — the only place that arithmetic lives, so
+   * every screen, the approach's `failure` rule and the history log agree. Works at any phase:
+   * before the roll it is just the target, and `success` stays null until the dice are in.
+   *
+   * It is **derived, never stored**, which is what makes the framing recalculate on the fly: a
+   * point of exertion or a reroll on the framing changes its margin, which changes the rung,
+   * which moves the resolution's target and its degrees — all on the next render.
+   */
+  challengeMath(ch: Challenge): ChallengeMath {
+    const { bonus, label } = this.challengeSkillBonus(ch)
+    // The skill is a bonus on the roll (user decision), so it never moves the difficulty.
+    const target = ch.difficulty + ch.circumstance
+    const framing = ch.framing
+      ? outcomeFor(ch.framing.sum + bonus + ch.exertionFraming, target, 'low')
+      : null
+    const rung = framing ? framingRung(this.rules.challenges.framing, framing.difference) : null
+    const rungDifficulty = rung?.difficulty ?? 0
+    const resolutionTarget = target + rungDifficulty
+    const resolution = ch.resolution
+      ? outcomeFor(ch.resolution.sum + bonus + ch.exertionResolution, resolutionTarget, ch.stakes)
+      : null
+    return {
+      difficulty: ch.difficulty,
+      circumstance: ch.circumstance,
+      skillBonus: bonus,
+      skillLabel: label,
+      target,
+      framing,
+      rung,
+      rungDifficulty,
+      resolutionTarget,
+      resolution,
+      // The rung's boon/complication is added to whatever the stakes produced (user decision).
+      degrees: (resolution?.degrees ?? 0) + (rung?.degrees ?? 0),
+      success: resolution ? resolution.success : null,
+    }
   }
 
-  /** Exertion earned but not yet spent on a side or a reroll. */
+  /** Exertion earned but not yet spent on a roll or a reroll. It carries across both rolls. */
   availableExertion(ch: Challenge) {
-    return ch.exertionGained - ch.exertionMain - ch.exertionSupport - ch.rerolls
+    return ch.exertionGained - ch.exertionFraming - ch.exertionResolution - ch.rerolls
   }
 
-  /** The challenge's player, if it is rolled, open and theirs to act on. */
+  /** The challenge's player, if the dice are in, it is open and it is theirs to act on. */
   private actingCharacter(challengeId: string, charId: string) {
     const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch || ch.closed || !ch.main || ch.charId !== charId) return null
+    // `resolution`, not `framing`: framing is optional, the resolution check always happens.
+    if (!ch || ch.closed || !ch.resolution || ch.charId !== charId) return null
     const char = this.characters.get(charId)
     return char?.status === 'active' ? { ch, char } : null
   }
@@ -1680,52 +1754,57 @@ export class Session {
     return true
   }
 
-  /** Spends one exertion as +1 on one side's result. */
-  spendExertion(challengeId: string, charId: string, side: 'main' | 'support', by: string) {
+  /**
+   * Spends one exertion as +1 on one roll's result. Both land together, so the player picks
+   * which — and a point put on the framing can still move the resolution's target, since the
+   * ladder rung is worked out live.
+   */
+  spendExertion(challengeId: string, charId: string, roll: ChallengeRoll, by: string) {
     const acting = this.actingCharacter(challengeId, charId)
     if (!acting || this.availableExertion(acting.ch) <= 0) return false
-    this.append({ type: 'challenge_exertion_spent', challengeId, side, by })
+    if (roll === 'framing' && !acting.ch.framing) return false // nothing framed to spend it on
+    this.append({ type: 'challenge_exertion_spent', challengeId, roll, by })
     return true
   }
 
   /**
-   * Spends one exertion to reroll a single die, keeping the new face. **Any** die on the side is
-   * fair game, including ones an approach effect added (which sit at index 2 and up) — only a
-   * discarded die is out, since it no longer counts.
+   * Spends one exertion to reroll a single die of either roll, keeping the new face. **Any** die
+   * there is fair game, including ones an approach effect added (which sit at index 2 and up) —
+   * only a discarded die is out, since it no longer counts. Rerolling a framing die re-reads the
+   * ladder, so the resolution's target follows it.
    */
-  rerollDie(challengeId: string, charId: string, side: 'main' | 'support', index: number, by: string) {
+  rerollDie(challengeId: string, charId: string, roll: ChallengeRoll, index: number, by: string) {
     const acting = this.actingCharacter(challengeId, charId)
     if (!acting || this.availableExertion(acting.ch) <= 0) return false
-    const { ch, char } = acting
-    if (!this.dieInPlay(ch, side, index)) return false
-    const abilityId = side === 'main' ? ch.mainAbility : ch.supportAbility
-    const field = this.rules.fields.get(abilityId) as NumberField | undefined
-    if (!field) return false
-    const { face, value } = rollOneFace(Number(this.valueOf(char, field)))
-    this.append({ type: 'challenge_rerolled', challengeId, side, index, face, value, by })
+    const { ch } = acting
+    if (!this.dieInPlay(ch, roll, index)) return false
+    const rank = this.challengeRank(ch, roll)
+    if (rank === null) return false
+    const { face, value } = rollOneFace(rank)
+    this.append({ type: 'challenge_rerolled', challengeId, roll, index, face, value, by })
     return true
   }
 
   /**
-   * GM circumstance modifier: nudges one side's by `delta` (the board's − and + buttons), clamped
-   * to ±MAX_CIRCUMSTANCE. A plus raises the target — see Challenge.mainCircumstance. Allowed from
-   * the moment the difficulties are set until the GM closes the challenge, so a ruling that lands
-   * mid-roll still counts; the outcome, the tier note and every screen follow it live.
+   * GM circumstance modifier: nudges the challenge's one difficulty by `delta` (the board's − and
+   * + buttons), clamped to ±MAX_CIRCUMSTANCE. A plus raises the number to reach — see
+   * Challenge.circumstance. Allowed from the moment the challenge is started until the GM closes
+   * it, so a ruling that lands mid-roll still counts; both targets, the framing rung and every
+   * screen follow it live.
    */
-  adjustCircumstance(challengeId: string, side: 'main' | 'support', delta: number, by: string) {
+  adjustCircumstance(challengeId: string, delta: number, by: string) {
     const ch = this.challenges.find((x) => x.id === challengeId)
     if (!ch || ch.closed || !Number.isFinite(delta)) return false
-    const was = side === 'main' ? ch.mainCircumstance : ch.supportCircumstance
-    const value = Math.max(-MAX_CIRCUMSTANCE, Math.min(MAX_CIRCUMSTANCE, was + Math.round(delta)))
-    if (value === was) return false // already at the end of the range, or a delta of 0
-    this.append({ type: 'challenge_circumstance_set', challengeId, side, value, by })
+    const value = Math.max(-MAX_CIRCUMSTANCE, Math.min(MAX_CIRCUMSTANCE, ch.circumstance + Math.round(delta)))
+    if (value === ch.circumstance) return false // already at the end of the range, or a delta of 0
+    this.append({ type: 'challenge_circumstance_set', challengeId, value, by })
     return true
   }
 
   /** GM accepts the result: the challenge stops taking input. */
   closeChallenge(challengeId: string, by: string) {
     const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch || ch.closed || !ch.main) return false
+    if (!ch || ch.closed || !ch.resolution) return false
     this.append({ type: 'challenge_closed', challengeId, by })
     return true
   }

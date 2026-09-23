@@ -73,9 +73,9 @@ training:
   points_stat: skill_points
   rank_costs: [4, 5, 6, 7, 8]
 
-# Challenges (public-screen board, /table): a difficulty ladder the GM picks a starting number
-# from (then hand-adjusts, e.g. to add an opposing ability), and the named approaches offered
-# to the rolling player. Tweak "value" freely — nothing else depends on the exact numbers.
+# Challenges (public-screen board, /table): a difficulty ladder the GM picks the challenge's one
+# difficulty from (then hand-adjusts with the circumstance stepper), the framing ladder, and the
+# named approaches offered to the rolling player. Tweak "value" freely — nothing else depends on it.
 challenges:
   difficulties:
     - { id: easy,        label: Easy,        value: 4 }
@@ -83,11 +83,29 @@ challenges:
     - { id: hard,        label: Hard,        value: 10 }
     - { id: very_hard,   label: Very hard,   value: 13 }
     - { id: epic,        label: Epic,        value: 16 }
-  # Each approach rolls its own d6 (the approach die) alongside the ability dice. "when" says
-  # whether that die's effect applies: always, only while the roll is failing (at least one side
-  # short of its target), or by the player's choice (an Activate button).
+  # The framing roll sets up the resolution roll. Its margin (framing result − difficulty) picks
+  # a rung: "from" is the lowest margin that rung covers, and it runs up to the next rung's
+  # "from". The bottom rung also catches everything below it, so the bands need not be even.
+  #   difficulty  moves the resolution's target; a plus makes it harder
+  #   degrees     a boon (+) or a complication (−), added to the resolution's own degrees
+  # Both are arithmetic on purpose: the two rolls land together and the rung is worked out live,
+  # so exertion on the framing moves the resolution's target after the dice are already down.
+  framing:
+    ladder:
+      #  from   the band it covers
+      - { from: -9, difficulty: 6, degrees: -1, label: Critical disadvantage — resolution difficulty +6 and a complication }  # −9 or worse
+      - { from: -8, difficulty: 3, degrees: -1, label: A big disadvantage — resolution difficulty +3 and a complication }     # −8 … −6
+      - { from: -5, difficulty: 1, degrees: -1, label: A disadvantage — resolution difficulty +1 and a complication }         # −5 … −3
+      - { from: -2, difficulty: 1,              label: Slightly off — resolution difficulty +1 }                              # −2, −1
+      - { from: 0,                              label: The situation is even }                                                # 0 … 2
+      - { from: 3,  difficulty: -1,             label: An advantage — resolution difficulty −1 }                              # 3 … 5
+      - { from: 6,  difficulty: -3,             label: A big advantage — resolution difficulty −3 }                           # 6 … 8
+      - { from: 9,  difficulty: -6,             label: Critical advantage — resolution difficulty −6 }                        # 9 or better
+  # Each approach rolls its own d6 (the approach die) alongside the resolution dice. "when" says
+  # whether that die's effect applies: always, only while the resolution roll is short of its
+  # target, or by the player's choice (an Activate button).
   # "effects" says what each face of that approach's die does, and therefore what the player is
-  # asked to pick after pressing Activate: a die (discard, reroll) or an ability (extra_dice).
+  # asked to tap after pressing Activate (nothing, for effects that need no target).
   # Faces with no effect (or kind: none) offer no Activate button. Any cost for an effect is
   # paid at the table — the app never deducts one.
   # "description" is free text shown beside the pick button — say what the approach is for.
@@ -111,10 +129,10 @@ challenges:
         - { face: 1, kind: none }
         # Labels with a comma must be quoted: an unquoted one would end at the comma in { } flow.
         - { face: 2, kind: lower_raise,    label: "Tweak — lower one die a face, raise another a face" }
-        - { face: 3, kind: match_highest,  label: "Perfect balance — lowest ability's lowest die rises to its highest" }
-        - { face: 4, kind: match_highest,  label: "Perfect balance — lowest ability's lowest die rises to its highest" }
-        - { face: 5, kind: discard_double, label: "Perfect choice — discard a die on one ability, copy one on the other" }
-        - { face: 6, kind: discard_double, label: "Perfect choice — discard a die on one ability, copy one on the other" }
+        - { face: 3, kind: match_highest,  label: "Perfect balance — your lowest resolution die rises to your highest" }
+        - { face: 4, kind: match_highest,  label: "Perfect balance — your lowest resolution die rises to your highest" }
+        - { face: 5, kind: discard_double, label: "Perfect choice — discard one resolution die, copy another" }
+        - { face: 6, kind: discard_double, label: "Perfect choice — discard one resolution die, copy another" }
     - id: limitless
       label: Limitless
       when: always
@@ -123,11 +141,11 @@ challenges:
         - { face: 1, kind: discard }
         - { face: 2, kind: none }
         - { face: 3, kind: reroll,     label: Emotional outburst - Reroll one die and get a hindrance (-1 next roll) }
-        - { face: 4, kind: extra_dice, dice: 1, label: Wreck it - Roll one extra die and break something }
-        - { face: 5, kind: extra_dice, dice: 1, label: Push too far - Roll one extra die and lose a resource }
-        - { face: 6, kind: extra_dice, dice: 2, label: Lose your head - Roll two extra dice and get a light injury }
-  # Pool stats a player can burn during a challenge: 1 point → 1 exertion, spent as +1 on a
-  # side or to reroll one die. Must be pools (pool: true).
+        - { face: 4, kind: extra_dice, dice: 1, label: Wreck it - Roll one extra resolution die and break something }
+        - { face: 5, kind: extra_dice, dice: 1, label: Push too far - Roll one extra resolution die and lose a resource }
+        - { face: 6, kind: extra_dice, dice: 2, label: Lose your head - Roll two extra resolution dice and get a light injury }
+  # Pool stats a player can burn during a challenge: 1 point → 1 exertion, spent as +1 on the
+  # open roll or to reroll one of its dice. Must be pools (pool: true).
   exertion_sources: [stamina, willpower]
   # What each rolled die face is called, worst (red) to best (green). A rank shifts every face,
   # so results outside this list use the nearest end (e.g. a 7 reads as "amazing").

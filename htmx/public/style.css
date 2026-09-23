@@ -305,10 +305,12 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .stakes-btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 
 .side-pick { display: grid; gap: 0.5rem; }
+.side-hint { margin: -0.2rem 0 0; color: var(--muted); font-size: 0.8rem; }
 .side-pick h4 { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .big-indicator { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 0.8rem; padding: 0.6rem 0.9rem; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
-/* Ability name on top; below it the icon, the number and the tier — all in the ability colour. */
+/* The icon, then the picked ability (or the difficulty number and its tier), in its colour. */
 .big-indicator { grid-template-columns: 1fr; }
+/* Solo-roll dialog: the label above its big number. */
 .bi-ability { font-size: 1rem; font-weight: 600; color: var(--muted); }
 .bi-value { display: flex; align-items: center; gap: 0.5rem; font-size: 2.2rem; font-weight: 700; line-height: 1; }
 .bi-icon { display: inline-flex; }
@@ -316,9 +318,10 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .bi-icon .field-icon svg, .bi-icon .field-icon img { width: 21px; height: 21px; }
 .bi-tier { font-size: 1rem; font-weight: 600; }
 
-.pick-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
-.pick-col { display: grid; gap: 0.35rem; align-content: start; }
+.pick-col { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.35rem; align-content: start; }
 .pick-btn { display: flex; align-items: center; gap: 0.5rem; text-align: left; padding: 0.35rem 0.5rem; min-height: 40px; }
+/* "No framing — resolution only": a pick like any other, just without an ability behind it. */
+.skip-btn { color: var(--muted); font-style: italic; }
 .pick-btn .label { flex: 1; }
 .pick-btn.ability-btn .label { color: var(--field-color, var(--text)); font-weight: 600; }
 .pick-btn .field-icon { width: 26px; height: 26px; border-radius: 7px; }
@@ -342,6 +345,8 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* minmax(0, 1fr), not 1fr: the boxes have to be able to shrink below their content's natural
    width, or a wide child (the circumstance stepper, a long tier name) overflows the GM column. */
 .challenge-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+/* With no framing ability there is one box, so it should not stretch across both columns. */
+.challenge-numbers.solo { grid-template-columns: minmax(0, 1fr); max-width: 360px; margin-inline: auto; }
 @media (max-width: 480px) { .challenge-numbers { grid-template-columns: 1fr; } }
 .difficulty-box { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; text-align: center; }
 .difficulty-box.success { border-color: #5cc27a; }
@@ -352,6 +357,29 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* Number (and tier name) in the ability's colour, like the GM's setup dialog. */
 .difficulty-target { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.2rem 0.5rem; color: var(--field-color, var(--text)); font-size: 3rem; font-weight: 800; line-height: 1.1; }
 .difficulty-tier { font-size: 1.1rem; font-weight: 600; }
+/* The one global difficulty, above the two roll boxes: big number, then the working. */
+.difficulty-panel { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.8rem 1rem; text-align: center; margin-bottom: 1rem; }
+/* The calculation everyone sees: GM number - skill +/- circumstance = what both rolls beat. */
+.difficulty-calc { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.15rem 0.45rem; margin: 0.35rem 0 0; font-size: 0.9rem; color: var(--muted); }
+.calc-part.help { color: #5cc27a; }
+.calc-part.hinder { color: var(--danger); }
+.calc-total { font-weight: 700; color: var(--text); }
+/* The declared skill, named once under the difficulty; it shows again beside each result. */
+.difficulty-note { margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--accent); }
+/* "Framing" / "Resolution" above the ability name, so the two boxes can never be confused. */
+.roll-kind { color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.65rem; font-weight: 700; margin-bottom: 0.2rem; }
+.roll-waiting { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.8rem; font-style: italic; }
+/* What the framing did to the resolution, in the words of the ladder rung it landed on. */
+.framing-result { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.3rem 0.7rem; padding: 0.5rem 0.8rem; border: 1px dashed var(--line); border-radius: 10px; text-align: center; }
+.framing-margin { font-weight: 800; font-size: 1.1rem; }
+.framing-label { font-size: 0.9rem; }
+.framing-help { border-color: #5cc27a; }
+.framing-help .framing-margin { color: #5cc27a; }
+.framing-hinder { border-color: var(--danger); }
+.framing-hinder .framing-margin { color: var(--danger); }
+.framing-even .framing-margin { color: var(--muted); }
+/* Boons / complications for the whole challenge: the stakes plus whatever the framing added. */
+.challenge-degree { font-size: 0.85rem; font-weight: 700; color: var(--accent); }
 .difficulty-result { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); display: grid; gap: 0.3rem; }
 /* "Player attempt" heads the rolled part of a box; faces are square dice. */
 .attempt-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; }
@@ -367,13 +395,11 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* Lowering a die is the cost side of Tweak, so it does not read as a bonus; a copy is new dice. */
 .die-changed-lowered { color: var(--danger); }
 .die-changed-copied { color: var(--secret); }
-.dice-faces .skill-bonus { color: var(--accent); align-self: flex-start; line-height: 2.2rem; }
 /* The attempt's total, in the ability's colour like the target above it. */
 .difficulty-sum { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
 .difficulty-diff { font-size: 1.1rem; color: var(--muted); }
 .difficulty-box.success .difficulty-diff { color: #5cc27a; }
 .difficulty-box.failure .difficulty-diff { color: var(--danger); }
-.difficulty-degree { font-size: 0.85rem; font-weight: 600; }
 
 .challenge-abilities { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; font-size: 0.95rem; color: var(--muted); }
 .challenge-player-name { font-weight: 700; color: var(--text); }
@@ -486,10 +512,6 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* Waiting for the player to pick a die or an ability: the prompt is the loudest thing on the board. */
 .approach-pending { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
 .approach-pending .approach-status { color: var(--accent); }
-.approach-sides { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
-.approach-side-btn { display: flex; align-items: center; gap: 0.4rem; color: var(--field-color, var(--text)); border-color: color-mix(in srgb, var(--field-color, var(--line)) 50%, var(--line)); }
-.approach-side-btn .field-icon { width: 24px; height: 24px; border-radius: 7px; }
-.approach-side-btn .field-icon svg, .approach-side-btn .field-icon img { width: 15px; height: 15px; }
 /* GM-only debug row: force the approach die onto any face. Deliberately drab — it is not play. */
 .approach-debug { display: grid; justify-items: center; gap: 0.25rem; margin-top: 0.4rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); width: 100%; }
 .approach-debug-legend { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
@@ -504,14 +526,10 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .die-discard .die-face { box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 40%, transparent); }
 .die-discard:hover .die-face { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 45%, transparent); }
 .skill-pick { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-/* Skill bonus split: − / + under each result, with what is left named below the boxes. */
-.skill-alloc { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 0.2rem; }
-.skill-alloc button { width: 40px; min-height: 40px; padding: 0; font-size: 1.2rem; }
-.skill-alloc-value { min-width: 2.5ch; font-weight: 700; color: var(--accent); }
-.skill-bonus-left { margin: 0; text-align: center; color: var(--muted); font-size: 0.9rem; }
-.skill-bonus-left b { color: var(--text); font-size: 1.05rem; }
 
 /* ---- exertion ---- */
+/* A committed skill or exertion bonus shown beside an opposition contestant's dice. */
+.dice-faces .skill-bonus { color: var(--accent); align-self: flex-start; line-height: 2.2rem; }
 .dice-faces .exert-bonus { color: var(--secret); align-self: flex-start; line-height: 2.2rem; }
 .die-tappable { padding: 0; background: none; border: none; min-height: 0; cursor: pointer; }
 /* Tappable dice carry a faint ring so they read as buttons on touch screens too. */

@@ -383,10 +383,9 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const started = session.startChallenge(
       {
         description: body.description ?? '',
-        mainAbility: body.main_ability ?? '',
-        supportAbility: body.support_ability ?? '',
-        mainDifficulty: Number(body.main_difficulty),
-        supportDifficulty: Number(body.support_difficulty),
+        framingAbility: body.framing_ability ?? '',
+        resolutionAbility: body.resolution_ability ?? '',
+        difficulty: Number(body.difficulty),
         stakes,
       },
       actorName(c),
@@ -410,6 +409,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // One press lands both checks at once (user decision), so there is one roll route.
   app.post('/c/:id/challenge/roll', (c) => {
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
@@ -430,12 +430,14 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // Both checks are on the table at once, so exertion names the roll it goes on. A point put on
+  // the framing re-reads the ladder and moves the resolution's target with it.
   app.post('/c/:id/challenge/spend-exertion', async (c) => {
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
     if (!char || !ch) return c.notFound()
-    const side = (await form(c)).side === 'support' ? 'support' : 'main'
-    if (session.spendExertion(ch.id, char.id, side, actorName(c))) pushChallenge()
+    const roll = (await form(c)).roll === 'framing' ? 'framing' : 'resolution'
+    if (session.spendExertion(ch.id, char.id, roll, actorName(c))) pushChallenge()
     return noContent(c)
   })
 
@@ -443,8 +445,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
     if (!char || !ch) return c.notFound()
-    const side = c.req.query('side') === 'support' ? 'support' : 'main'
-    if (session.rerollDie(ch.id, char.id, side, Number(c.req.query('index')), actorName(c))) pushChallenge()
+    const roll = c.req.query('roll') === 'framing' ? 'framing' : 'resolution'
+    if (session.rerollDie(ch.id, char.id, roll, Number(c.req.query('index')), actorName(c))) pushChallenge()
     return noContent(c)
   })
 
@@ -458,28 +460,23 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
-  // One route for every pick an activated effect asks for. `effect` names what the tap does:
-  // a die (discard / reroll / face / copy) or an ability (match, or none at all = extra dice).
+  // One route for every die an activated effect asks the player to tap. `effect` names what the
+  // tap does; effects that need no target (extra dice, match highest) apply on Activate instead.
   app.post('/c/:id/challenge/approach-pick', (c) => {
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
     if (!char || !ch) return c.notFound()
-    const side = c.req.query('side') === 'support' ? 'support' : 'main'
     const index = Number(c.req.query('index'))
     const by = actorName(c)
     const effect = c.req.query('effect')
     const done =
       effect === 'discard'
-        ? session.discardDie(ch.id, char.id, side, index, by)
+        ? session.discardDie(ch.id, char.id, index, by)
         : effect === 'reroll'
-          ? session.approachReroll(ch.id, char.id, side, index, by)
+          ? session.approachReroll(ch.id, char.id, index, by)
           : effect === 'face'
-            ? session.changeDieFace(ch.id, char.id, side, index, by)
-            : effect === 'copy'
-              ? session.duplicateDie(ch.id, char.id, side, index, by)
-              : effect === 'match'
-                ? session.matchHighestDie(ch.id, char.id, side, by)
-                : session.addApproachDice(ch.id, char.id, side, by)
+            ? session.changeDieFace(ch.id, char.id, index, by)
+            : effect === 'copy' && session.duplicateDie(ch.id, char.id, index, by)
     if (done) pushChallenge()
     return noContent(c)
   })
@@ -492,13 +489,12 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
-  // GM circumstance modifier: a plus eases one side's target, a minus raises it. Settable from
-  // the moment the challenge is started until it is closed.
+  // GM circumstance modifier on the challenge's one difficulty: a plus raises it, a minus eases
+  // it. Settable from the moment the challenge is started until it is closed.
   app.post('/gm/challenge/circumstance', (c) => {
     const ch = session.currentChallenge()
     if (!ch) return c.notFound()
-    const side = c.req.query('side') === 'support' ? 'support' : 'main'
-    if (session.adjustCircumstance(ch.id, side, Number(c.req.query('delta')), actorName(c))) pushChallenge()
+    if (session.adjustCircumstance(ch.id, Number(c.req.query('delta')), actorName(c))) pushChallenge()
     return noContent(c)
   })
 
@@ -506,15 +502,6 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const ch = session.currentChallenge()
     if (!ch) return c.notFound()
     if (session.closeChallenge(ch.id, actorName(c))) pushChallenge()
-    return noContent(c)
-  })
-
-  app.post('/c/:id/challenge/skill-points', async (c) => {
-    const char = session.characters.get(c.req.param('id'))
-    const ch = session.currentChallenge()
-    if (!char || !ch || ch.charId !== char.id) return c.notFound()
-    const body = await form(c)
-    if (session.setChallengeSkillPoints(ch.id, Number(body.main), Number(body.support), actorName(c))) pushChallenge()
     return noContent(c)
   })
 
