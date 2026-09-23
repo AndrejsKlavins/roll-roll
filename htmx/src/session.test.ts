@@ -1403,6 +1403,28 @@ describe('circumstance modifier', () => {
     }
     throw new Error('never rolled a failure within reach of the circumstance clamp')
   })
+
+  test('boosting a failing resolution with exertion also leaves a "failure" approach in effect', async () => {
+    const { s, id } = await rolledChallenge('stubborn', 9)
+    for (let i = 0; i < 300; i++) {
+      const ch = s.currentChallenge()!
+      const math = s.challengeMath(ch)
+      // Short by no more than 2 (the fixture's stamina pool), so exertion alone can rescue it.
+      if (math.success === false && math.resolution!.difference >= -2) {
+        expect(ch.resolutionSucceededAtRoll).toBe(false)
+        expect(s.approachState(ch)!.status).toBe('active')
+        while (s.challengeMath(s.currentChallenge()!).success === false) {
+          expect(s.exert(ch.id, id, 'stamina', 'Mara')).toBe(true)
+          expect(s.spendExertion(ch.id, id, 'resolution', 'Mara')).toBe(true)
+        }
+        expect(s.approachState(s.currentChallenge()!)!.status).toBe('active') // still in effect
+        expect(s.currentChallenge()!.resolutionSucceededAtRoll).toBe(false) // the snapshot never moves
+        return
+      }
+      startAndRoll(s, id, 'stubborn', 9)
+    }
+    throw new Error('never rolled a failure within reach of the stamina pool')
+  })
 })
 
 describe('Tweak (lower_raise): one die down a face, another up', () => {
