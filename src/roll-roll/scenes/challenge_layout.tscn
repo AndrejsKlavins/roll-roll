@@ -1,0 +1,483 @@
+[gd_scene format=3 uid="uid://co2xaa12vy1n5"]
+
+[ext_resource type="Texture2D" uid="uid://c3ytrnhxrsifk" path="res://icons/strength.svg" id="1_rhld8"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cbxgt"]
+content_margin_left = 10.0
+content_margin_top = 10.0
+content_margin_right = 10.0
+content_margin_bottom = 10.0
+bg_color = Color(0.16565639, 0.16565642, 0.1656563, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_rhld8"]
+content_margin_left = 10.0
+content_margin_top = 10.0
+content_margin_right = 10.0
+content_margin_bottom = 10.0
+draw_center = false
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.78039217, 0.26666668, 0.27450982, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_p7eni"]
+draw_center = false
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.654902, 0.654902, 0.34509805, 1)
+
+[node name="ChallengeLayout" type="PanelContainer" unique_id=1233803938]
+custom_minimum_size = Vector2(600, 600)
+theme_override_styles/panel = SubResource("StyleBoxFlat_cbxgt")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1544019411]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer" unique_id=1176438399]
+layout_mode = 2
+alignment = 2
+
+[node name="DescriptionLabel" type="RichTextLabel" parent="VBoxContainer/HBoxContainer" unique_id=12793746]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 3.0
+bbcode_enabled = true
+text = "[b]PLAYER_NAME[/b] attempts to CHALLENGE_DESCRIPTION"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer" unique_id=1735278477]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="RichTextLabel2" type="RichTextLabel" parent="VBoxContainer/HBoxContainer/VBoxContainer" unique_id=1532338110]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+theme_override_font_sizes/normal_font_size = 12
+bbcode_enabled = true
+text = "Difficulty"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RichTextLabel4" type="RichTextLabel" parent="VBoxContainer/HBoxContainer/VBoxContainer" unique_id=1910365697]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/normal_font_size = 48
+theme_override_font_sizes/bold_font_size = 48
+bbcode_enabled = true
+text = "[b]7[/b]"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RichTextLabel3" type="RichTextLabel" parent="VBoxContainer/HBoxContainer/VBoxContainer" unique_id=581669344]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "Challenging"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PanelContainer" type="PanelContainer" parent="VBoxContainer" unique_id=1294279117]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_rhld8")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/PanelContainer" unique_id=738717124]
+layout_mode = 2
+
+[node name="FramingHeader" type="HBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer" unique_id=205977795]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingHeader" unique_id=1713374165]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.832298, 0.6504023, 0.19329375, 1)
+text = "Framing"
+
+[node name="TextureRect" type="TextureRect" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingHeader" unique_id=689393466]
+modulate = Color(0.78039217, 0.26666668, 0.27450982, 1)
+layout_mode = 2
+texture = ExtResource("1_rhld8")
+
+[node name="Label2" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingHeader" unique_id=1161449438]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.78039217, 0.26666668, 0.27450982, 1)
+text = "STRENGTH"
+
+[node name="Button" type="Button" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingHeader" unique_id=1084909950]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.43137255, 0.2509804, 0.42745098, 1)
+text = "Exert"
+
+[node name="FramingContent" type="HBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer" unique_id=1236585686]
+layout_mode = 2
+
+[node name="Roll" type="VBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=535621563]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+
+[node name="ColorRect" type="ColorRect" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Roll" unique_id=1458758213]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+color = Color(0.13411039, 0.16166034, 0.86049235, 1)
+
+[node name="Label2" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Roll" unique_id=426808273]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5764706, 0.12941177, 0.16470589, 1)
+text = "HORRIBLE"
+
+[node name="Plus" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=1481741935]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "+"
+
+[node name="Roll2" type="VBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=1910250697]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+
+[node name="ColorRect" type="ColorRect" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Roll2" unique_id=230590389]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+color = Color(0.13333334, 0.16078432, 0.85882354, 1)
+
+[node name="Label2" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Roll2" unique_id=1018134321]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.654902, 0.654902, 0.34509805, 1)
+text = "GREAT"
+
+[node name="Plus2" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=532173375]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "+"
+
+[node name="Skill" type="VBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=1148577328]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Skill" unique_id=1818386668]
+layout_mode = 2
+alignment = 1
+
+[node name="Skill_name2" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Skill/HBoxContainer" unique_id=1363151659]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92156863, 0.6745098, 0.3019608, 1)
+text = "3"
+
+[node name="TextureRect" type="TextureRect" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Skill/HBoxContainer" unique_id=2117726327]
+modulate = Color(0.78039217, 0.26666668, 0.27450982, 1)
+layout_mode = 2
+texture = ExtResource("1_rhld8")
+
+[node name="Skill_name" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Skill" unique_id=838581049]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92156863, 0.6745098, 0.3019608, 1)
+text = "Manipulation"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Plus3" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=809073204]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "+"
+
+[node name="Skill2" type="VBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=248106950]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+alignment = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Skill2" unique_id=154059776]
+layout_mode = 2
+alignment = 1
+
+[node name="Skill_name2" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Skill2/HBoxContainer" unique_id=2131448881]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.43137255, 0.2509804, 0.42745098, 1)
+text = "1"
+
+[node name="Skill_name" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/Skill2" unique_id=447386816]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.43137255, 0.2509804, 0.42745098, 1)
+text = "Exertion"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Equals" type="Label" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=256832815]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "="
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent" unique_id=955883954]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="RichTextLabel2" type="RichTextLabel" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/VBoxContainer" unique_id=626475388]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/normal_font_size = 12
+bbcode_enabled = true
+text = "Framing result"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/VBoxContainer" unique_id=1390386592]
+layout_mode = 2
+
+[node name="RichTextLabel4" type="RichTextLabel" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/VBoxContainer/HBoxContainer" unique_id=2146347341]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/normal_font_size = 48
+theme_override_font_sizes/bold_font_size = 48
+bbcode_enabled = true
+text = "[b]6[/b]"
+fit_content = true
+scroll_active = false
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="RichTextLabel5" type="RichTextLabel" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/VBoxContainer/HBoxContainer" unique_id=104963138]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+theme_override_colors/default_color = Color(0.78039217, 0.26666668, 0.27450982, 1)
+theme_override_font_sizes/normal_font_size = 36
+theme_override_font_sizes/bold_font_size = 48
+bbcode_enabled = true
+text = "-2"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RichTextLabel3" type="RichTextLabel" parent="VBoxContainer/PanelContainer/VBoxContainer/FramingContent/VBoxContainer" unique_id=430748161]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/normal_font_size = 12
+theme_override_font_sizes/bold_font_size = 12
+bbcode_enabled = true
+text = "[b]A disadvantage[/b]
+(-1 bonus to resolution)"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PanelContainer2" type="PanelContainer" parent="VBoxContainer" unique_id=656267224]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_p7eni")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/PanelContainer2" unique_id=35219545]
+layout_mode = 2
+
+[node name="ResolutionHeader" type="HBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer" unique_id=1076945377]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionHeader" unique_id=1804630801]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.832298, 0.6504023, 0.19329375, 1)
+text = "Resolution"
+
+[node name="TextureRect" type="TextureRect" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionHeader" unique_id=756170412]
+modulate = Color(0.78039217, 0.26666668, 0.27450982, 1)
+layout_mode = 2
+texture = ExtResource("1_rhld8")
+
+[node name="Label2" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionHeader" unique_id=604662080]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5764706, 0.12941177, 0.16470589, 1)
+text = "INTUITION"
+
+[node name="Button" type="Button" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionHeader" unique_id=1783714528]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.43137255, 0.2509804, 0.42745098, 1)
+text = "Exert"
+
+[node name="ResolutionContent2" type="HBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer" unique_id=945866260]
+layout_mode = 2
+
+[node name="Roll" type="VBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=426173731]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+
+[node name="ColorRect" type="ColorRect" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Roll" unique_id=1747091023]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+color = Color(0.13411039, 0.16166034, 0.86049235, 1)
+
+[node name="Label2" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Roll" unique_id=1954071271]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5764706, 0.12941177, 0.16470589, 1)
+text = "HORRIBLE"
+
+[node name="Plus" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=996994927]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "+"
+
+[node name="Roll2" type="VBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=51574217]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+
+[node name="ColorRect" type="ColorRect" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Roll2" unique_id=585706788]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+color = Color(0.13333334, 0.16078432, 0.85882354, 1)
+
+[node name="Label2" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Roll2" unique_id=93564948]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5764706, 0.12941177, 0.16470589, 1)
+text = "GREAT"
+
+[node name="Plus2" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=236240559]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "+"
+
+[node name="Skill" type="VBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=530873819]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Skill" unique_id=347680095]
+layout_mode = 2
+alignment = 1
+
+[node name="Skill_name2" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Skill/HBoxContainer" unique_id=1180693040]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92156863, 0.6745098, 0.3019608, 1)
+text = "3"
+
+[node name="TextureRect" type="TextureRect" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Skill/HBoxContainer" unique_id=1885463353]
+modulate = Color(0.78039217, 0.26666668, 0.27450982, 1)
+layout_mode = 2
+texture = ExtResource("1_rhld8")
+
+[node name="Skill_name" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Skill" unique_id=1011056886]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92156863, 0.6745098, 0.3019608, 1)
+text = "Manipulation"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Plus3" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=695886847]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "+"
+
+[node name="Skill2" type="VBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=1294771145]
+layout_mode = 2
+size_flags_horizontal = 5
+size_flags_vertical = 4
+alignment = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Skill2" unique_id=1612254230]
+layout_mode = 2
+alignment = 1
+
+[node name="Skill_name2" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Skill2/HBoxContainer" unique_id=865942600]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.78039217, 0.26666668, 0.27450982, 1)
+text = "-1"
+
+[node name="Skill_name" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/Skill2" unique_id=334384253]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.78039217, 0.26666668, 0.27450982, 1)
+text = "Framing"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Equals" type="Label" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=1140113792]
+layout_mode = 2
+size_flags_horizontal = 5
+theme_override_font_sizes/font_size = 32
+text = "="
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2" unique_id=257451275]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="RichTextLabel2" type="RichTextLabel" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/VBoxContainer" unique_id=768230787]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/normal_font_size = 12
+bbcode_enabled = true
+text = "Total result"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/VBoxContainer" unique_id=691222905]
+layout_mode = 2
+
+[node name="RichTextLabel4" type="RichTextLabel" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/VBoxContainer/HBoxContainer" unique_id=31612714]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/normal_font_size = 48
+theme_override_font_sizes/bold_font_size = 48
+bbcode_enabled = true
+text = "[b]12[/b]"
+fit_content = true
+scroll_active = false
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="RichTextLabel5" type="RichTextLabel" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/VBoxContainer/HBoxContainer" unique_id=1731566473]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+theme_override_colors/default_color = Color(0.654902, 0.654902, 0.34509805, 1)
+theme_override_font_sizes/normal_font_size = 36
+theme_override_font_sizes/bold_font_size = 48
+bbcode_enabled = true
+text = "+5"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RichTextLabel3" type="RichTextLabel" parent="VBoxContainer/PanelContainer2/VBoxContainer/ResolutionContent2/VBoxContainer" unique_id=941720350]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/normal_font_size = 12
+theme_override_font_sizes/bold_font_size = 12
+bbcode_enabled = true
+text = "[b]success rank 1[/b]
+(+1 boon)"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1

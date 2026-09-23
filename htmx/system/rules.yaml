@@ -86,21 +86,21 @@ challenges:
   # The framing roll sets up the resolution roll. Its margin (framing result − difficulty) picks
   # a rung: "from" is the lowest margin that rung covers, and it runs up to the next rung's
   # "from". The bottom rung also catches everything below it, so the bands need not be even.
-  #   difficulty  moves the resolution's target; a plus makes it harder
-  #   degrees     a boon (+) or a complication (−), added to the resolution's own degrees
+  #   bonus    added straight onto the resolution roll's sum; a plus helps, a minus hurts
+  #   degrees  a boon (+) or a complication (−), added to the resolution's own degrees
   # Both are arithmetic on purpose: the two rolls land together and the rung is worked out live,
-  # so exertion on the framing moves the resolution's target after the dice are already down.
+  # so exertion on the framing moves the resolution's bonus after the dice are already down.
   framing:
     ladder:
       #  from   the band it covers
-      - { from: -9, difficulty: 6, degrees: -1, label: Critical disadvantage — resolution difficulty +6 and a complication }  # −9 or worse
-      - { from: -8, difficulty: 3, degrees: -1, label: A big disadvantage — resolution difficulty +3 and a complication }     # −8 … −6
-      - { from: -5, difficulty: 1, degrees: -1, label: A disadvantage — resolution difficulty +1 and a complication }         # −5 … −3
-      - { from: -2, difficulty: 1,              label: Slightly off — resolution difficulty +1 }                              # −2, −1
-      - { from: 0,                              label: The situation is even }                                                # 0 … 2
-      - { from: 3,  difficulty: -1,             label: An advantage — resolution difficulty −1 }                              # 3 … 5
-      - { from: 6,  difficulty: -3,             label: A big advantage — resolution difficulty −3 }                           # 6 … 8
-      - { from: 9,  difficulty: -6,             label: Critical advantage — resolution difficulty −6 }                        # 9 or better
+      - { from: -9, bonus: -6, degrees: -1, label: Critical disadvantage — a complication }  # −9 or worse
+      - { from: -8, bonus: -3, degrees: -1, label: A big disadvantage — a complication }     # −8 … −6
+      - { from: -5, bonus: -1, degrees: -1, label: A disadvantage — a complication }         # −5 … −3
+      - { from: -2, bonus: -1,              label: Slightly off }                            # −2, −1
+      - { from: 0,                          label: The situation is even }                   # 0 … 2
+      - { from: 3,  bonus: 1,               label: An advantage }                            # 3 … 5
+      - { from: 6,  bonus: 3,               label: A big advantage }                         # 6 … 8
+      - { from: 9,  bonus: 6,               label: Critical advantage }                      # 9 or better
   # Each approach rolls its own d6 (the approach die) alongside the resolution dice. "when" says
   # whether that die's effect applies: always, only while the resolution roll is short of its
   # target, or by the player's choice (an Activate button).

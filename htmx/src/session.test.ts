@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { framingRung, loadRules, type NumberField } from './rules'
-import { MAX_CIRCUMSTANCE, rollChallengeSide, Session, sideSum, type Challenge } from './session'
+import { MAX_CIRCUMSTANCE, outcomeFor, pointsToImprove, rollChallengeSide, Session, sideSum, type Challenge } from './session'
 
 const RULES = `
 name: Test
@@ -348,14 +348,14 @@ challenges:
     - { id: easy, label: Easy, value: 4 }
   framing:
     ladder:
-      - { from: -9, difficulty: 6, degrees: -1, label: Critical disadvantage }
-      - { from: -8, difficulty: 3, degrees: -1, label: Big disadvantage }
-      - { from: -5, difficulty: 1, degrees: -1, label: Disadvantage }
-      - { from: -2, difficulty: 1, label: Slightly off }
+      - { from: -9, bonus: -6, degrees: -1, label: Critical disadvantage }
+      - { from: -8, bonus: -3, degrees: -1, label: Big disadvantage }
+      - { from: -5, bonus: -1, degrees: -1, label: Disadvantage }
+      - { from: -2, bonus: -1, label: Slightly off }
       - { from: 0,  label: Even }
-      - { from: 3,  difficulty: -1, label: Advantage }
-      - { from: 6,  difficulty: -3, label: Big advantage }
-      - { from: 9,  difficulty: -6, label: Critical advantage }
+      - { from: 3,  bonus: 1, label: Advantage }
+      - { from: 6,  bonus: 3, label: Big advantage }
+      - { from: 9,  bonus: 6, label: Critical advantage }
   approaches:
     - { id: bold, label: Bold }
     - { id: stubborn, label: Stubborn, when: failure }
@@ -459,7 +459,8 @@ describe('challenge setup', () => {
     const math = s.challengeMath(rolled)
     expect(math.framing!.target).toBe(10)
     expect(math.framing!.sum).toBe(rolled.framing!.sum + 2) // it rides on the rolled result
-    expect(math.resolution!.sum).toBe(rolled.resolution!.sum + 2) // on both of them
+    // …and on the resolution too, alongside whatever the framing rung added to it.
+    expect(math.resolution!.sum).toBe(rolled.resolution!.sum + 2 + math.rungBonus)
   })
 
   test('the circumstance moves the difficulty, and the skill still rides on the rolls', async () => {
@@ -588,17 +589,61 @@ describe('the framing ladder', () => {
     expect([from(9), from(30)]).toEqual([9, 9])
   })
 
-  test('each rung carries the difficulty shift and complication the ladder gives it', async () => {
+  test('each rung carries the resolution bonus and complication the ladder gives it', async () => {
     const { rules } = await setup(CHALLENGE_RULES)
     const rung = (from: number) => rules.challenges.framing.rungs.find((r) => r.from === from)!
-    expect([rung(-9).difficulty, rung(-9).degrees]).toEqual([6, -1])
-    expect([rung(-8).difficulty, rung(-8).degrees]).toEqual([3, -1])
-    expect([rung(-5).difficulty, rung(-5).degrees]).toEqual([1, -1])
-    expect([rung(-2).difficulty, rung(-2).degrees]).toEqual([1, 0]) // +1 difficulty, no complication
-    expect([rung(0).difficulty, rung(0).degrees]).toEqual([0, 0])
-    expect([rung(3).difficulty, rung(3).degrees]).toEqual([-1, 0])
-    expect([rung(6).difficulty, rung(6).degrees]).toEqual([-3, 0])
-    expect([rung(9).difficulty, rung(9).degrees]).toEqual([-6, 0])
+    expect([rung(-9).resolutionBonus, rung(-9).degrees]).toEqual([-6, -1])
+    expect([rung(-8).resolutionBonus, rung(-8).degrees]).toEqual([-3, -1])
+    expect([rung(-5).resolutionBonus, rung(-5).degrees]).toEqual([-1, -1])
+    expect([rung(-2).resolutionBonus, rung(-2).degrees]).toEqual([-1, 0]) // −1 bonus, no complication
+    expect([rung(0).resolutionBonus, rung(0).degrees]).toEqual([0, 0])
+    expect([rung(3).resolutionBonus, rung(3).degrees]).toEqual([1, 0])
+    expect([rung(6).resolutionBonus, rung(6).degrees]).toEqual([3, 0])
+    expect([rung(9).resolutionBonus, rung(9).degrees]).toEqual([6, 0])
+  })
+})
+
+describe('pointsToImprove', () => {
+  test('low stakes: only a bare success is ever reachable', () => {
+    expect(pointsToImprove(-5, 'low')).toBe(5)
+    expect(pointsToImprove(-1, 'low')).toBe(1)
+    expect(pointsToImprove(0, 'low')).toBeNull() // already succeeding, and low grants no degree
+    expect(pointsToImprove(5, 'low')).toBeNull()
+  })
+
+  test('normal stakes: a deep complication eases before it reaches plain success', () => {
+    expect(pointsToImprove(-5, 'normal')).toBe(3) // −5 → −2 sheds the complication first
+    expect(pointsToImprove(-3, 'normal')).toBe(1) // −3 → −2, same
+    expect(pointsToImprove(-2, 'normal')).toBe(2) // no complication left; only success is closer
+    expect(pointsToImprove(-1, 'normal')).toBe(1)
+    expect(pointsToImprove(0, 'normal')).toBe(3) // succeeding, short of the one boon tier
+    expect(pointsToImprove(2, 'normal')).toBe(1)
+    expect(pointsToImprove(3, 'normal')).toBeNull() // already at normal's one tier
+    expect(pointsToImprove(9, 'normal')).toBeNull()
+  })
+
+  test('high stakes: degrees truncate toward zero, so the middle tier is five points wide', () => {
+    expect(pointsToImprove(0, 'high')).toBe(3)
+    expect(pointsToImprove(1, 'high')).toBe(2)
+    expect(pointsToImprove(2, 'high')).toBe(1)
+    expect(pointsToImprove(3, 'high')).toBe(3) // on the boundary already — next tier is 3 more
+    expect(pointsToImprove(-1, 'high')).toBe(1) // within the wide 0 tier — success is closer
+    expect(pointsToImprove(-2, 'high')).toBe(2)
+    expect(pointsToImprove(-4, 'high')).toBe(2) // −4 → −2 sheds the complication before success
+    expect(pointsToImprove(-8, 'high')).toBe(3) // −8 → −5, into the next-lighter complication
+    expect(pointsToImprove(-11, 'high')).toBe(3) // −11 → −8, likewise
+    // General invariant: every step short of the answer changes nothing; the answer itself
+    // either reaches success (if it wasn't already) or bumps the degree count.
+    for (const diff of [-14, -11, -8, -6, -5, -3, -2, -1, 0, 1, 4, 7, 10]) {
+      const needed = pointsToImprove(diff, 'high')!
+      const before = outcomeFor(diff, 0, 'high')
+      const at = outcomeFor(diff + needed, 0, 'high')
+      expect(at.success && !before.success ? true : at.degrees > before.degrees).toBe(true)
+      for (let step = 1; step < needed; step++) {
+        const mid = outcomeFor(diff + step, 0, 'high')
+        expect(mid.success && !before.success ? true : mid.degrees > before.degrees).toBe(false)
+      }
+    }
   })
 })
 
@@ -618,7 +663,7 @@ describe('framing sets up the resolution', () => {
 
     const math = s.challengeMath(rolled)
     expect(math.framing!.target).toBe(9)
-    expect(math.resolutionTarget).toBe(9 + math.rungDifficulty)
+    expect(math.resolution!.target).toBe(9) // the rung buffs the roll, not the target
     expect(math.success).toBe(math.resolution!.success)
   })
 
@@ -630,71 +675,73 @@ describe('framing sets up the resolution', () => {
     const math = s.challengeMath(ch)
     expect(math.framing).toBeNull()
     expect(math.rung).toBeNull()
-    expect(math.rungDifficulty).toBe(0)
-    expect(math.resolutionTarget).toBe(math.target) // nothing to move it
+    expect(math.rungBonus).toBe(0)
+    expect(math.resolution!.target).toBe(math.target) // nothing to move it
     expect(math.degrees).toBe(math.resolution!.degrees)
   })
 
-  test('a rung moves the resolution target and may add a complication', async () => {
+  test('a rung buffs the resolution roll and may add a complication', async () => {
     const { s, id } = await rolledChallenge('bold', 12)
-    const bad = s.challengeMath(rollAtRung(s, id, -8, 12))
-    expect(bad.rungDifficulty).toBe(3)
-    expect(bad.resolutionTarget).toBe(bad.target + 3)
+    const badCh = rollAtRung(s, id, -8, 12)
+    const bad = s.challengeMath(badCh)
+    expect(bad.rungBonus).toBe(-3)
+    expect(bad.resolution!.target).toBe(bad.target) // the target itself never moves
+    expect(bad.resolution!.sum).toBe(badCh.resolution!.sum + bad.skillBonus + badCh.exertionResolution + bad.rungBonus)
     expect(bad.degrees).toBe(bad.resolution!.degrees - 1) // …and the complication
 
-    const worst = s.challengeMath(rollAtRung(s, id, -9, 12))
-    expect(worst.rungDifficulty).toBe(6)
-    expect(worst.resolutionTarget).toBe(worst.target + 6)
+    const worstCh = rollAtRung(s, id, -9, 12)
+    const worst = s.challengeMath(worstCh)
+    expect(worst.rungBonus).toBe(-6)
     expect(worst.degrees).toBe(worst.resolution!.degrees - 1)
   })
 
-  test('the narrow −1/−2 rung raises the target without a complication', async () => {
+  test('the narrow −1/−2 rung hurts the roll without a complication', async () => {
     const { s, id } = await rolledChallenge('bold', 9)
     const math = s.challengeMath(rollAtRung(s, id, -2, 9))
-    expect(math.rungDifficulty).toBe(1)
-    expect(math.resolutionTarget).toBe(math.target + 1)
+    expect(math.rungBonus).toBe(-1)
     expect(math.degrees).toBe(math.resolution!.degrees) // no complication on this rung
   })
 
-  test('an advantage eases the resolution target', async () => {
+  test('an advantage buffs the resolution roll', async () => {
     const { s, id } = await rolledChallenge('bold', 3)
     const good = s.challengeMath(rollAtRung(s, id, 6, 3))
-    expect(good.rungDifficulty).toBe(-3)
-    expect(good.resolutionTarget).toBe(good.target - 3)
+    expect(good.rungBonus).toBe(3)
+    expect(good.resolution!.target).toBe(good.target) // the target itself never moves
     expect(good.degrees).toBe(good.resolution!.degrees)
 
     const best = s.challengeMath(rollAtRung(s, id, 9, 3))
-    expect(best.rungDifficulty).toBe(-6)
-    expect(best.resolutionTarget).toBe(best.target - 6)
+    expect(best.rungBonus).toBe(6)
   })
 
   test('an even framing changes nothing', async () => {
     const { s, id } = await rolledChallenge('bold', 9)
     const math = s.challengeMath(rollAtRung(s, id, 0, 9))
-    expect(math.rungDifficulty).toBe(0)
-    expect(math.resolutionTarget).toBe(math.target)
+    expect(math.rungBonus).toBe(0)
+    expect(math.resolution!.target).toBe(math.target)
     expect(math.degrees).toBe(math.resolution!.degrees)
   })
 
-  test('the resolution difficulty is recalculated on the fly when the framing moves', async () => {
+  test("the resolution's bonus is recalculated on the fly when the framing moves", async () => {
     // Exertion on the framing is spent after both rolls are already on the table, so the rung —
-    // and with it the resolution's target and its complication — has to follow it live.
+    // and with it the resolution's bonus and its complication — has to follow it live.
     const { s, id } = await rolledChallenge('bold', 9)
     for (let i = 0; i < 400; i++) {
       const ch = s.currentChallenge()!
       const before = s.challengeMath(ch)
       // A framing sitting one point under a rung boundary: one exertion lifts it over.
       const next = s.rules.challenges.framing.rungs.find((r) => r.from === before.framing!.difference + 1)
-      if (next && before.rung!.difficulty !== next.difficulty) {
+      if (next && before.rung!.resolutionBonus !== next.resolutionBonus) {
         s.exert(ch.id, id, 'stamina', 'Mara')
         expect(s.spendExertion(ch.id, id, 'framing', 'Mara')).toBe(true)
-        const after = s.challengeMath(s.currentChallenge()!)
+        const rolled = s.currentChallenge()!
+        const after = s.challengeMath(rolled)
         expect(after.rung!.from).toBe(next.from)
-        expect(after.rungDifficulty).toBe(next.difficulty)
-        expect(after.resolutionTarget).toBe(after.target + next.difficulty)
-        // The resolution's own dice never moved — only the number they are measured against.
-        expect(after.resolution!.sum).toBe(before.resolution!.sum)
-        expect(after.resolution!.target).not.toBe(before.resolution!.target)
+        expect(after.rungBonus).toBe(next.resolutionBonus)
+        // The resolution's own dice never moved, and neither did the target — only the bonus
+        // added on top of them.
+        expect(rolled.resolution!.sum).toBe(ch.resolution!.sum)
+        expect(after.resolution!.target).toBe(before.resolution!.target)
+        expect(after.resolution!.sum).not.toBe(before.resolution!.sum)
         return
       }
       startAndRoll(s, id, 'bold', 9)
@@ -767,15 +814,18 @@ describe('exertion', () => {
     expect(s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')).toBe(false) // nothing left
   })
 
-  test('the framing roll can be rerolled too, and the resolution target follows it', async () => {
+  test('the framing roll can be rerolled too, and its bonus to the resolution follows it', async () => {
     const { s, id, ch } = await rolledChallenge()
     s.exert(ch.id, id, 'stamina', 'Mara')
     const before = s.challengeMath(ch)
     expect(s.rerollDie(ch.id, id, 'framing', 0, 'Mara')).toBe(true)
-    const after = s.challengeMath(s.currentChallenge()!)
-    expect(s.currentChallenge()!.framing!.rerolled).toEqual([1, 0])
-    expect(after.resolution!.sum).toBe(before.resolution!.sum) // its dice are untouched
-    expect(after.resolutionTarget).toBe(after.target + after.rungDifficulty) // but its target is live
+    const rolled = s.currentChallenge()!
+    const after = s.challengeMath(rolled)
+    expect(rolled.framing!.rerolled).toEqual([1, 0])
+    expect(rolled.resolution!.dice).toEqual(ch.resolution!.dice) // its dice are untouched
+    expect(after.resolution!.target).toBe(before.resolution!.target) // and neither is its target
+    // …but the bonus added on top of it is live, following the framing's new rung.
+    expect(after.resolution!.sum).toBe(rolled.resolution!.sum + after.skillBonus + rolled.exertionResolution + after.rungBonus)
   })
 
   test('every reroll is counted on the die it replaced', async () => {
@@ -820,7 +870,7 @@ describe('approach die', () => {
     expect(s.approachState(s.currentChallenge()!)!.status).toBe('active')
   })
 
-  test('a "failure" approach is in effect only while the resolution fails', async () => {
+  test('a "failure" approach is in effect only when the resolution failed at the roll', async () => {
     const failing = await rolledChallenge('stubborn', 30)
     expect(failing.s.approachState(failing.s.currentChallenge()!)!.status).toBe('active')
 
@@ -1281,9 +1331,11 @@ describe('circumstance modifier', () => {
     s.adjustCircumstance(ch.id, 2, 'GM')
     const after = s.challengeMath(s.currentChallenge()!)
     expect(after.framing!.target).toBe(11)
-    expect(after.resolutionTarget).toBe(11 + after.rungDifficulty)
+    expect(after.resolution!.target).toBe(11) // both rolls go against the same adjusted target
     expect(after.framing!.sum).toBe(before.framing!.sum) // the rolls themselves are untouched
-    expect(after.resolution!.sum).toBe(before.resolution!.sum)
+    // The circumstance moved the target the framing's margin is measured against, so it can move
+    // which rung that margin lands on — and with it, the bonus the rung adds to the resolution.
+    expect(after.resolution!.sum).toBe(before.resolution!.sum - before.rungBonus + after.rungBonus)
     expect(after.framing!.difference).toBe(after.framing!.sum - 11)
   })
 
@@ -1331,19 +1383,20 @@ describe('circumstance modifier', () => {
     expect(reopened.challengeMath(replayed).target).toBe(10)
   })
 
-  test('lowering the target enough turns a failing resolution into a success', async () => {
-    // A "failure" approach is only in effect while the resolution is short, so this also checks
-    // that a circumstance ruling feeds straight back into the approach die.
+  test('lowering the target enough turns a failing resolution into a success, but a "failure" approach stays in effect', async () => {
+    // A "failure" approach is decided once, at the moment the dice land (user decision) — a later
+    // ruling that rescues the roll doesn't retroactively take Unbreakable away.
     const { s, id } = await rolledChallenge('stubborn', 9)
     for (let i = 0; i < 300; i++) {
       const ch = s.currentChallenge()!
       const math = s.challengeMath(ch)
       // Short by no more than the clamp, so one ruling can rescue the roll.
       if (math.success === false && math.resolution!.difference >= -MAX_CIRCUMSTANCE) {
+        expect(ch.resolutionSucceededAtRoll).toBe(false)
         expect(s.approachState(ch)!.status).toBe('active') // failing, so Unbreakable applies
         s.adjustCircumstance(ch.id, math.resolution!.difference, 'GM')
         expect(s.challengeMath(s.currentChallenge()!).success).toBe(true)
-        expect(s.approachState(s.currentChallenge()!)!.status).toBe('skipped') // no longer failing
+        expect(s.approachState(s.currentChallenge()!)!.status).toBe('active') // still in effect
         return
       }
       startAndRoll(s, id, 'stubborn', 9)
@@ -1700,7 +1753,8 @@ describe('approach die effects', () => {
       expect(after.resolution!.faces).toHaveLength(2 + extra)
       expect(after.resolution!.sum).toBe(sideSum(after.resolution!))
       expect(after.framing!.dice).toEqual(framing.dice) // the framing roll is untouched
-      expect(s.challengeMath(after).resolution!.sum).toBe(after.resolution!.sum)
+      // The math's own sum is the raw dice plus whatever bonus the framing rung landed on.
+      expect(s.challengeMath(after).resolution!.sum).toBe(after.resolution!.sum + s.challengeMath(after).rungBonus)
       expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false) // once only
     }
   })

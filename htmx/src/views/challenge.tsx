@@ -107,9 +107,10 @@ const markerLabel = (marker: NonNullable<DieMarker>) =>
           : 'Squashed'
 
 /**
- * The challenge's one difficulty, shown as the sum it actually is: the GM's number, less the
- * player's skill rank, plus the circumstance modifier — with the result in big type. Everyone
- * sees the working (user requirement); only the GM gets the stepper.
+ * The challenge's one difficulty — "Difficulty", the number, and its tier — sitting beside the
+ * challenge's description (user decision, matching the table's own layout). The skill is a bonus
+ * on the rolls, not on this number (it shows beside the dice instead), so only the GM's
+ * circumstance moves it, and then everyone sees the working.
  */
 function DifficultyPanel(props: { math: ChallengeMath; tier: string | null; controls?: Child }) {
   const { math, tier } = props
@@ -122,8 +123,6 @@ function DifficultyPanel(props: { math: ChallengeMath; tier: string | null; cont
         {math.target}
         {tier && <span class="difficulty-tier">({tier})</span>}
       </div>
-      {/* The skill is a bonus on the rolls (it shows beside the dice), so only the GM's
-          circumstance moves this number — and then everyone sees the working. */}
       {math.circumstance !== 0 && (
         <p class="difficulty-calc">
           <span class="calc-part">{math.difficulty}</span>
@@ -133,90 +132,139 @@ function DifficultyPanel(props: { math: ChallengeMath; tier: string | null; cont
           <span class="calc-part calc-total">= {math.target}</span>
         </p>
       )}
-      {math.skillBonus > 0 && (
-        <p class="difficulty-note">
-          {math.skillLabel} {signed(math.skillBonus)} on every result
-        </p>
-      )}
       {props.controls}
     </div>
   )
 }
 
+/** One +N/−N chip beside the dice: the skill declared, exertion spent, or a framing bonus. */
+function bonusChip(value: number, label: string, icon: Icon | undefined, tone: string): Child {
+  // No leading "+" here (user decision) — it's already read as an addend by the "+" between
+  // terms, so the sign only needs to speak up when the chip is actually working against the
+  // player. String(value) does exactly that: "-1" for a negative, plain "1" otherwise.
+  return (
+    <span class={`equation-bonus ${tone}`}>
+      <span class="equation-bonus-value">{String(value)}</span>
+      <span class="equation-bonus-label">
+        {icon && <IconChip icon={icon} />}
+        {label}
+      </span>
+    </span>
+  )
+}
+
 /**
- * One of the two rolls: its ability, the number it goes against, its dice and (once they are in)
- * the sum and how far off the target it landed. The framing box carries the rung it landed on
- * below its number; the resolution box carries the final verdict.
+ * Dice and bonus chips laid out as a running sum, with "+" between every term but the first and
+ * "=" before the result. `rows` is pre-split by the caller — dice on the first line, every bonus
+ * chip pushed to the second (user decision), so a roll with no bonuses is the only time this is
+ * one line instead of two. A row too long for its own line still wraps within itself (CSS), so a
+ * check with several extra dice is never one very long row either.
+ */
+function Equation(props: { rows: Child[][]; result?: Child }) {
+  const rows = props.rows.filter((row) => row.length > 0)
+  let index = 0
+  return (
+    <div class="equation">
+      {rows.map((row, ri) => (
+        <div class="equation-row">
+          {row.map((term) => {
+            const op = index > 0 && <span class="equation-op">+</span>
+            index++
+            return (
+              <>
+                {op}
+                {term}
+              </>
+            )
+          })}
+          {ri === rows.length - 1 && props.result && (
+            <span class="equation-final">
+              <span class="equation-op equation-eq">=</span>
+              {props.result}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * One of the two rolls: its ability, the dice and bonuses that add up to it, and (once they are
+ * in) the sum and how far off the target it landed, as a running equation. Framing's own footer
+ * names the rung it landed on; resolution's names the final verdict — both read from `caption`,
+ * so this component itself knows nothing about what a rung or a boon is.
  */
 function RollBox(props: {
   field: NumberField | undefined
   label: string
   /** "Framing" / "Resolution" — which of the two this is, above the ability's name. */
   kind: string
-  target: number
-  /** What the framing rung did to this target, when it moved it. */
-  targetShift?: number
   side: ChallengeSide | null
   outcome: SideOutcome | null
   faces: FaceName[]
   /** The declared skill's rank: a bonus on this result, shown beside the dice. */
   skillBonus: number
+  skillLabel: string | null
+  /** The declared skill's own icon for its bonus chip — not the ability's. */
+  skillIcon: Icon | null
   exertion: number
+  /** The framing rung's bonus to this roll — resolution only. */
+  framingBonus?: number
   /** Set when the viewer may act on the dice here (exertion reroll, pending approach effect). */
   dieAction?: (index: number) => DieAction | undefined
   /** GM and table screens name the result; the player sees their own controls instead. */
   attemptLabel?: boolean
-  note?: Child
-  controls?: Child
+  /** What the roll's own footer says once it has landed: the rung, or the success/degree line. */
+  caption?: Child
+  /** The header's own exert control — offered only to the player while it is theirs to spend. */
+  exertButton?: Child
 }) {
-  const { field, label, target, side, outcome } = props
+  const { field, label, side, outcome } = props
   const cls = ['difficulty-box', outcome && (outcome.success ? 'success' : 'failure')].filter(Boolean).join(' ')
+  const diceTerms: Child[] = []
+  const bonusTerms: Child[] = []
+  if (side) {
+    for (let i = 0; i < side.dice.length; i++) {
+      diceTerms.push(
+        <Die
+          value={side.dice[i]!}
+          faceId={side.faces?.[i]}
+          faces={props.faces}
+          discarded={side.discarded?.[i]}
+          rerolled={side.rerolled?.[i]}
+          changed={side.changed?.[i]}
+          action={side.discarded?.[i] ? undefined : props.dieAction?.(i)}
+        />,
+      )
+    }
+    if (props.skillBonus) bonusTerms.push(bonusChip(props.skillBonus, props.skillLabel ?? 'Skill', props.skillIcon ?? undefined, 'skill'))
+    if (props.exertion) bonusTerms.push(bonusChip(props.exertion, 'Exertion', undefined, 'exertion'))
+    if (props.framingBonus) {
+      bonusTerms.push(bonusChip(props.framingBonus, 'Framing', undefined, props.framingBonus > 0 ? 'help' : 'hinder'))
+    }
+  }
   return (
     <div class={cls} style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}>
-      <div class="roll-kind">{props.kind}</div>
-      <div class="difficulty-label">
+      <div class="roll-box-head">
+        <span class="roll-kind">{props.kind}</span>
         <IconChip icon={field?.icon} />
-        <span>{label}</span>
+        <span class="roll-ability">{label}</span>
+        {props.exertButton}
       </div>
-      <div class="difficulty-target">
-        {target}
-        {!!props.targetShift && (
-          <span
-            class={props.targetShift > 0 ? 'circumstance hinder' : 'circumstance help'}
-            title={`The framing ${props.targetShift > 0 ? 'raised' : 'lowered'} this target by ${Math.abs(
-              props.targetShift,
-            )}`}
-          >
-            {signed(props.targetShift)}
-          </span>
-        )}
-      </div>
-      {props.note}
       {side && outcome && (
         <div class="difficulty-result">
           {props.attemptLabel && <div class="attempt-label">Player attempt</div>}
-          <div class="dice-faces">
-            {side.dice.map((d, i) => (
-              <Die
-                value={d}
-                faceId={side.faces?.[i]}
-                faces={props.faces}
-                discarded={side.discarded?.[i]}
-                rerolled={side.rerolled?.[i]}
-                changed={side.changed?.[i]}
-                action={side.discarded?.[i] ? undefined : props.dieAction?.(i)}
-              />
-            ))}
-            {props.skillBonus !== 0 && (
-              <span class="skill-bonus" title="Skill bonus">
-                {signed(props.skillBonus)}
+          <Equation
+            rows={[diceTerms, bonusTerms]}
+            result={
+              <span class="equation-result">
+                <span class="difficulty-sum">{outcome.sum}</span>
+                <span class="difficulty-diff">{signed(outcome.difference)}</span>
               </span>
-            )}
-            {props.exertion !== 0 && <span class="exert-bonus">{signed(props.exertion)}</span>}
-          </div>
-          <div class="difficulty-sum">{outcome.sum}</div>
-          <div class="difficulty-diff">{signed(outcome.difference)}</div>
-          {props.controls}
+            }
+          />
+          {props.caption}
         </div>
       )}
     </div>
@@ -506,21 +554,47 @@ function ChallengeAbilities(props: { session: Session; ch: Challenge }) {
 }
 
 /**
- * What the framing roll did to the resolution roll, in the ladder rung's own words — shown
- * between the two boxes on every screen. It is derived, so a reroll or a point of exertion on the
- * framing moves it (and the resolution's target) the moment it lands.
+ * The framing box's own footer: the ladder rung it landed on, and what that rung is worth to the
+ * resolution roll. It is derived, so a reroll or a point of exertion on the framing moves it the
+ * moment it lands.
  */
-function FramingResult(props: { math: ChallengeMath }) {
+/**
+ * How far the result is from its next breakpoint — or, once nothing higher is left to reach (the
+ * top framing rung, or normal/low stakes' one degree past a plain success), that it's already
+ * there (user decision: say so rather than just going quiet).
+ */
+function NeedsLine(props: { pointsToNext: number | null }) {
+  return (
+    <p class="roll-caption-needs">
+      {props.pointsToNext !== null ? `${props.pointsToNext} needed to improve result` : 'Already at its best'}
+    </p>
+  )
+}
+
+function FramingCaption(props: { math: ChallengeMath }) {
   const { math } = props
   if (!math.framing || !math.rung) return null
-  const shift = math.rungDifficulty
-  const tone = shift < 0 ? 'help' : shift > 0 || math.rung.degrees < 0 ? 'hinder' : 'even'
+  const bonus = math.rungBonus
+  const tone = bonus > 0 ? 'help' : bonus < 0 || math.rung.degrees < 0 ? 'hinder' : 'even'
   return (
-    <div class={`framing-result framing-${tone}`}>
-      <span class="framing-margin" title="How far the framing roll landed from the difficulty">
-        Framing {signed(math.framing.difference)}
-      </span>
-      <span class="framing-label">{math.rung.label}</span>
+    <div class={`roll-caption roll-caption-${tone}`}>
+      <NeedsLine pointsToNext={math.framingPointsToNext} />
+      <span class="roll-caption-title">{math.rung.label}</span>
+      {bonus !== 0 && <span class="roll-caption-sub">({signed(bonus)} bonus to resolution)</span>}
+    </div>
+  )
+}
+
+/** The resolution box's own footer: success or failure, and whatever boons/complications it earned. */
+function ResolutionCaption(props: { math: ChallengeMath }) {
+  const { math } = props
+  if (!math.resolution) return null
+  const degrees = degreeText(math.degrees)
+  return (
+    <div class={`roll-caption ${math.resolution.success ? 'roll-caption-help' : 'roll-caption-hinder'}`}>
+      <NeedsLine pointsToNext={math.resolutionPointsToNext} />
+      <span class="roll-caption-title">{math.resolution.success ? 'Success' : 'Failure'}</span>
+      {degrees && <span class="roll-caption-sub">({degrees})</span>}
     </div>
   )
 }
@@ -535,6 +609,8 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   const rolled = session.challengePhase(ch) !== 'setup'
   // Challenges store the number; name the tier the GM's own difficulty came from when one matches.
   const tier = session.rules.challenges.difficulties.find((d) => d.value === ch.difficulty)?.label ?? null
+  // "Someone" before a player is assigned — the same fallback the rest of the app uses (app.tsx).
+  const rollerName = (ch.charId ? session.characters.get(ch.charId)?.name : null) ?? 'Someone'
   const isViewerTurn = role === 'player' && !!viewerCharId && ch.charId === viewerCharId
   // Only the player who rolled acts on it, and only once the dice are in, until the GM closes it.
   const acting = isViewerTurn && rolled && !ch.closed
@@ -548,8 +624,9 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
         hx-vals={JSON.stringify({ roll })}
         hx-swap="none"
         disabled={exertion <= 0 || undefined}
+        title={exertion > 0 ? `Spend a point of exertion on ${roll}` : 'No exertion in hand — burn a pool point below'}
       >
-        + exertion
+        Exert
       </button>
     ) : undefined
   const approach = session.approachState(ch)
@@ -601,22 +678,28 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   }
   return (
     <div class="challenge">
-      {ch.description && <h3 class="challenge-description">{ch.description}</h3>}
-      <div class="challenge-head">
-        <span class={`stakes stakes-${ch.stakes}`}>{stakesLabel(ch.stakes)} stakes</span>
-        {math.success !== null && (
-          <span class={math.success ? 'result success' : 'result failure'}>
-            {math.success ? 'Success' : 'Failure'}
-          </span>
-        )}
-        {degreeText(math.degrees) && <span class="challenge-degree">{degreeText(math.degrees)}</span>}
-        {ch.closed && <span class="badge closed">Done</span>}
+      <div class="challenge-title-row">
+        <div class="challenge-title-main">
+          <h3 class="challenge-description">
+            <b>{rollerName}</b> attempts to {ch.description || 'the challenge'}
+          </h3>
+          <div class="challenge-head">
+            <span class={`stakes stakes-${ch.stakes}`}>{stakesLabel(ch.stakes)} stakes</span>
+            {math.success !== null && (
+              <span class={math.success ? 'result success' : 'result failure'}>
+                {math.success ? 'Success' : 'Failure'}
+              </span>
+            )}
+            {degreeText(math.degrees) && <span class="challenge-degree">{degreeText(math.degrees)}</span>}
+            {ch.closed && <span class="badge closed">Done</span>}
+          </div>
+        </div>
+        <DifficultyPanel
+          math={math}
+          tier={tier}
+          controls={role === 'gm' && !ch.closed ? <CircumstanceControls value={ch.circumstance} /> : undefined}
+        />
       </div>
-      <DifficultyPanel
-        math={math}
-        tier={tier}
-        controls={role === 'gm' && !ch.closed ? <CircumstanceControls value={ch.circumstance} /> : undefined}
-      />
       {/* One box when the GM skipped framing, two when they didn't. */}
       <div class={framingField ? 'challenge-numbers' : 'challenge-numbers solo'}>
         {framingField && (
@@ -624,34 +707,37 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             kind="Framing"
             field={framingField}
             label={framingField.label}
-            target={math.target}
             side={ch.framing}
             outcome={math.framing}
             faces={session.rules.challenges.faces}
             skillBonus={math.skillBonus}
+            skillLabel={math.skillLabel}
+            skillIcon={math.skillIcon}
             exertion={ch.exertionFraming}
             dieAction={rerollAction('framing')}
             attemptLabel={role !== 'player'}
-            controls={spendControls('framing')}
+            exertButton={spendControls('framing')}
+            caption={<FramingCaption math={math} />}
           />
         )}
         <RollBox
           kind="Resolution"
           field={resolutionField}
           label={resolutionField?.label ?? ch.resolutionAbility}
-          target={math.resolutionTarget}
-          targetShift={math.rungDifficulty}
           side={ch.resolution}
           outcome={math.resolution}
           faces={session.rules.challenges.faces}
           skillBonus={math.skillBonus}
+          skillLabel={math.skillLabel}
+          skillIcon={math.skillIcon}
           exertion={ch.exertionResolution}
+          framingBonus={math.rungBonus}
           dieAction={resolutionDieAction()}
           attemptLabel={role !== 'player'}
-          controls={spendControls('resolution')}
+          exertButton={spendControls('resolution')}
+          caption={<ResolutionCaption math={math} />}
         />
       </div>
-      <FramingResult math={math} />
       <ApproachDie
         session={session}
         ch={ch}
@@ -688,7 +774,7 @@ function ChallengeLog(props: { session: Session; entries: Challenge[] }) {
             <span class="challenge-log-who">{char?.name ?? 'Nobody rolled'}</span>
             {/* The effective number, not the GM's raw one — hence the note when something moved it. */}
             <span class="challenge-log-numbers">
-              {math.resolutionTarget} ·{framingField ? ` ${framingField.label} /` : ''}{' '}
+              {math.target} ·{framingField ? ` ${framingField.label} /` : ''}{' '}
               {resolutionField?.label} · {stakesLabel(ch.stakes)}
               {ch.circumstance !== 0 && ' · circumstance'}
               {math.skillBonus > 0 && ` · ${math.skillLabel?.toLowerCase()}`}
@@ -980,13 +1066,19 @@ function SoloRollCard(props: { session: Session; solo: SoloRoll; role: 'gm' | 'p
             Rank {solo.rank}
             {rankWord && ` \u00b7 ${rankWord}`}
           </span>
-          <div class="dice-faces">
-            {solo.roll.dice.map((d, i) => (
-              <Die value={d} faceId={solo.roll.faces?.[i]} faces={session.rules.challenges.faces} />
-            ))}
-          </div>
-          <div class="solo-sum">{outcome.sum}</div>
-          <div class="solo-diff">{signed(outcome.difference)}</div>
+          <Equation
+            rows={[
+              solo.roll.dice.map((d, i) => (
+                <Die value={d} faceId={solo.roll.faces?.[i]} faces={session.rules.challenges.faces} />
+              )),
+            ]}
+            result={
+              <span class="equation-result">
+                <span class="solo-sum">{outcome.sum}</span>
+                <span class="solo-diff">{signed(outcome.difference)}</span>
+              </span>
+            }
+          />
         </div>
       </div>
       {role === 'gm' && (
@@ -1229,15 +1321,22 @@ function ContestantColumn(props: {
           <span class="opp-ability">{field?.label ?? (rank !== null ? `Rank ${rank}` : '\u2014')}</span>
         </div>
         {rolled ? (
-          <>
-            <div class="dice-faces">
-              {rolled.dice.map((d, i) => (
+          <Equation
+            rows={[
+              rolled.dice.map((d, i) => (
                 <Die value={d} faceId={rolled.faces?.[i]} faces={session.rules.challenges.faces} />
-              ))}
-              {bonus !== 0 && <span class="skill-bonus">{signed(bonus)}</span>}
-            </div>
-            <div class="opp-sum">{sum}</div>
-          </>
+              )),
+              [
+                ...(open && (check === 'core' ? one.skillCore : one.skillSupport)
+                  ? [bonusChip(check === 'core' ? one.skillCore : one.skillSupport, skill?.label ?? 'Skill', skill?.icon ?? undefined, 'skill')]
+                  : []),
+                ...(open && (check === 'core' ? one.exertionCore : one.exertionSupport)
+                  ? [bonusChip(check === 'core' ? one.exertionCore : one.exertionSupport, 'Exertion', undefined, 'exertion')]
+                  : []),
+              ],
+            ]}
+            result={<span class="opp-sum">{sum}</span>}
+          />
         ) : (
           <div class="opp-waiting">{open && bonus !== 0 ? `committed ${signed(bonus)}` : '\u2014'}</div>
         )}

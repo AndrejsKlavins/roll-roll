@@ -23,6 +23,7 @@ import {
   type ApproachEffect,
   type Field,
   type FramingRung,
+  type Icon,
   type NumberField,
   type Rules,
   type Trait,
@@ -81,9 +82,11 @@ export type ChallengeRoll = 'framing' | 'resolution'
  *
  * The GM's circumstance modifier is added to the difficulty, giving the number both rolls go
  * against; the player's declared skill is a **bonus on each rolled result** (user decision — it
- * used to come off the difficulty). The framing roll's margin then moves the resolution's target
- * up or down the framing ladder (rules.yaml), and may add a complication. That is worked out
- * live, so exertion spent on the framing after the dice are down moves the resolution's target.
+ * used to come off the difficulty). The framing roll's margin then buffs the resolution roll's
+ * own sum up or down the framing ladder (rules.yaml) — it used to move the resolution's target
+ * instead, but a bonus on the roll reads the same either way and keeps both checks judged
+ * against the one difficulty — and may add a complication. That is worked out live, so exertion
+ * spent on the framing after the dice are down still moves the resolution's bonus.
  */
 export type Challenge = {
   id: string
@@ -121,6 +124,13 @@ export type Challenge = {
   rerolls: number
   /** The GM has accepted the result: nothing more can be spent or rerolled. */
   closed: boolean
+  /**
+   * Whether the resolution succeeded the instant the dice landed — before any exertion, reroll or
+   * later circumstance nudge could move it. `null` until rolled. This is what a `when: failure`
+   * approach (Unbreakable) is gated on, not the live result: it decides once, right at the roll,
+   * so boosting a failure into a success afterwards doesn't retroactively take the option away.
+   */
+  resolutionSucceededAtRoll: boolean | null
   /** Both are set by the one roll; `framing` stays null when the GM skipped it. */
   framing: ChallengeSide | null
   resolution: ChallengeSide | null
@@ -246,17 +256,26 @@ export type ChallengeMath = {
   /** The declared skill's rank — a bonus **on each rolled result**, not a cut in the difficulty. */
   skillBonus: number
   skillLabel: string | null
-  /** The framing roll's number to beat: difficulty + circumstance. */
+  /** The declared skill's own icon, for the bonus chip beside the dice — not the ability's. */
+  skillIcon: Icon | null
+  /** Both rolls' number to beat: difficulty + circumstance. The framing rung no longer moves it —
+   *  it buffs the resolution roll instead (see rungBonus). */
   target: number
   framing: SideOutcome | null
   /** The rung the framing margin landed on; null with no framing roll (or none configured). */
   rung: FramingRung | null
-  /** What that rung does to the resolution's target (a plus makes it harder). */
-  rungDifficulty: number
-  resolutionTarget: number
+  /** What that rung adds straight into the resolution roll's sum (a plus helps, a minus hurts). */
+  rungBonus: number
+  /** Points still needed for the framing to reach the next rung up the ladder; null with no
+   *  framing roll, or once it's already on the top rung. */
+  framingPointsToNext: number | null
   resolution: SideOutcome | null
   /** Boons (positive) / complications (negative): the resolution's stakes **plus** the rung's. */
   degrees: number
+  /** Points still needed for the resolution to visibly improve — a bare success if it's still
+   *  failing, or its next degree breakpoint; null with no resolution roll, or once there is
+   *  nothing higher stakes can grant left to reach (see pointsToImprove). */
+  resolutionPointsToNext: number | null
   /** null until the dice are rolled. */
   success: boolean | null
 }
@@ -291,6 +310,38 @@ export function outcomeFor(sum: number, target: number, stakes: ChallengeStakes)
   if (stakes === 'normal') degrees = Math.abs(difference) >= 3 ? Math.sign(difference) : 0
   else if (stakes === 'high') degrees = Math.sign(difference) * Math.floor(Math.abs(difference) / 3)
   return { sum, target, difference, success, degrees }
+}
+
+/**
+ * How many more points would visibly improve a result — reaching a bare success if it's still
+ * failing, or its next degree breakpoint — shown above the result's own verdict so the player can
+ * see how close the next one is. Whichever is closer wins: a deep complication on normal or high
+ * stakes climbs out of it before it reaches plain success, so that's what counts as "next" there.
+ * Null when there is nothing left to reach: low stakes grants no degree at all, so once it's
+ * succeeding there's nothing further; normal stakes has only the one degree beyond a plain
+ * success, so once that's reached there's nothing higher either.
+ *
+ * High/normal stakes' degrees (outcomeFor) truncate toward zero, which makes the "0 boons/
+ * complications" tier five points wide (−2..2) on high stakes while every tier past it is only
+ * three points wide — not an even grid — so the next degree is found by walking forward until it
+ * actually changes, rather than assumed from a fixed spacing.
+ */
+export function pointsToImprove(difference: number, stakes: ChallengeStakes): number | null {
+  const current = outcomeFor(difference, 0, stakes)
+  const toSuccess = current.success ? null : -difference
+  let toNextDegree: number | null = null
+  // Low stakes never grants a degree; normal stakes has nothing above its one tier.
+  if (stakes !== 'low' && !(stakes === 'normal' && current.degrees >= 1)) {
+    for (let step = 1; step <= 15; step++) {
+      if (outcomeFor(difference + step, 0, stakes).degrees > current.degrees) {
+        toNextDegree = step
+        break
+      }
+    }
+  }
+  if (toSuccess === null) return toNextDegree
+  if (toNextDegree === null) return toSuccess
+  return Math.min(toSuccess, toNextDegree)
 }
 
 export type EventData =
@@ -761,6 +812,7 @@ export class Session {
           closed: false,
           framing: null,
           resolution: null,
+          resolutionSucceededAtRoll: null,
           by: e.by,
         })
         break
@@ -777,6 +829,9 @@ export class Session {
             resolution: e.resolution,
             approachDie: e.approachDie ?? null,
           })
+          // Exertion is still 0 at this instant (the roll is what unlocks spending it), so this
+          // reads the same as the plain dice — no snapshot subtraction needed.
+          ch.resolutionSucceededAtRoll = this.challengeMath(ch).success
         }
         break
       }
@@ -1372,7 +1427,7 @@ export class Session {
    * Rolls the challenge: the framing check (when there is one) and the resolution check **at the
    * same time**, in one event, so the table sees both results together (user decision). Nothing
    * the framing does to the resolution touches its dice — the ladder is arithmetic, worked out
-   * live in challengeMath() — so a later exertion on the framing still moves the target.
+   * live in challengeMath() — so a later exertion on the framing still moves its bonus.
    * The approach die is a plain d6, no rank shift. Once per challenge.
    */
   rollChallenge(challengeId: string, by: string) {
@@ -1402,10 +1457,12 @@ export class Session {
    * How the approach die stands right now. Nothing applies by itself — the player presses
    * Activate — and `when` decides whether that button is offered at all:
    * - `always` (Limitless): as soon as it is rolled.
-   * - `failure` (Unbreakable): only while the resolution roll is short of its target. A
-   *   successful roll `skips` it, and that flips live as the sum changes — but once activated
-   *   the die stays `active`, so an effect that turns the roll into a success (raising dice,
-   *   say) doesn't grey out the very thing that caused it.
+   * - `failure` (Unbreakable): only if the resolution was short of its target **the instant the
+   *   dice landed** (`resolutionSucceededAtRoll`) — decided once, not live off the current sum.
+   *   Exertion, a reroll or a later circumstance nudge can turn that failure into a success
+   *   afterwards without taking the option away; once activated the die also stays `active`
+   *   regardless, so an effect that itself turns the roll into a success (raising dice, say)
+   *   doesn't grey out the very thing that caused it.
    * - `choice` (Exquisite): whenever the player likes.
    *
    * `effect` is what this face does (null when the approach has none configured), `canActivate`
@@ -1434,7 +1491,7 @@ export class Session {
         ? 'active'
         : approach.when === 'choice'
           ? 'ready'
-          : this.challengeMath(ch).success
+          : ch.resolutionSucceededAtRoll
             ? 'skipped'
             : 'active'
     const effect = approachEffect(approach, ch.approachDie)
@@ -1677,8 +1734,12 @@ export class Session {
   challengeSkillBonus(ch: Challenge) {
     const char = ch.charId ? this.characters.get(ch.charId) : null
     const field = ch.skill ? (this.rules.fields.get(ch.skill) as NumberField | undefined) : undefined
-    if (!char || !field) return { bonus: 0, label: null as string | null }
-    return { bonus: Math.max(0, Math.round(Number(this.baseOf(char, field)))), label: field.label }
+    if (!char || !field) return { bonus: 0, label: null as string | null, icon: null as Icon | null }
+    return {
+      bonus: Math.max(0, Math.round(Number(this.baseOf(char, field)))),
+      label: field.label,
+      icon: field.icon ?? null,
+    }
   }
 
   /**
@@ -1691,31 +1752,36 @@ export class Session {
    * which moves the resolution's target and its degrees — all on the next render.
    */
   challengeMath(ch: Challenge): ChallengeMath {
-    const { bonus, label } = this.challengeSkillBonus(ch)
+    const { bonus, label, icon } = this.challengeSkillBonus(ch)
     // The skill is a bonus on the roll (user decision), so it never moves the difficulty.
     const target = ch.difficulty + ch.circumstance
     const framing = ch.framing
       ? outcomeFor(ch.framing.sum + bonus + ch.exertionFraming, target, 'low')
       : null
     const rung = framing ? framingRung(this.rules.challenges.framing, framing.difference) : null
-    const rungDifficulty = rung?.difficulty ?? 0
-    const resolutionTarget = target + rungDifficulty
+    // The rung buffs the resolution roll's own sum (user decision — it used to move the target).
+    const rungBonus = rung?.resolutionBonus ?? 0
     const resolution = ch.resolution
-      ? outcomeFor(ch.resolution.sum + bonus + ch.exertionResolution, resolutionTarget, ch.stakes)
+      ? outcomeFor(ch.resolution.sum + bonus + ch.exertionResolution + rungBonus, target, ch.stakes)
       : null
+    const nextRung = framing ? this.rules.challenges.framing.rungs.find((r) => r.from > framing.difference) : undefined
+    const framingPointsToNext = framing && nextRung ? nextRung.from - framing.difference : null
+    const resolutionPointsToNext = resolution ? pointsToImprove(resolution.difference, ch.stakes) : null
     return {
       difficulty: ch.difficulty,
       circumstance: ch.circumstance,
       skillBonus: bonus,
       skillLabel: label,
+      skillIcon: icon,
       target,
       framing,
       rung,
-      rungDifficulty,
-      resolutionTarget,
+      rungBonus,
+      framingPointsToNext,
       resolution,
       // The rung's boon/complication is added to whatever the stakes produced (user decision).
       degrees: (resolution?.degrees ?? 0) + (rung?.degrees ?? 0),
+      resolutionPointsToNext,
       success: resolution ? resolution.success : null,
     }
   }
@@ -2140,7 +2206,7 @@ export class Session {
     const field = one.skill ? (this.rules.fields.get(one.skill) as NumberField | undefined) : undefined
     if (!char || !field) return null
     const rank = Math.round(Number(this.baseOf(char, field)))
-    return { label: field.label, rank, left: rank - one.skillCore - one.skillSupport }
+    return { label: field.label, icon: field.icon ?? null, rank, left: rank - one.skillCore - one.skillSupport }
   }
 
   roll(opts: {

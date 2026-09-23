@@ -224,16 +224,16 @@ export const effectCanActivate = (effect: ApproachEffect | null) => !!effect && 
  * One rung of the framing ladder: what a framing margin of `from` or better (but short of the
  * next rung) does to the resolution roll. Both effects are **arithmetic only**, because the two
  * rolls land together and the rung is recomputed live — exertion on the framing can move the
- * resolution's target after the dice are down, which nothing dice-shaped could follow.
+ * resolution's bonus after the dice are down, which nothing dice-shaped could follow.
  *
- * - `difficulty` — moves the resolution's target; a plus makes it harder.
+ * - `resolutionBonus` — added straight into the resolution roll's sum; a plus helps, a minus hurts.
  * - `degrees` — a boon (positive) or a complication (negative), **added** to whatever the
  *   resolution's stakes produce.
  */
 export type FramingRung = {
   /** The lowest margin this rung covers. The bottom rung catches everything below it. */
   from: number
-  difficulty: number
+  resolutionBonus: number
   degrees: number
   label: string
 }
@@ -633,9 +633,9 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     }
   }
 
-  // challenges.framing: { ladder: [{ from, difficulty, degrees, label }] } — what the framing
-  // roll's margin does to the resolution roll. Each rung covers "from" up to the next rung's
-  // "from", and the bottom one catches everything below it, so the bands need not be even.
+  // challenges.framing: { ladder: [{ from, bonus, degrees, label }] } — what the framing roll's
+  // margin does to the resolution roll. Each rung covers "from" up to the next rung's "from",
+  // and the bottom one catches everything below it, so the bands need not be even.
   const rungs: FramingRung[] = (((rawChallenges.framing ?? {}).ladder ?? []) as any[])
     .flatMap((r: any, i: number) => {
       const where = `challenges.framing.ladder[${i}]`
@@ -644,11 +644,11 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
         fail(`${where}: from must be a whole number (the lowest margin this rung covers)`)
         return []
       }
-      const difficulty = Number(r?.difficulty ?? 0)
+      const resolutionBonus = Number(r?.bonus ?? 0)
       const degrees = Number(r?.degrees ?? 0)
-      if (!Number.isInteger(difficulty)) fail(`${where} (from ${from}): difficulty must be a whole number`)
+      if (!Number.isInteger(resolutionBonus)) fail(`${where} (from ${from}): bonus must be a whole number`)
       if (!Number.isInteger(degrees)) fail(`${where} (from ${from}): degrees must be a whole number`)
-      return [{ from, difficulty, degrees, label: String(r?.label ?? '') }]
+      return [{ from, resolutionBonus, degrees, label: String(r?.label ?? '') }]
     })
     .sort((a, b) => a.from - b.from)
   const duplicateRung = rungs.find((r, i) => i > 0 && r.from === rungs[i - 1]!.from)

@@ -332,9 +332,14 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .player-pick .pick-col { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); display: grid; }
 
 .challenge { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; display: grid; gap: 0.8rem; }
-.challenge-description { margin: 0; color: var(--text); font-size: 1.25rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
+/* The description sits beside the difficulty, the way the table screen's own mockup has it. */
+.challenge-title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.challenge-title-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 0.5rem; align-content: start; }
+/* "<b>Name</b> attempts to <description>" (user decision) — only the name is bold, so it has to
+   start from a normal weight for <b> to read as heavier than the rest of the line. */
+.challenge-description { margin: 0; color: var(--text); font-size: 1.25rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
 .table-screen .challenge-description { font-size: 1.8rem; }
-.challenge-head { display: flex; align-items: center; gap: 0.6rem; }
+.challenge-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .stakes { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 0.2rem 0.55rem; border: 1px solid var(--line); border-radius: 999px; }
 .stakes-high { color: var(--danger); border-color: var(--danger); }
 .stakes-normal { color: var(--accent); border-color: var(--accent); }
@@ -342,50 +347,83 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .result.success { color: #5cc27a; background: color-mix(in srgb, #5cc27a 15%, transparent); }
 .result.failure { color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
 
-/* minmax(0, 1fr), not 1fr: the boxes have to be able to shrink below their content's natural
-   width, or a wide child (the circumstance stepper, a long tier name) overflows the GM column. */
-.challenge-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-/* With no framing ability there is one box, so it should not stretch across both columns. */
-.challenge-numbers.solo { grid-template-columns: minmax(0, 1fr); max-width: 360px; margin-inline: auto; }
-@media (max-width: 480px) { .challenge-numbers { grid-template-columns: 1fr; } }
+/* Framing above resolution, not side by side (user decision) — minmax(0, 1fr), not 1fr, so a box
+   can still shrink below its content's natural width in the narrow GM/player column. */
+.challenge-numbers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+/* With no framing ability there is one box; cap and centre it so it doesn't stretch full width. */
+.challenge-numbers.solo { max-width: 360px; margin-inline: auto; }
 .difficulty-box { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; text-align: center; }
 .difficulty-box.success { border-color: #5cc27a; }
 .difficulty-box.failure { border-color: var(--danger); }
-.difficulty-label { display: flex; align-items: center; justify-content: center; gap: 0.45rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.85rem; }
+.difficulty-label { display: flex; align-items: center; justify-content: flex-end; gap: 0.45rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.85rem; }
 .difficulty-label .field-icon { width: 28px; height: 28px; border-radius: 8px; }
 .difficulty-label .field-icon svg, .difficulty-label .field-icon img { width: 17px; height: 17px; }
 /* Number (and tier name) in the ability's colour, like the GM's setup dialog. */
-.difficulty-target { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.2rem 0.5rem; color: var(--field-color, var(--text)); font-size: 3rem; font-weight: 800; line-height: 1.1; }
+.difficulty-target { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 0.2rem 0.5rem; color: var(--field-color, var(--text)); font-size: 2.75rem; font-weight: 800; line-height: 1.1; }
 .difficulty-tier { font-size: 1.1rem; font-weight: 600; }
-/* The one global difficulty, above the two roll boxes: big number, then the working. */
-.difficulty-panel { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.8rem 1rem; text-align: center; margin-bottom: 1rem; }
-/* The calculation everyone sees: GM number - skill +/- circumstance = what both rolls beat. */
-.difficulty-calc { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.15rem 0.45rem; margin: 0.35rem 0 0; font-size: 0.9rem; color: var(--muted); }
+/* The one global difficulty, beside the description (user decision, matches the table mockup):
+   no box of its own, just right-aligned text sitting next to it. */
+.difficulty-panel { flex: 0 0 auto; text-align: right; }
+/* The calculation everyone sees: GM number +/- circumstance = what both rolls beat. */
+.difficulty-calc { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 0.15rem 0.45rem; margin: 0.35rem 0 0; font-size: 0.9rem; color: var(--muted); }
 .calc-part.help { color: #5cc27a; }
 .calc-part.hinder { color: var(--danger); }
 .calc-total { font-weight: 700; color: var(--text); }
-/* The declared skill, named once under the difficulty; it shows again beside each result. */
-.difficulty-note { margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--accent); }
+@media (max-width: 480px) {
+  .challenge-title-row { flex-direction: column; }
+  .difficulty-panel { text-align: left; align-self: stretch; }
+  .difficulty-label, .difficulty-target, .difficulty-calc { justify-content: flex-start; }
+}
+/* Header row: "Framing"/"Resolution", the ability's icon and name, and its own Exert button.
+   Named apart from the unrelated .roll-head in the rolls feed (see feed.tsx) so the two never
+   cascade into each other. Wraps and shrinks (min-width: 0 down the chain) so a long ability
+   name never pushes past the box in a narrow column instead of dropping to its own line. */
+.roll-box-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.4rem; margin-bottom: 0.6rem; min-width: 0; }
 /* "Framing" / "Resolution" above the ability name, so the two boxes can never be confused. */
-.roll-kind { color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.65rem; font-weight: 700; margin-bottom: 0.2rem; }
+.roll-kind { flex-shrink: 0; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.65rem; font-weight: 700; }
+.roll-box-head .field-icon { flex-shrink: 0; width: 24px; height: 24px; border-radius: 6px; }
+.roll-box-head .field-icon svg, .roll-box-head .field-icon img { width: 15px; height: 15px; }
+.roll-ability { min-width: 0; overflow-wrap: break-word; font-weight: 700; color: var(--field-color, var(--text)); }
+.roll-box-head .exert-spend { margin-left: auto; margin-top: 0; }
 .roll-waiting { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.8rem; font-style: italic; }
-/* What the framing did to the resolution, in the words of the ladder rung it landed on. */
-.framing-result { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.3rem 0.7rem; padding: 0.5rem 0.8rem; border: 1px dashed var(--line); border-radius: 10px; text-align: center; }
-.framing-margin { font-weight: 800; font-size: 1.1rem; }
-.framing-label { font-size: 0.9rem; }
-.framing-help { border-color: #5cc27a; }
-.framing-help .framing-margin { color: #5cc27a; }
-.framing-hinder { border-color: var(--danger); }
-.framing-hinder .framing-margin { color: var(--danger); }
-.framing-even .framing-margin { color: var(--muted); }
+/* A roll box's own footer: the framing rung it landed on, or the resolution's success/degrees. */
+.roll-caption { margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); text-align: center; }
+/* How far the result is from its next breakpoint, above the verdict it's about to become. */
+.roll-caption-needs { margin: 0 0 0.2rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.roll-caption-title { font-weight: 800; font-size: 1rem; }
+.roll-caption-sub { margin-left: 0.3rem; font-size: 0.8rem; color: var(--muted); }
+.roll-caption-help .roll-caption-title { color: #5cc27a; }
+.roll-caption-hinder .roll-caption-title { color: var(--danger); }
+.roll-caption-even .roll-caption-title { color: var(--muted); }
 /* Boons / complications for the whole challenge: the stakes plus whatever the framing added. */
 .challenge-degree { font-size: 0.85rem; font-weight: 700; color: var(--accent); }
-.difficulty-result { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); display: grid; gap: 0.3rem; }
+.difficulty-result { margin-top: 0.5rem; display: grid; gap: 0.3rem; }
 /* "Player attempt" heads the rolled part of a box; faces are square dice. */
 .attempt-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; }
-.dice-faces { display: flex; align-items: flex-start; justify-content: center; gap: 0.5rem; font-size: 1.3rem; font-weight: 700; }
+/* A roll as a running sum: dice, then bonus chips, then "=" and the result. Wrapped onto extra
+   rows (in fixed-size groups — see MAX_EQUATION_TERMS) instead of one very long line. Each row
+   also wraps on its own (flex-wrap) as a safety net for containers too narrow even for that —
+   the GM/player columns hold two opposition sides side by side, half the width of the main
+   board — and every term keeps flex-shrink: 0 so a cramped row wraps cleanly instead of letting
+   its dice and bonus chips shrink into each other.  */
+.equation { display: grid; gap: 0.4rem; min-width: 0; }
+.equation-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: center; gap: 0.4rem 0.5rem; font-size: 1.3rem; font-weight: 700; }
+.equation-op { flex-shrink: 0; align-self: center; font-size: 1.4rem; font-weight: 700; color: var(--muted); }
+.equation-eq { color: var(--text); }
+.equation-final { display: flex; flex-shrink: 0; align-items: baseline; gap: 0.5rem; }
+.equation-result { display: flex; align-items: center; gap: 0.5rem; }
+/* A skill/exertion/framing bonus, shown the same shape as a die: value over its label. */
+.equation-bonus { display: grid; flex-shrink: 0; justify-items: center; gap: 0.15rem; align-self: flex-start; }
+.equation-bonus-value { font-size: 1.3rem; }
+.equation-bonus-label { display: flex; align-items: center; gap: 0.25rem; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.equation-bonus-label .field-icon { width: 18px; height: 18px; border-radius: 5px; }
+.equation-bonus-label .field-icon svg, .equation-bonus-label .field-icon img { width: 11px; height: 11px; }
+.equation-bonus.skill .equation-bonus-value { color: var(--accent); }
+.equation-bonus.exertion .equation-bonus-value { color: var(--secret); }
+.equation-bonus.help .equation-bonus-value { color: #5cc27a; }
+.equation-bonus.hinder .equation-bonus-value { color: var(--danger); }
 /* Each die: square with the number, its name underneath, both in the face's colour. */
-.die { display: grid; justify-items: center; gap: 0.15rem; }
+.die { display: grid; flex-shrink: 0; justify-items: center; gap: 0.15rem; }
 .die-face { display: grid; place-items: center; width: 2.2rem; height: 2.2rem; background: var(--panel); border: 1px solid var(--face-color, var(--line)); border-radius: 8px; color: var(--face-color, var(--text)); }
 .die-name { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--face-color, var(--muted)); }
 /* How many times this die was rolled again (exertion or an approach effect). */
@@ -395,9 +433,10 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* Lowering a die is the cost side of Tweak, so it does not read as a bonus; a copy is new dice. */
 .die-changed-lowered { color: var(--danger); }
 .die-changed-copied { color: var(--secret); }
-/* The attempt's total, in the ability's colour like the target above it. */
-.difficulty-sum { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
-.difficulty-diff { font-size: 1.1rem; color: var(--muted); }
+/* The attempt's total, in the ability's colour like the target above it — same size as the
+   difficulty number (user decision), so the two read as directly comparable. */
+.difficulty-sum { font-size: 2.75rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
+.difficulty-diff { font-size: 1.1rem; text-align: center; color: var(--muted); }
 .difficulty-box.success .difficulty-diff { color: #5cc27a; }
 .difficulty-box.failure .difficulty-diff { color: var(--danger); }
 
@@ -451,6 +490,14 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .opp-check .field-icon svg, .opp-check .field-icon img { width: 13px; height: 13px; }
 .opp-ability { font-size: 0.75rem; font-weight: 700; color: var(--field-color, var(--text)); }
 .opp-sum { font-size: 1.5rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }
+/* Two opposition sides sit side by side, so each gets roughly half the board's width — the
+   equation reads the same but everything in it is smaller than on the main challenge board. */
+.opp-check .equation-row { gap: 0.3rem 0.35rem; font-size: 1rem; }
+.opp-check .die-face { width: 1.7rem; height: 1.7rem; }
+.opp-check .die-name { font-size: 0.55rem; }
+.opp-check .equation-bonus-value { font-size: 1rem; }
+.opp-check .equation-bonus-label { font-size: 0.55rem; }
+.opp-check .equation-op { font-size: 1.1rem; }
 .opp-waiting { color: var(--muted); font-size: 0.8rem; }
 .opp-commit { display: flex; align-items: center; justify-content: center; gap: 0.3rem; flex-wrap: wrap; }
 .opp-commit .exert-btn { min-height: 28px; padding: 0.1rem 0.35rem; font-size: 0.75rem; }
@@ -528,9 +575,6 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .skill-pick { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
 
 /* ---- exertion ---- */
-/* A committed skill or exertion bonus shown beside an opposition contestant's dice. */
-.dice-faces .skill-bonus { color: var(--accent); align-self: flex-start; line-height: 2.2rem; }
-.dice-faces .exert-bonus { color: var(--secret); align-self: flex-start; line-height: 2.2rem; }
 .die-tappable { padding: 0; background: none; border: none; min-height: 0; cursor: pointer; }
 /* Tappable dice carry a faint ring so they read as buttons on touch screens too. */
 .die-reroll .die-face { box-shadow: 0 0 0 1px color-mix(in srgb, var(--secret) 40%, transparent); }
