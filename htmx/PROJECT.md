@@ -653,7 +653,7 @@ by a hair", accent border), ordered by its `seq` like everything else there.
 log** — they read it on `/table`). **`/table`** sees every public
 roll — the current challenge and the challenge history log, the current opposition, and a solo roll
 once it is `public`. A **player** sees only rolls they are part of, and only the current one: the
-current challenge when `ch.charId` is theirs, the current opposition when their character is one of
+current challenge when `ch.charId` is theirs **or they are one of its supporters**, the current opposition when their character is one of
 its sides, and **never** a solo roll (no player is in one) nor the challenge history. The filtering
 is in the three boards themselves (`ChallengeBoard`, `OppositionBoard`, `SoloRollBoard`), which is
 safe because every push renders per client (`hub.send` with the client's role and `charId`); each
@@ -729,6 +729,19 @@ carry each stat's icon/colour and disable at 0; dice become reroll buttons only 
 chosen (a faint purple ring marks them, since phones have no hover). Repeatable while pools last.
 Every reroll — exertion or approach — is counted per die in `ChallengeSide.rerolled[i]` and shown
 under that die as **"Reroll N"**, so the table can see a 1 that was bought three times.
+
+**Support** (user-designed): the GM adds other players as **supporters** of the current challenge
+(a "Add a supporter…" list on the GM board: finished characters other than the one rolling; ✕ takes
+one off again, with their die). A supporter **sees the challenge on their own screen** (they are
+part of it — `ChallengeBoard`'s player filter counts supporters) and, **once the dice are in**, is
+prompted to spend **1 stamina or willpower — off their own sheet, the app deducts nothing** (user
+decision) — and roll **one die** of an ability they pick (at its current rank, `rollOneFace`) onto
+the **framing or the resolution** (two buttons; framing only when there is one). The die is added
+to that check in `challengeMath` (`supportTotal`) and shown in its breakdown as a chip named after
+the supporter; on the framing it moves the rung like any framing bonus. One die per supporter;
+nothing after "Challenge done". Everyone sees a "Jorik supports — +4 on framing (Perception)" line.
+Events: `challenge_supporter_added` / `_removed` / `challenge_support_rolled`; making the supporter
+the roller drops them from the supporters. It does not touch `failingAtRoll` (Unbreakable).
 
 **Hand edits** (user-designed): once a challenge is rolled and until it is closed, **each roll box**
 (framing and resolution) carries **−1 / +1 / Set die** in its header, for **the GM and the rolling

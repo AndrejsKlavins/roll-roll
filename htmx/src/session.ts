@@ -134,6 +134,8 @@ export type Challenge = {
    */
   customFraming: number
   customResolution: number
+  /** Other players helping out, added by the GM; each may roll one support die (see Supporter). */
+  supporters: Supporter[]
   /** The GM has accepted the result: nothing more can be spent or rerolled. */
   closed: boolean
   /**
@@ -151,6 +153,20 @@ export type Challenge = {
   /** The id of the event that started it — orders challenges and solo rolls in one history log. */
   seq: number
 }
+/**
+ * A player helping with someone else's challenge (user-designed). The GM adds them; once the dice
+ * are in they may roll **one** die of one of their own abilities — at that ability's rank, like
+ * any ability die — and it is added to the framing or the resolution, their pick. It costs them a
+ * point of stamina or willpower, which **they take off their own sheet** (the app deducts nothing).
+ */
+export type Supporter = {
+  charId: string
+  /** Set once they have rolled: which check it went to, the ability, and the die itself. */
+  roll: ChallengeRoll | null
+  ability: string | null
+  die: { face: number; value: number } | null
+}
+
 /** Who sees a solo roll. The GM always does; `public` also shows it on /table (never to players). */
 export type SoloVisibility = 'gm' | 'public'
 
@@ -473,6 +489,19 @@ export type EventData =
       by: string
     }
   | { type: 'challenge_player_set'; challengeId: string; charId: string | null; approach: string | null; skill: string | null; by: string }
+  // Support: the GM adds (or removes) a helping player; the helper rolls their one die.
+  | { type: 'challenge_supporter_added'; challengeId: string; charId: string; by: string }
+  | { type: 'challenge_supporter_removed'; challengeId: string; charId: string; by: string }
+  | {
+      type: 'challenge_support_rolled'
+      challengeId: string
+      charId: string
+      roll: ChallengeRoll
+      ability: string
+      face: number
+      value: number
+      by: string
+    }
   // Both checks land together (user decision), so one event carries them: `framing` is absent on
   // a challenge with no framing ability, and `approachDie` when no approach was picked.
   | {
@@ -997,6 +1026,7 @@ export class Session {
           exertionRerollArmed: false,
           customFraming: 0,
           customResolution: 0,
+          supporters: [],
           closed: false,
           framing: null,
           resolution: null,
@@ -1006,7 +1036,28 @@ export class Session {
         break
       case 'challenge_player_set': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
-        if (ch) Object.assign(ch, { charId: e.charId, approach: e.approach, skill: e.skill })
+        if (ch) {
+          Object.assign(ch, { charId: e.charId, approach: e.approach, skill: e.skill })
+          // The rolling player can't also be their own supporter.
+          ch.supporters = ch.supporters.filter((sp) => sp.charId !== e.charId)
+        }
+        break
+      }
+      case 'challenge_supporter_added': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (ch && !ch.supporters.some((sp) => sp.charId === e.charId)) {
+          ch.supporters.push({ charId: e.charId, roll: null, ability: null, die: null })
+        }
+        break
+      }
+      case 'challenge_supporter_removed': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (ch) ch.supporters = ch.supporters.filter((sp) => sp.charId !== e.charId)
+        break
+      }
+      case 'challenge_support_rolled': {
+        const sp = this.challenges.find((x) => x.id === e.challengeId)?.supporters.find((x) => x.charId === e.charId)
+        if (sp) Object.assign(sp, { roll: e.roll, ability: e.ability, die: { face: e.face, value: e.value } })
         break
       }
       case 'challenge_rolled': {
@@ -2186,13 +2237,17 @@ export class Session {
     // The skill is a bonus on the roll (user decision), so it never moves the difficulty.
     const target = ch.difficulty + ch.circumstance
     const framing = ch.framing
-      ? outcomeFor(ch.framing.sum + bonus + ch.exertionFraming + ch.customFraming, target, 'low')
+      ? outcomeFor(ch.framing.sum + bonus + ch.exertionFraming + ch.customFraming + this.supportTotal(ch, 'framing'), target, 'low')
       : null
     const rung = framing ? framingRung(this.rules.challenges.framing, framing.difference) : null
     // The rung buffs the resolution roll's own sum (user decision — it used to move the target).
     const rungBonus = rung?.resolutionBonus ?? 0
     const resolution = ch.resolution
-      ? outcomeFor(ch.resolution.sum + bonus + ch.exertionResolution + ch.customResolution + rungBonus, target, ch.stakes)
+      ? outcomeFor(
+          ch.resolution.sum + bonus + ch.exertionResolution + ch.customResolution + this.supportTotal(ch, 'resolution') + rungBonus,
+          target,
+          ch.stakes,
+        )
       : null
     const nextRung = framing ? this.rules.challenges.framing.rungs.find((r) => r.from > framing.difference) : undefined
     const framingPointsToNext = framing && nextRung ? nextRung.from - framing.difference : null
@@ -2214,6 +2269,52 @@ export class Session {
       resolutionPointsToNext,
       success: resolution ? resolution.success : null,
     }
+  }
+
+  // ---- support ----------------------------------------------------------------
+  /** What the supporters' dice add to one of the challenge's checks. */
+  supportTotal(ch: Challenge, roll: ChallengeRoll) {
+    return ch.supporters.reduce((sum, sp) => (sp.roll === roll && sp.die ? sum + sp.die.value : sum), 0)
+  }
+
+  /**
+   * The GM adds a helping player to a challenge: any finished character except the one rolling,
+   * once, from the moment the challenge exists until it is closed (support is only *rolled* once
+   * the dice are in, but it can be lined up before).
+   */
+  addSupporter(challengeId: string, charId: string, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    const char = this.characters.get(charId)
+    if (!ch || ch.closed || char?.status !== 'active' || ch.charId === charId) return false
+    if (ch.supporters.some((sp) => sp.charId === charId)) return false
+    this.append({ type: 'challenge_supporter_added', challengeId, charId, by })
+    return true
+  }
+
+  /** The GM takes a supporter off again — with their die, if they had rolled it. */
+  removeSupporter(challengeId: string, charId: string, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    if (!ch || ch.closed || !ch.supporters.some((sp) => sp.charId === charId)) return false
+    this.append({ type: 'challenge_supporter_removed', challengeId, charId, by })
+    return true
+  }
+
+  /**
+   * A supporter rolls their one die: one of their abilities (at its current rank) onto the
+   * framing or the resolution. Only once the challenge's dice are in and until it is closed, only
+   * once per supporter, and only onto a framing that exists. The stamina/willpower it costs is the
+   * player's to take off their sheet.
+   */
+  rollSupport(challengeId: string, charId: string, roll: ChallengeRoll, ability: string, by: string) {
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    const sp = ch?.supporters.find((x) => x.charId === charId)
+    const char = this.characters.get(charId)
+    if (!ch || !sp || sp.die || ch.closed || !ch.resolution || char?.status !== 'active') return false
+    if (roll === 'framing' && !ch.framing) return false
+    if (!this.isAbilityField(ability)) return false
+    const { face, value } = rollOneFace(Number(this.valueOf(char, this.rules.fields.get(ability)!)))
+    this.append({ type: 'challenge_support_rolled', challengeId, charId, roll, ability, face, value, by })
+    return true
   }
 
   /** Exertion earned but not yet spent on a roll or a reroll. It carries across both rolls. */

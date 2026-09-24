@@ -495,6 +495,18 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .equation-bonus.skill .equation-bonus-value { color: var(--accent); }
 .equation-bonus.exertion .equation-bonus-value { color: var(--secret); }
 .equation-bonus.custom .equation-bonus-value { color: var(--text); }
+.equation-bonus.support .equation-bonus-value { color: #6fb3d9; }
+/* Support: who is helping (and what their die added), the GM's add/remove, the helper's prompt. */
+.support { display: grid; gap: 0.4rem; padding: 0.5rem 0.6rem; border: 1px dashed var(--line); border-radius: var(--radius); }
+.support-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.2rem; font-size: 0.9rem; }
+.support-list li { display: flex; align-items: baseline; gap: 0.3rem; flex-wrap: wrap; }
+.support-result { color: #6fb3d9; font-weight: 600; }
+.support-remove { min-height: 26px; padding: 0 0.4rem; margin-left: auto; font-size: 0.75rem; color: var(--muted); }
+.support-add { display: flex; gap: 0.4rem; }
+.support-add select, .support-roll select { flex: 1; min-width: 0; min-height: 36px; background: var(--panel-2); color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 0 0.4rem; }
+.support-roll { display: grid; gap: 0.4rem; }
+.support-prompt { margin: 0; font-size: 0.9rem; }
+.support-buttons { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
 .equation-bonus.help .equation-bonus-value { color: #5cc27a; }
 .equation-bonus.hinder .equation-bonus-value { color: var(--danger); }
 /* Each die: square with the number, its name underneath, both in the face's colour. */

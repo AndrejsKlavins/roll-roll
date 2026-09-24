@@ -240,6 +240,8 @@ function RollBox(props: {
   caption?: Child
   /** The custom ± on this roll (the GM's or player's hand adjustment), shown as "Custom". */
   custom: number
+  /** Supporters' dice on this roll: each is a chip named after the helper. */
+  supports?: { name: string; value: number }[]
   /** Which roll this is, for the hand-edit routes. */
   roll: 'framing' | 'resolution'
   /**
@@ -278,6 +280,7 @@ function RollBox(props: {
       bonusTerms.push(bonusChip(props.framingBonus, 'Framing', undefined, props.framingBonus > 0 ? 'help' : 'hinder'))
     }
     if (props.custom) bonusTerms.push(bonusChip(props.custom, 'Custom', undefined, 'custom'))
+    for (const sp of props.supports ?? []) bonusTerms.push(bonusChip(sp.value, sp.name, undefined, 'support'))
   }
   const edit = props.editUrl && side ? props.editUrl : null
   const step = (delta: number) => (
@@ -801,6 +804,11 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   // Only the player who rolled acts on it, and only once the dice are in, until the GM closes it.
   const acting = isViewerTurn && rolled && !ch.closed
   const exertion = session.availableExertion(ch)
+  // Supporters' rolled dice, per check, for that check's breakdown.
+  const supportsOn = (roll: 'framing' | 'resolution') =>
+    ch.supporters.flatMap((sp) =>
+      sp.roll === roll && sp.die ? [{ name: session.characters.get(sp.charId)?.name ?? 'Support', value: sp.die.value }] : [],
+    )
   // The GM and the rolling player can both hand-edit a rolled, open challenge (custom ±1, Set die).
   const editUrl =
     rolled && !ch.closed
@@ -906,6 +914,7 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             exertion={ch.exertionFraming}
             dieAction={dieAction('framing')}
             custom={ch.customFraming}
+            supports={supportsOn('framing')}
             roll="framing"
             editUrl={editUrl}
             attemptLabel={role !== 'player'}
@@ -926,6 +935,7 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           framingBonus={math.rungBonus}
           dieAction={dieAction('resolution')}
           custom={ch.customResolution}
+          supports={supportsOn('resolution')}
           roll="resolution"
           editUrl={editUrl}
           attemptLabel={role !== 'player'}
@@ -942,12 +952,124 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
       {role !== 'player' && <ChallengeAbilities session={session} ch={ch} />}
       {isViewerTurn && !rolled && <ChallengeSetupControls session={session} ch={ch} charId={viewerCharId!} />}
       {acting && <ExertionControls session={session} ch={ch} charId={viewerCharId!} />}
+      <SupportPanel session={session} ch={ch} role={role} viewerCharId={viewerCharId} />
       {role === 'gm' && rolled && !ch.closed && (
         <button type="button" class="primary" hx-post="/gm/challenge/done" hx-swap="none">
           Challenge done
         </button>
       )}
     </div>
+  )
+}
+
+/**
+ * Support (user-designed): other players helping the one rolling. Everyone sees who is supporting
+ * and what their die added. The **GM** adds a helper from a list of the other finished characters
+ * and can take one off again (✕). A **supporter** — once the dice are in — is prompted to spend a
+ * point of stamina or willpower (off their own sheet: the app deducts nothing) and roll one die of
+ * an ability of their choice onto the framing or the resolution; it goes into that check's
+ * breakdown under their name. One die per supporter.
+ */
+function SupportPanel(props: { session: Session; ch: Challenge; role: 'gm' | 'player' | 'table'; viewerCharId?: string }) {
+  const { session, ch, role, viewerCharId } = props
+  const gm = role === 'gm' && !ch.closed
+  const name = (id: string) => session.characters.get(id)?.name ?? '?'
+  const mine = ch.supporters.find((sp) => sp.charId === viewerCharId)
+  const candidates = gm
+    ? [...session.characters.values()].filter(
+        (c) => c.status === 'active' && c.id !== ch.charId && !ch.supporters.some((sp) => sp.charId === c.id),
+      )
+    : []
+  if (!ch.supporters.length && !candidates.length) return null
+  const abilityLabel = (id: string | null) => (id ? session.rules.fields.get(id)?.label ?? id : '')
+  const rolled = !!ch.resolution
+  return (
+    <div class="support">
+      {ch.supporters.length > 0 && (
+        <ul class="support-list">
+          {ch.supporters.map((sp) => (
+            <li>
+              <b>{name(sp.charId)}</b> supports
+              {sp.die ? (
+                <span class="support-result">
+                  {' '}
+                  — {signed(sp.die.value)} on {sp.roll} ({abilityLabel(sp.ability)})
+                </span>
+              ) : (
+                <span class="muted"> — {rolled && !ch.closed ? 'deciding…' : ch.closed ? 'did not roll' : 'waits for the roll'}</span>
+              )}
+              {gm && (
+                <button
+                  type="button"
+                  class="support-remove"
+                  hx-post={`/gm/challenge/supporter/remove?char=${sp.charId}`}
+                  hx-swap="none"
+                  title={`Take ${name(sp.charId)} off as a supporter${sp.die ? ' (and their die)' : ''}`}
+                >
+                  ✕
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {gm && candidates.length > 0 && (
+        <form class="support-add" hx-post="/gm/challenge/supporter/add" hx-swap="none">
+          <select name="charId" aria-label="Player to add as a supporter" required>
+            <option value="">Add a supporter…</option>
+            {candidates.map((c) => (
+              <option value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button type="submit" class="small">
+            Add
+          </button>
+        </form>
+      )}
+      {mine && !mine.die && !ch.closed && viewerCharId && (
+        <SupportRoll session={session} ch={ch} charId={viewerCharId} rolled={rolled} />
+      )}
+    </div>
+  )
+}
+
+/**
+ * The supporter's own prompt: before the dice, a note to wait; after, pick an ability (their
+ * framing/resolution abilities' match first) and press the check the die goes to.
+ */
+function SupportRoll(props: { session: Session; ch: Challenge; charId: string; rolled: boolean }) {
+  const { session, ch, charId } = props
+  const char = session.characters.get(charId)
+  if (!char) return null
+  const rollerName = (ch.charId ? session.characters.get(ch.charId)?.name : null) ?? 'The player'
+  if (!props.rolled) {
+    return <p class="support-prompt muted">You are supporting {rollerName}. Once the dice are in you can add one of yours.</p>
+  }
+  const abilities = [...session.rules.fields.values()].filter((f): f is NumberField => isBaseField(f) && !f.trained)
+  return (
+    <form class="support-roll" hx-post={`/c/${charId}/challenge/support`} hx-swap="none">
+      <p class="support-prompt">
+        Support {rollerName}: spend <b>1 stamina or willpower</b> (take it off your sheet), then roll one die of an
+        ability onto a check.
+      </p>
+      <select name="ability" aria-label="Ability to roll">
+        {abilities.map((f) => (
+          <option value={f.id} selected={f.id === ch.resolutionAbility || undefined}>
+            {f.label} ({String(session.valueOf(char, f))})
+          </option>
+        ))}
+      </select>
+      <div class="support-buttons">
+        {ch.framing && (
+          <button type="submit" name="roll" value="framing" class="small">
+            Roll support for framing
+          </button>
+        )}
+        <button type="submit" name="roll" value="resolution" class="primary">
+          Roll support for resolution
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -2036,7 +2158,10 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
   // A player sees only the current challenge, and only when it is theirs to roll (user decision);
   // the GM and the table see every one. The section stays mounted either way, so a live update
   // still has somewhere to land when a challenge is handed to this player.
-  const ch = role === 'player' && current?.charId !== viewerCharId ? null : current
+  // A supporter is part of it too, so they see it (to roll their support die).
+  const involved =
+    !!current && (current.charId === viewerCharId || current.supporters.some((sp) => sp.charId === viewerCharId))
+  const ch = role === 'player' && !involved ? null : current
   // Past challenges (the current one is on the board above), every solo roll the GM has shown
   // the table, and finished earlier opposition rolls — newest first. Hiding a solo roll again
   // takes it back out.

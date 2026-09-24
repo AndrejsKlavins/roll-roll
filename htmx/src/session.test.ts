@@ -1046,6 +1046,84 @@ async function tweakWithDieOn(face: number) {
 }
 
 
+describe('support', () => {
+  /** Mara rolls, Jorik is around to help. */
+  const withHelper = async (framingAbility: string | null = 'strength') => {
+    const ready = await readyChallenge('bold', 9, framingAbility)
+    const jorik = ready.s.createCharacter('Jorik').id
+    ready.s.finalizeCharacter(jorik, 'Jorik')
+    return { ...ready, jorik }
+  }
+
+  test('the GM adds a supporter, who rolls one ability die onto a check once the dice are in', async () => {
+    const { s, ch, jorik } = await withHelper()
+    expect(s.addSupporter(ch.id, jorik, 'GM')).toBe(true)
+    expect(s.addSupporter(ch.id, jorik, 'GM')).toBe(false) // once
+    expect(s.rollSupport(ch.id, jorik, 'resolution', 'agility', 'Jorik')).toBe(false) // no dice yet
+
+    s.rollChallenge(ch.id, 'Mara')
+    const before = s.challengeMath(s.currentChallenge()!)
+    s.adjustBase(jorik, 'agility', 2, 'GM') // rank 5: his die is shifted +2
+    expect(s.rollSupport(ch.id, jorik, 'resolution', 'agility', 'Jorik')).toBe(true)
+    const after = s.currentChallenge()!
+    const sp = after.supporters[0]!
+    expect(sp).toMatchObject({ charId: jorik, roll: 'resolution', ability: 'agility' })
+    expect(sp.die!.value).toBe(sp.die!.face + 2)
+    const math = s.challengeMath(after)
+    expect(math.resolution!.sum).toBe(before.resolution!.sum + sp.die!.value)
+    expect(math.framing!.sum).toBe(before.framing!.sum) // only the check he picked
+    expect(s.rollSupport(ch.id, jorik, 'framing', 'strength', 'Jorik')).toBe(false) // one die only
+  })
+
+  test('support on the framing moves the rung like any framing bonus', async () => {
+    const { s, ch, jorik } = await withHelper()
+    s.addSupporter(ch.id, jorik, 'GM')
+    s.rollChallenge(ch.id, 'Mara')
+    const before = s.challengeMath(s.currentChallenge()!)
+    s.rollSupport(ch.id, jorik, 'framing', 'strength', 'Jorik')
+    const after = s.challengeMath(s.currentChallenge()!)
+    const die = s.currentChallenge()!.supporters[0]!.die!.value
+    expect(after.framing!.sum).toBe(before.framing!.sum + die)
+    expect(after.resolution!.sum).toBe(before.resolution!.sum - before.rungBonus + after.rungBonus)
+  })
+
+  test('refused: the roller as their own supporter, a draft, a skill, a missing framing, after Done', async () => {
+    const { s, id, ch, jorik } = await withHelper(null)
+    expect(s.addSupporter(ch.id, id, 'GM')).toBe(false) // Mara is the one rolling
+    const draft = s.createCharacter('Bo').id
+    expect(s.addSupporter(ch.id, draft, 'GM')).toBe(false)
+    s.addSupporter(ch.id, jorik, 'GM')
+    s.rollChallenge(ch.id, 'Mara')
+    expect(s.rollSupport(ch.id, jorik, 'framing', 'strength', 'Jorik')).toBe(false) // no framing roll
+    expect(s.rollSupport(ch.id, jorik, 'resolution', 'athletics', 'Jorik')).toBe(false) // abilities only
+    expect(s.rollSupport(ch.id, draft, 'resolution', 'strength', 'Bo')).toBe(false) // not a supporter
+    s.closeChallenge(ch.id, 'GM')
+    expect(s.rollSupport(ch.id, jorik, 'resolution', 'strength', 'Jorik')).toBe(false)
+    expect(s.addSupporter(ch.id, draft, 'GM')).toBe(false)
+  })
+
+  test('removing a supporter takes their die off; it all survives a restart', async () => {
+    const { s, ch, jorik, open } = await withHelper()
+    s.addSupporter(ch.id, jorik, 'GM')
+    s.rollChallenge(ch.id, 'Mara')
+    s.rollSupport(ch.id, jorik, 'resolution', 'agility', 'Jorik')
+    const withDie = s.challengeMath(s.currentChallenge()!).resolution!.sum
+    const die = s.currentChallenge()!.supporters[0]!.die!.value
+    expect(open().currentChallenge()!.supporters).toEqual(s.currentChallenge()!.supporters)
+    expect(s.removeSupporter(ch.id, jorik, 'GM')).toBe(true)
+    const without = s.challengeMath(s.currentChallenge()!).resolution!.sum
+    expect(withDie - without).toBe(die)
+    expect(s.currentChallenge()!.supporters).toEqual([])
+  })
+
+  test('picking the supporter as the roller drops them from the supporters', async () => {
+    const { s, ch, jorik } = await withHelper()
+    s.addSupporter(ch.id, jorik, 'GM')
+    s.setChallengePlayer(ch.id, jorik, 'bold', null, 'GM')
+    expect(s.currentChallenge()!.supporters).toEqual([])
+  })
+})
+
 describe('equipment', () => {
   const finished = async () => {
     const { open } = await setup(CHALLENGE_RULES)

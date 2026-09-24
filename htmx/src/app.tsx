@@ -586,6 +586,31 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // Support: the GM lines up helping players; each helper rolls their one die from their screen.
+  app.post('/gm/challenge/supporter/add', async (c) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    if (session.addSupporter(ch.id, (await form(c)).charId ?? '', actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/gm/challenge/supporter/remove', (c) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    if (session.removeSupporter(ch.id, c.req.query('char') ?? '', actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/challenge/support', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    const body = await form(c)
+    const roll = body.roll === 'framing' ? 'framing' : 'resolution'
+    if (session.rollSupport(ch.id, char.id, roll, body.ability ?? '', actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
   // Hand edits on one roll of the current challenge, shared by the GM and the rolling player:
   // the "custom" ±1 and "Set die value". `charId` null is the GM; the session checks who may.
   const rollOf = (c: Context) => (c.req.query('roll') === 'framing' ? 'framing' : 'resolution')
