@@ -436,6 +436,11 @@ export type EventData =
       by: string
     }
   | { type: 'power_level_set'; value: number; from: number; by: string }
+  // Equipment: a player (or the GM, for them) defines an item, discards it, or turns it off/on.
+  // The name rides on every event so the change log can say which item.
+  | { type: 'item_added'; charId: string; itemId: string; name: string; modifiers: ItemModifier[]; by: string }
+  | { type: 'item_removed'; charId: string; itemId: string; name: string; by: string }
+  | { type: 'item_enabled_set'; charId: string; itemId: string; name: string; enabled: boolean; by: string }
   // Play change to a calculated stat: adj is stored (current = formula + adj); from/to are shown values.
   | { type: 'stat_set'; charId: string; stat: string; adj: number; from: number; to: number; by: string }
   | {
@@ -639,7 +644,27 @@ export type Character = {
   level: number
   /** Ids of traits currently picked, in pick order. */
   traits: string[]
+  /** Equipment the player (or the GM) has defined, in the order it was added. */
+  items: Item[]
 }
+
+/**
+ * One thing an item changes while it is enabled: `target` is a base number field (an ability or
+ * a skill), a calculated stat, or an item-only stat (rules `equipment.item_stats`, e.g. Attack
+ * damage — shown only on the item). `delta` is a whole number, plus or minus.
+ */
+export type ItemModifier = { target: string; delta: number }
+
+/**
+ * A piece of equipment (user-designed): a name and what it modifies. **Enabled** items add their
+ * modifiers on top of everything else — a temporary bonus, never a base change, so steppers and
+ * "reset" leave it alone (see itemBonus). Disabled ones stay on the sheet and give nothing.
+ */
+export type Item = { id: string; name: string; modifiers: ItemModifier[]; enabled: boolean }
+
+/** At most this many modifiers on one item, and this big a bonus each — sanity limits only. */
+export const MAX_ITEM_MODIFIERS = 12
+export const MAX_ITEM_DELTA = 99
 
 const CHANGE_TYPES = new Set<EventData['type']>([
   'character_finalized',
@@ -650,6 +675,9 @@ const CHANGE_TYPES = new Set<EventData['type']>([
   'skill_trained',
   'trait_added',
   'trait_removed',
+  'item_added',
+  'item_removed',
+  'item_enabled_set',
   'power_level_set',
   'undo',
   'character_renamed',
@@ -797,6 +825,7 @@ export class Session {
           pointsGranted: 0,
           level: 1,
           traits: [],
+          items: [],
         })
         this.names.set(e.charId, e.name)
         break
@@ -834,6 +863,21 @@ export class Session {
         c.traits = c.traits.filter((id) => id !== e.traitId)
         break
       }
+      case 'item_added': {
+        const c = this.characters.get(e.charId)
+        if (c) c.items.push({ id: e.itemId, name: e.name, modifiers: e.modifiers.map((m) => ({ ...m })), enabled: true })
+        break
+      }
+      case 'item_removed': {
+        const c = this.characters.get(e.charId)
+        if (c) c.items = c.items.filter((it) => it.id !== e.itemId)
+        break
+      }
+      case 'item_enabled_set': {
+        const item = this.characters.get(e.charId)?.items.find((it) => it.id === e.itemId)
+        if (item) item.enabled = e.enabled
+        break
+      }
       case 'power_level_set':
         this.powerLevel = e.value
         break
@@ -868,7 +912,8 @@ export class Session {
         const f = this.rules.fields.get(e.field)
         // Ignore fields that were removed from rules.yaml since the event was logged.
         if (!c || !f) break
-        if (isBaseField(f) && c.status === 'active') c.adj[f.id] = Number(e.to) - this.baseOf(c, f)
+        // The shown value includes any item bonus; adj is only the play change on top of base.
+        if (isBaseField(f) && c.status === 'active') c.adj[f.id] = Number(e.to) - this.baseOf(c, f) - this.itemBonus(c, f.id)
         else c.values[f.id] = e.to
         break
       }
@@ -1161,7 +1206,7 @@ export class Session {
   valueOf(c: Character, f: Field): number | string {
     if (f.type === 'text') return String(c.values[f.id] ?? f.default)
     if (isBaseField(f) && c.status === 'active') {
-      const current = this.baseOf(c, f) + (c.adj[f.id] ?? 0)
+      const current = this.baseOf(c, f) + (c.adj[f.id] ?? 0) + this.itemBonus(c, f.id)
       return Math.min(this.playMax(f), Math.max(f.min, current))
     }
     if (isBaseField(f) && f.trained) return this.baseOf(c, f) // draft: untrained
@@ -1189,10 +1234,88 @@ export class Session {
     const d = this.rules.derived.find((x) => x.id === statId)
     if (!d) return null
     const raw = this.scope(c.id, { base: d.useBase })[statId] ?? NaN
-    const normal = (Number.isFinite(raw) ? raw : 0) + (c.statBonus[statId] ?? 0)
+    const normal = (Number.isFinite(raw) ? raw : 0) + (c.statBonus[statId] ?? 0) + (d.useBase ? 0 : this.itemBonus(c, statId))
     const shifted = normal + (c.status === 'active' && !d.useBase ? (c.statAdj[statId] ?? 0) : 0)
     const current = d.pool ? Math.min(normal, Math.max(0, shifted)) : Math.min(PLAY_MAX, Math.max(0, shifted))
     return { normal, current }
+  }
+
+  // ---- equipment ------------------------------------------------------------
+  /**
+   * What the character's **enabled** items add to one target, summed (0 for a draft: equipment is
+   * for finished characters). Applied on top of base + play change in valueOf / statOf, and to the
+   * skill bonus a challenge or opposition uses — but never stored in adj, so the steppers and
+   * "reset" work on the play change alone.
+   */
+  itemBonus(c: Character, target: string) {
+    if (c.status !== 'active') return 0
+    let sum = 0
+    for (const item of c.items) {
+      if (!item.enabled) continue
+      for (const m of item.modifiers) if (m.target === target) sum += m.delta
+    }
+    return sum
+  }
+
+  /**
+   * What an item may modify, grouped for the picker: abilities and skills (base number fields),
+   * calculated stats (not base-only ones such as Max skill points), then the item-only stats.
+   */
+  itemTargets(): { group: string; id: string; label: string }[] {
+    const numbers = [...this.rules.fields.values()].filter((f): f is NumberField => isBaseField(f))
+    return [
+      ...numbers.filter((f) => !f.trained).map((f) => ({ group: 'Abilities', id: f.id, label: f.label })),
+      ...numbers.filter((f) => f.trained).map((f) => ({ group: 'Skills', id: f.id, label: f.label })),
+      ...this.rules.derived.filter((d) => !d.useBase).map((d) => ({ group: 'Stats', id: d.id, label: d.label })),
+      ...(this.rules.equipment?.itemStats ?? []).map((st) => ({ group: 'Item only', id: st.id, label: st.label })),
+    ]
+  }
+
+  /** A target's label, for showing an item's modifiers. */
+  itemTargetLabel(target: string) {
+    return this.itemTargets().find((t) => t.id === target)?.label ?? target
+  }
+
+  /**
+   * Defines a new item on a finished character — by the player, or by the GM giving it to them.
+   * Needs a name (1–60 characters) and at least one modifier; each must name a known target
+   * with a whole, non-zero change. It starts enabled.
+   */
+  addItem(charId: string, name: string, modifiers: ItemModifier[], by: string) {
+    const c = this.characters.get(charId)
+    if (c?.status !== 'active' || !this.rules.equipment) return null
+    const clean = name.trim().replace(/\s+/g, ' ').slice(0, 60)
+    if (!clean || !Array.isArray(modifiers) || modifiers.length === 0 || modifiers.length > MAX_ITEM_MODIFIERS) {
+      return null
+    }
+    const targets = new Set(this.itemTargets().map((t) => t.id))
+    const mods: ItemModifier[] = []
+    for (const m of modifiers) {
+      const delta = Number(m?.delta)
+      if (!targets.has(String(m?.target)) || !Number.isInteger(delta) || delta === 0 || Math.abs(delta) > MAX_ITEM_DELTA) {
+        return null
+      }
+      mods.push({ target: String(m.target), delta })
+    }
+    const itemId = crypto.randomUUID().slice(0, 8)
+    this.append({ type: 'item_added', charId, itemId, name: clean, modifiers: mods, by })
+    return itemId
+  }
+
+  /** "Discard item": the item and its bonuses are gone for good (Undo can bring it back). */
+  removeItem(charId: string, itemId: string, by: string) {
+    const item = this.characters.get(charId)?.items.find((it) => it.id === itemId)
+    if (!item) return false
+    this.append({ type: 'item_removed', charId, itemId, name: item.name, by })
+    return true
+  }
+
+  /** "Disable item" toggle: a disabled item stays on the sheet but gives no bonuses. */
+  setItemEnabled(charId: string, itemId: string, enabled: boolean, by: string) {
+    const item = this.characters.get(charId)?.items.find((it) => it.id === itemId)
+    if (!item || item.enabled === enabled) return false
+    this.append({ type: 'item_enabled_set', charId, itemId, name: item.name, enabled, by })
+    return true
   }
 
   /** Sets a finished character's shown stat value (logged). Returns false if nothing changed. */
@@ -1448,7 +1571,7 @@ export class Session {
     return true
   }
 
-  /** Undoes the character's most recent value, base or stat change that is still in effect. */
+  /** Undoes the character's most recent value, base, stat, trait or item change still in effect. */
   undoLast(charId: string, by: string): LoggedEvent | null {
     for (let i = this.events.length - 1; i >= 0; i--) {
       const e = this.events[i]!
@@ -1459,6 +1582,9 @@ export class Session {
         e.type === 'skill_trained' ||
         e.type === 'trait_added' ||
         e.type === 'trait_removed' ||
+        e.type === 'item_added' ||
+        e.type === 'item_removed' || // a mis-tapped Discard comes back
+        e.type === 'item_enabled_set' ||
         (e.type === 'skill_points_granted' && e.reason === 'level') // a mis-tapped Level up
       if (undoable && e.charId === charId && !this.undone.has(e.id)) {
         this.append({ type: 'undo', target: e.id, by })
@@ -1902,7 +2028,9 @@ export class Session {
     const field = ch.skill ? (this.rules.fields.get(ch.skill) as NumberField | undefined) : undefined
     if (!char || !field) return { bonus: 0, label: null as string | null, icon: null as Icon | null }
     return {
-      bonus: Math.max(0, Math.round(Number(this.baseOf(char, field)))),
+      // The trained rank plus what enabled equipment adds to that skill (a temporary ✎ change
+      // stays out, as before).
+      bonus: Math.max(0, Math.round(Number(this.baseOf(char, field))) + this.itemBonus(char, field.id)),
       label: field.label,
       icon: field.icon ?? null,
     }
@@ -2215,7 +2343,7 @@ export class Session {
     const char = one.charId ? this.characters.get(one.charId) : null
     const field = one.skill ? (this.rules.fields.get(one.skill) as NumberField | undefined) : undefined
     if (!char || !field) return 0
-    return Math.max(0, Math.round(Number(this.baseOf(char, field))))
+    return Math.max(0, Math.round(Number(this.baseOf(char, field))) + this.itemBonus(char, field.id))
   }
 
   /**

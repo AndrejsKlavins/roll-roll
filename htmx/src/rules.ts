@@ -24,6 +24,8 @@ export type NumberField = Look & {
   scale?: Record<number, string>
   /** Base value comes from skill points spent in training (see Rules.training), not set directly. */
   trained: boolean
+  /** `input: true` — typed into a box instead of − / + (e.g. Money: big numbers, freely edited). */
+  input: boolean
 }
 export type TrackField = Look & { id: string; label: string; type: 'track'; max: number; default: number }
 export type TextField = Look & { id: string; label: string; type: 'text'; lines: number; default: string }
@@ -46,7 +48,18 @@ export type Derived = Look & {
 }
 /** The character's level with a Level up button (type: level). Needs "training:". */
 export type LevelItem = Look & { id: string; label: string; type: 'level' }
-export type SectionItem = Field | Derived | LevelItem
+/**
+ * Where the character's equipment list sits on the sheet (type: equipment; one per sheet). Items
+ * are the players' own — named, with modifiers — so they live in the event log, not in here.
+ */
+export type EquipmentItem = Look & { id: string; label: string; type: 'equipment' }
+export type SectionItem = Field | Derived | LevelItem | EquipmentItem
+
+/**
+ * An item-only stat (top-level `equipment.item_stats`, e.g. Attack damage): something an item can
+ * carry that is **shown only on the item** — it is on no sheet row and in no formula.
+ */
+export type ItemStat = { id: string; label: string }
 /**
  * `compact`: on the player's own sheet the section collapses to one summary row (its values, in
  * order) with an ✎ button that opens the usual editable fields. The GM's sheets always show it
@@ -295,6 +308,8 @@ export type Rules = {
   training?: Training
   /** The "level" row, if the sheet has one. */
   level?: LevelItem
+  /** The equipment list's place on the sheet, if it has one, and the item-only stats. */
+  equipment?: { item: EquipmentItem; itemStats: ItemStat[] }
   traits: Trait[]
   traitCategories: TraitCategory[]
   /** GM's default budget target for trait costs (usually 0); adjustable at runtime. */
@@ -397,6 +412,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   const fields = new Map<string, Field>()
   const derived: Derived[] = []
   let levelItem: LevelItem | undefined
+  let equipmentItem: EquipmentItem | undefined
   const sections: Section[] = (raw?.sections ?? []).map((s: any, si: number) => ({
     label: String(s?.label ?? `Section ${si + 1}`),
     compact: s?.compact === true,
@@ -413,6 +429,11 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
         levelItem = { id: f.id, label: String(f.label ?? 'Level'), type: 'level', ...parseLook(f, where) }
         return [levelItem]
       }
+      if (f.type === 'equipment') {
+        if (equipmentItem) fail(`${where}: only one "equipment" list is allowed`)
+        equipmentItem = { id: f.id, label: String(f.label ?? 'Equipment'), type: 'equipment', ...parseLook(f, where) }
+        return [equipmentItem]
+      }
       const label = String(f.label ?? f.id)
       let field: Field
       switch (f.type) {
@@ -424,7 +445,9 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
           const trained = Boolean(f.trained ?? s?.trained ?? false)
           const base = trained || Boolean(f.base ?? s?.base ?? false)
           const fallbackDefault = Number.isFinite(min) ? min : 0
-          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? fallbackDefault), base, trained }
+          const input = f.input === true
+          if (input && base) fail(`${where}: "input: true" is for plain numbers (e.g. money), not base fields`)
+          field = { id: f.id, label, type: 'number', min, max, default: Number(f.default ?? fallbackDefault), base, trained, input }
           const scaleName = f.scale ?? s?.scale
           if (scaleName !== undefined && scaleName !== null) {
             const scale = scales.get(String(scaleName))
@@ -440,7 +463,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
           field = { id: f.id, label, type: 'text', lines: Number(f.lines ?? 3), default: String(f.default ?? '') }
           break
         default:
-          fail(`${where}: unknown type ${JSON.stringify(f.type)} (use number, track, text, derived or level)`)
+          fail(`${where}: unknown type ${JSON.stringify(f.type)} (use number, track, text, derived, level or equipment)`)
           return []
       }
       Object.assign(field, parseLook(f, where))
@@ -688,6 +711,12 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   const gaps = sortedValues.slice(1).map((v, i) => v - sortedValues[i]!)
   const rankStep = gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : 3
 
+  // equipment: { item_stats: [{ id: attack_damage, label: Attack damage }, ...] }
+  const itemStats: ItemStat[] = ((raw?.equipment?.item_stats ?? []) as any[]).flatMap((st, i) =>
+    checkId(st?.id, `equipment.item_stats[${i}]`) ? [{ id: st.id, label: String(st.label ?? st.id) }] : [],
+  )
+  if (itemStats.length && !equipmentItem) fail('equipment.item_stats: no section has a "type: equipment" row to show items in')
+
   if (errors.length) {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)
   }
@@ -699,6 +728,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     fields,
     training,
     level: levelItem,
+    equipment: equipmentItem ? { item: equipmentItem, itemStats } : undefined,
     traits,
     traitCategories,
     powerLevel,

@@ -103,6 +103,15 @@ function describeChange(e: LoggedEvent, session: Session, rules: Rules): string 
     const verb = e.type === 'trait_added' ? 'picked' : 'dropped'
     return `${who} · ${verb} trait ${label}${e.by !== who ? ` (by ${e.by})` : ''}`
   }
+  if (e.type === 'item_added' || e.type === 'item_removed' || e.type === 'item_enabled_set') {
+    const who = session.names.get(e.charId) ?? '?'
+    const by = e.by !== who ? ` (by ${e.by})` : ''
+    if (e.type === 'item_removed') return `${who} · discarded ${e.name}${by}`
+    if (e.type === 'item_enabled_set') return `${who} · ${e.enabled ? 'enabled' : 'disabled'} ${e.name}${by}`
+    const mods = e.modifiers.map((m) => `${m.delta > 0 ? '+' : ''}${m.delta} ${session.itemTargetLabel(m.target)}`)
+    // An item the GM made for a player reads as a gift.
+    return e.by !== who ? `${e.by} gave ${who} ${e.name} (${mods.join(', ')})` : `${who} · added ${e.name} (${mods.join(', ')})`
+  }
   if (e.type === 'power_level_set') return `${e.by} set power level target ${e.from} → ${e.value}`
   if (e.type === 'field_set') {
     const who = session.names.get(e.charId) ?? '?'

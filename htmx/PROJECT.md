@@ -218,7 +218,7 @@ SQLite table `events(id, ts, type, data JSON)`. Event types:
 - `undoLast(charId)` undoes the most recent non-undone `field_set` for that character. No redo. Rolls are not undoable.
 - Clamping/validation happens in `setField`; no-op changes produce no event.
 - **Character stages**: `Character.status` is `draft` until `character_finalized`. Draft edits go to the `drafts` table (`char_id, data JSON, updated`) via `saveDraft` and are layered over replayed state at the end of `rebuild()` (so legacy `field_set` events of old drafts still count). Finalizing deletes the draft row.
-- **Values**: always read through `session.valueOf(char, field)` (current) and `session.baseOf(char, field)`. Active base field current = `max(0, base + adj)`; play range is 0..PLAY_MAX (99), base range is the field's min..max. `scope()` feeds current values to formulas.
+- **Values**: always read through `session.valueOf(char, field)` (current) and `session.baseOf(char, field)`. Active base field current = `base + adj + itemBonus` (clamped), where `adj` is the play change only and `itemBonus` is enabled equipment (see Equipment); play range is 0..PLAY_MAX (99), base range is the field's min..max. `scope()` feeds current values to formulas.
 - `undoLast` undoes the latest `field_set` **or** `base_set`.
 - `session.names` keeps the latest name of every character ever created (incl. deleted) for the change log.
 - `recentRolls()` / `recentChanges()` only return events since the last `session_started`. `sessionNumber()` counts those markers.
@@ -290,6 +290,29 @@ Notes:
 - Field name and value use the field's colour (`--field-color`). Number rows use `flex-wrap`, so an open row moves its controls to a second line on phones (rated steppers are wide).
 - Active base fields (`BaseField`): the base value is **not** shown by default (user request). While the row is open, "base N" (+ "reset" when modified) appears under the name; when closed, a modified value gets a small ▲/▼ marker (title shows base).
 - Base fields have two steppers: `.play` (posts `/adjust`) and `.base-edit` (posts `/adjust-base`).
+- **Equipment** (user-designed): a `type: equipment` row in a section (one per sheet; rules.yaml
+  puts it in Gear & Notes between **Money** and the free-text Gear field) shows the character's
+  items. **Add equipment** opens an Alpine form: a name, then any number of "what it modifies / by
+  how much" rows, saved in one POST (`/c/:id/items/add`, modifiers as JSON). A modifier can target
+  an **ability or skill** (base number field), a **calculated stat** (not base-only ones), or an
+  **item-only stat** from top-level `equipment.item_stats` (Attack damage, Attack accuracy) —
+  those are shown **only on the item** and feed nothing. Each item shows its name and modifier
+  chips, a **Disable / Enable** toggle (a disabled item stays listed, greyed, and gives nothing) and
+  **Discard** (confirm; the item and its bonuses are gone). Events `item_added` / `item_removed` /
+  `item_enabled_set` carry the item's name, are in the change log and are **undoable** (`undoLast`)
+  like traits. **The GM gives an item** by using the same list on the GM's copy of the sheet — same
+  routes; the change log reads "GM gave Mara Lucky charm (+1 Athletics)". Finished characters only
+  (a draft shows a note). Limits: a name 1–60 characters, 1–12 modifiers, whole non-zero changes up
+  to ±99.
+  - **How bonuses apply**: `session.itemBonus(char, target)` sums enabled items. It is added in
+    `valueOf` (so formulas and challenge/opposition ranks see it), in `statOf`'s `normal` (a pool's
+    maximum rises), and to the **skill bonus** in challenges and oppositions (rank + items; a
+    temporary ✎ change still stays out). It is **never stored in `adj`**: `field_set` subtracts it,
+    and the row's "modified" / "reset" compare against `base + gear`, so a stepper press or reset
+    can't swallow or cancel an item. Rows an item touches show a small "+1 gear" note.
+  - Pushes: `pushItems` sends the list, the touched rows, all stats and the challenge board.
+- **Money**: a plain number field with `input: true` — a typed-in box (saved on change, no − / +),
+  held to its `min: 0`. Any number field that isn't a base field may use `input: true`.
 - **Compact sections** (user request, for Bio): a section with `compact: true` in rules.yaml shows,
   **on the player's own sheet only**, as one row — its values in order, joined with " · " (text as
   written, empty ones left out, the level as "Level N", numbers as "Label value"; each titled with

@@ -87,6 +87,33 @@ main { padding: 1rem; max-width: 1400px; margin: 0 auto; }
 .compact-sep { color: var(--muted); }
 .compact-edit { margin-left: auto; flex-shrink: 0; }
 .compact-fields { display: grid; gap: 0.35rem; }
+/* Money-style number: typed into a box instead of − / +. */
+.field.number.input input { width: 8rem; text-align: right; }
+/* What enabled equipment adds to a row, beside its value. */
+.gear-bonus { font-size: 0.7rem; font-weight: 700; color: var(--accent); white-space: nowrap; }
+/* Equipment: defined items (name, modifiers, Disable / Discard) and the Add equipment form. */
+.equipment { display: grid; gap: 0.4rem; padding: 0.3rem 0; }
+.equipment-head { color: var(--text); }
+.equipment-empty { margin: 0; }
+.equipment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.equipment-item { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 0.4rem 0.55rem; display: grid; gap: 0.3rem; }
+.equipment-item.disabled { border-left-color: var(--line); opacity: 0.6; }
+.equipment-item-head { display: flex; align-items: center; gap: 0.4rem; }
+.equipment-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.equipment-item-head button { min-height: 30px; padding: 0.1rem 0.5rem; font-size: 0.75rem; }
+.equipment-mods { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.equipment-mod { font-size: 0.75rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); }
+.equipment-mod.up { color: #5cc27a; }
+.equipment-mod.down { color: var(--danger); }
+.equipment-off { font-size: 0.7rem; color: var(--muted); font-style: italic; }
+.equipment-add { display: grid; gap: 0.4rem; }
+.equipment-add > button { justify-self: start; }
+.equipment-form { display: grid; gap: 0.4rem; padding: 0.5rem; border: 1px dashed var(--line); border-radius: 8px; }
+.equipment-form-row { display: grid; grid-template-columns: minmax(0, 1fr) 4.5rem auto; gap: 0.3rem; align-items: center; }
+.equipment-form-row select { min-height: 38px; background: var(--panel-2); color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 0 0.4rem; min-width: 0; }
+.equipment-form-row input { padding: 0.4rem; }
+.equipment-form > button { justify-self: start; }
+.equipment-form-actions { display: flex; justify-content: flex-end; gap: 0.4rem; }
 
 .stepper { display: flex; align-items: center; gap: 0.4rem; }
 .stepper button { width: 44px; padding: 0; font-size: 1.2rem; }

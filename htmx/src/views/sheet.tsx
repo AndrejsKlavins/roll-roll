@@ -9,7 +9,7 @@
 // open when the row itself is replaced by a live update.
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
-import type { Derived, Field, LevelItem, NumberField, Section, Trait, TraitCategory } from '../rules'
+import type { Derived, EquipmentItem, Field, LevelItem, NumberField, Section, Trait, TraitCategory } from '../rules'
 import { isBaseField, MAX_TRAITS, PLAY_MAX, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
@@ -223,7 +223,11 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
   const post = `/c/${char.id}`
   const base = session.baseOf(char, f)
   const current = Number(session.valueOf(char, f))
-  const modified = current !== base
+  // Enabled equipment rides on top of base: "modified" / "reset" are about the play change only,
+  // so resetting brings the row back to base + gear, not below the item's bonus.
+  const gear = session.itemBonus(char, f.id)
+  const normal = base + gear
+  const modified = current !== normal
   return (
     <div
       id={fieldDomId(char.id, f.id)}
@@ -240,7 +244,7 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
               type="button"
               class="link"
               hx-post={`${post}/set`}
-              hx-vals={JSON.stringify({ field: f.id, value: base })}
+              hx-vals={JSON.stringify({ field: f.id, value: normal })}
               hx-swap="none"
             >
               reset
@@ -249,9 +253,10 @@ function BaseField(props: { session: Session; char: Character; field: NumberFiel
         </small>
       </FieldName>
       <div class="field-controls">
+        {gear !== 0 && <GearBonus value={gear} />}
         {modified && (
-          <span class="delta" title={`base ${scaleWord(f, base)}`}>
-            {current > base ? '▲' : '▼'}
+          <span class="delta" title={`base ${scaleWord(f, base)}${gear ? `, ${signed(gear)} from equipment` : ''}`}>
+            {current > normal ? '▲' : '▼'}
           </span>
         )}
         <output class="value">
@@ -331,6 +336,27 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
     )
   }
 
+  // `input: true` (Money): a plain box to type the amount into, saved when it changes — no − / +.
+  if (f.input) {
+    return (
+      <label id={id} {...rowAttrs(f, 'field number input')} hx-swap-oob={oobAttr(props.oob)}>
+        <FieldName field={f} />
+        <input
+          type="number"
+          name="value"
+          value={String(value)}
+          step="1"
+          min={Number.isFinite(f.min) ? f.min : undefined}
+          inputmode="numeric"
+          hx-post={`${post}/set`}
+          hx-trigger="change"
+          hx-vals={JSON.stringify({ field: f.id })}
+          hx-swap="none"
+        />
+      </label>
+    )
+  }
+
   return (
     <div id={id} {...rowAttrs(f, 'field number')} x-bind:class={editingClass(f)} hx-swap-oob={oobAttr(props.oob)}>
       <FieldName field={f} />
@@ -341,6 +367,135 @@ export function FieldView(props: { session: Session; char: Character; field: Fie
         <Stepper class="play" url={`${post}/adjust`} field={f} value={value} min={f.min} max={f.max} />
         <EditToggle field={f} />
       </div>
+    </div>
+  )
+}
+
+/** "+1 gear": what enabled equipment adds to this row (its value already includes it). */
+function GearBonus(props: { value: number }) {
+  return (
+    <span class="gear-bonus" title="From enabled equipment">
+      {signed(props.value)} gear
+    </span>
+  )
+}
+
+/**
+ * The equipment list (user-designed), at its `type: equipment` place in the sheet: every item
+ * with its name, its modifiers, a **Disable / Enable** toggle (a disabled item stays listed but
+ * gives nothing) and **Discard** (gone, with its bonuses). Under it, **Add equipment** opens a
+ * small form — a name, then one row per thing it modifies (what + how much) — kept in Alpine
+ * until Save posts it. The same list is on the GM's copy of the sheet, so the GM adds an item to
+ * a player's sheet the same way ("gave" in the change log). Finished characters only.
+ */
+export function EquipmentList(props: { session: Session; char: Character; item: EquipmentItem; oob?: boolean }) {
+  const { session, char } = props
+  const post = `/c/${char.id}/items`
+  const targets = session.itemTargets()
+  const groups = [...new Set(targets.map((t) => t.group))]
+  const blank = "{ target: '', delta: 1 }"
+  // After a successful save the form closes and empties, ready for the next item.
+  const afterSave = `if (event.detail.successful) { Object.assign(Alpine.$data(this), { adding: false, name: '', mods: [${blank}] }) }`
+  return (
+    <div id={`equip-${char.id}`} class="equipment" hx-swap-oob={oobAttr(props.oob)}>
+      <div class="equipment-head">{props.item.label}</div>
+      {char.status !== 'active' ? (
+        <p class="stage-note">Equipment can be added once the character is finished.</p>
+      ) : (
+        <>
+          {char.items.length === 0 && <p class="muted equipment-empty">No equipment yet.</p>}
+          <ul class="equipment-list">
+            {char.items.map((it) => (
+              <li class={it.enabled ? 'equipment-item' : 'equipment-item disabled'}>
+                <div class="equipment-item-head">
+                  <span class="equipment-name">{it.name}</span>
+                  <button
+                    type="button"
+                    class="small equipment-toggle"
+                    aria-pressed={it.enabled ? 'true' : 'false'}
+                    hx-post={`${post}/${it.id}/enabled?to=${it.enabled ? '0' : '1'}`}
+                    hx-swap="none"
+                    title={it.enabled ? 'Stop this item giving its bonuses' : 'Give its bonuses again'}
+                  >
+                    {it.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                  <button
+                    type="button"
+                    class="small danger"
+                    hx-post={`${post}/${it.id}/discard`}
+                    hx-swap="none"
+                    hx-confirm={`Discard ${it.name}? It and its bonuses are removed.`}
+                  >
+                    Discard
+                  </button>
+                </div>
+                <div class="equipment-mods">
+                  {it.modifiers.map((m) => (
+                    <span class={m.delta > 0 ? 'equipment-mod up' : 'equipment-mod down'}>
+                      {signed(m.delta)} {session.itemTargetLabel(m.target)}
+                    </span>
+                  ))}
+                  {!it.enabled && <span class="equipment-off">disabled — no bonuses</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <form
+            class="equipment-add"
+            hx-post={`${post}/add`}
+            hx-swap="none"
+            x-data={`{ adding: false, name: '', mods: [${blank}] }`}
+            hx-on--after-request={afterSave}
+          >
+            <button type="button" class="small" x-show="!adding" x-on:click="adding = true">
+              + Add equipment
+            </button>
+            <div class="equipment-form" x-show="adding" x-cloak>
+              <input name="name" x-model="name" placeholder="Item name, e.g. Iron sword" maxlength={60} autocomplete="off" />
+              <template x-for="(m, i) in mods">
+                <div class="equipment-form-row">
+                  <select x-model="m.target" aria-label="What it modifies">
+                    <option value="">What it modifies…</option>
+                    {groups.map((g) => (
+                      <optgroup label={g}>
+                        {targets
+                          .filter((t) => t.group === g)
+                          .map((t) => (
+                            <option value={t.id}>{t.label}</option>
+                          ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <input type="number" x-model="m.delta" step="1" aria-label="By how much" />
+                  <button type="button" class="small" x-on:click="mods.splice(i, 1)" x-show="mods.length > 1" title="Remove this line">
+                    ✕
+                  </button>
+                </div>
+              </template>
+              <button type="button" class="small" x-on:click={`mods.push(${blank})`}>
+                + Modifier
+              </button>
+              <input
+                type="hidden"
+                name="modifiers"
+                x-bind:value="JSON.stringify(mods.filter(m => m.target && Number(m.delta)).map(m => ({ target: m.target, delta: Number(m.delta) })))"
+              />
+              <div class="equipment-form-actions">
+                <button type="button" class="small" x-on:click={`adding = false; name = ''; mods = [${blank}]`}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  class="small primary"
+                  x-bind:disabled="!name.trim() || !mods.some(m => m.target && Number(m.delta))"
+                >
+                  Save item
+                </button>
+              </div>
+            </div>
+          </form>
+        </>
+      )}
     </div>
   )
 }
@@ -399,6 +554,7 @@ export function DerivedRow(props: { session: Session; char: Character; derived: 
         )}
       </FieldName>
       <div class="field-controls">
+        {session.itemBonus(char, d.id) !== 0 && <GearBonus value={session.itemBonus(char, d.id)} />}
         {!d.pool && modified && (
           <span class="delta" title={`normal ${formatNumber(stat.normal)}`}>
             {stat.current > stat.normal ? '▲' : '▼'}
@@ -661,7 +817,7 @@ export function CompactSummary(props: { session: Session; char: Character; secti
   const { session, char, section } = props
   const parts = section.fields.flatMap((f) => {
     if (f.type === 'level') return [{ label: f.label, text: `${f.label} ${char.level}` }]
-    if (f.type === 'derived') return []
+    if (f.type === 'derived' || f.type === 'equipment') return []
     const value = String(session.valueOf(char, f) ?? '').trim()
     if (!value) return []
     return [{ label: f.label, text: f.type === 'text' ? value : `${f.label} ${value}` }]
@@ -782,6 +938,8 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
                 <DerivedRow session={session} char={char} derived={f} />
               ) : f.type === 'level' ? (
                 <LevelRow session={session} char={char} item={f} />
+              ) : f.type === 'equipment' ? (
+                <EquipmentList session={session} char={char} item={f} />
               ) : (
                 <FieldView session={session} char={char} field={f} />
               ),

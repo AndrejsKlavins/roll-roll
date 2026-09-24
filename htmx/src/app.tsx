@@ -11,6 +11,7 @@ import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage
 import {
   compactSummaries,
   DerivedUpdates,
+  EquipmentList,
   FieldView,
   LevelRow,
   ManagePoints,
@@ -234,6 +235,66 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts + compactSummaries(session, char),
     )
   }
+
+  /**
+   * After an item is added, discarded or switched: the list itself, the rows its modifiers touch
+   * (their values and "gear" notes), every calculated stat (abilities feed formulas), and the
+   * challenge board — a skill bonus there counts equipment.
+   */
+  const pushItems = (char: Character, targets: string[]) => {
+    const equip = rules.equipment
+    const fields = [...new Set(targets)].flatMap((id) => {
+      const f = rules.fields.get(id)
+      return f ? [html(<FieldView session={session} char={char} field={f} oob />)] : []
+    })
+    const parts =
+      (equip ? html(<EquipmentList session={session} char={char} item={equip.item} oob />) : '') +
+      fields.join('') +
+      html(<DerivedUpdates session={session} char={char} />)
+    hub.send(toOwnerAndGm(char.id), (client) =>
+      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts + compactSummaries(session, char),
+    )
+    pushChallenge()
+  }
+
+  const itemTargetsOf = (char: Character, itemId: string) =>
+    char.items.find((it) => it.id === itemId)?.modifiers.map((m) => m.target) ?? []
+
+  // Equipment: the player's own, or the GM's gift from the GM's copy of the sheet — the same
+  // routes either way (the actor header names who did it).
+  app.post('/c/:id/items/add', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const body = await form(c)
+    let modifiers: unknown
+    try {
+      modifiers = JSON.parse(body.modifiers ?? '[]')
+    } catch {
+      return c.text('Bad modifiers', 400)
+    }
+    const itemId = session.addItem(char.id, body.name ?? '', modifiers as never, actorName(c))
+    if (!itemId) return c.text('An item needs a name and at least one modifier', 400)
+    pushItems(char, itemTargetsOf(char, itemId))
+    return noContent(c)
+  })
+
+  app.post('/c/:id/items/:itemId/discard', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const targets = itemTargetsOf(char, c.req.param('itemId')) // read before it is gone
+    if (session.removeItem(char.id, c.req.param('itemId'), actorName(c))) pushItems(char, targets)
+    return noContent(c)
+  })
+
+  app.post('/c/:id/items/:itemId/enabled', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (!char) return c.notFound()
+    const itemId = c.req.param('itemId')
+    if (session.setItemEnabled(char.id, itemId, c.req.query('to') === '1', actorName(c))) {
+      pushItems(char, itemTargetsOf(char, itemId))
+    }
+    return noContent(c)
+  })
 
   // Fields (not derived stats — those refresh via the unconditional DerivedUpdates in pushTraits).
   const traitFieldIds = (t: (typeof rules.traits)[number]) =>

@@ -335,6 +335,11 @@ sections:
     fields:
       - { id: stamina, label: Stamina, type: derived, pool: true, formula: "2" }
       - { id: willpower, label: Willpower, type: derived, pool: true, formula: "1" }
+      - { id: might, label: Might, type: derived, formula: "strength * 2" }
+  - label: Gear
+    fields:
+      - { id: money, label: Money, type: number, min: 0, default: 0, input: true }
+      - { id: equipment, label: Equipment, type: equipment }
   - label: Skills
     base: true
     fields:
@@ -343,6 +348,9 @@ sections:
 training:
   points_stat: pts
   rank_costs: [1, 2, 3]
+equipment:
+  item_stats:
+    - { id: attack_damage, label: Attack damage }
 challenges:
   difficulties:
     - { id: easy, label: Easy, value: 4 }
@@ -1037,6 +1045,102 @@ async function tweakWithDieOn(face: number) {
   throw new Error(`never rolled a die on face ${face} alongside one Tweak could lower`)
 }
 
+
+describe('equipment', () => {
+  const finished = async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const id = s.createCharacter('Mara').id
+    s.finalizeCharacter(id, 'Mara')
+    const char = () => s.characters.get(id)!
+    const value = (f: string) => Number(s.valueOf(char(), s.rules.fields.get(f)!))
+    return { s, id, open, char, value }
+  }
+
+  test('an enabled item adds to abilities, calculated stats and formulas; item-only stats touch nothing', async () => {
+    const { s, id, char, value } = await finished()
+    const itemId = s.addItem(id, '  Gauntlets  ', [
+      { target: 'strength', delta: 1 },
+      { target: 'stamina', delta: 2 },
+      { target: 'attack_damage', delta: 3 },
+    ], 'Mara')
+    expect(itemId).not.toBeNull()
+    expect(char().items[0]).toMatchObject({ name: 'Gauntlets', enabled: true })
+    expect(value('strength')).toBe(4)
+    expect(s.statOf(char(), 'might')!.current).toBe(8) // the formula sees the buffed strength
+    expect(s.statOf(char(), 'stamina')).toEqual({ normal: 4, current: 4 })
+    expect(s.baseOf(char(), s.rules.fields.get('strength') as NumberField)).toBe(3) // base untouched
+    expect(s.itemBonus(char(), 'attack_damage')).toBe(3) // shown on the item, used nowhere else
+  })
+
+  test('disabling stops the bonuses, enabling brings them back, discarding removes the item', async () => {
+    const { s, id, char, value } = await finished()
+    const itemId = s.addItem(id, 'Belt', [{ target: 'strength', delta: 2 }], 'Mara')!
+    expect(s.setItemEnabled(id, itemId, false, 'Mara')).toBe(true)
+    expect(value('strength')).toBe(3)
+    expect(char().items[0]!.enabled).toBe(false)
+    expect(s.setItemEnabled(id, itemId, false, 'Mara')).toBe(false) // already off
+    s.setItemEnabled(id, itemId, true, 'Mara')
+    expect(value('strength')).toBe(5)
+    expect(s.removeItem(id, itemId, 'Mara')).toBe(true)
+    expect(char().items).toHaveLength(0)
+    expect(value('strength')).toBe(3)
+  })
+
+  test('a play change stays apart from the item bonus', async () => {
+    const { s, id, value } = await finished()
+    const itemId = s.addItem(id, 'Belt', [{ target: 'strength', delta: 1 }], 'Mara')!
+    expect(s.adjustField(id, 'strength', 1, 'Mara')).toBe(true) // 3 + 1 item + 1 play = 5
+    expect(value('strength')).toBe(5)
+    s.setItemEnabled(id, itemId, false, 'Mara')
+    expect(value('strength')).toBe(4) // the play change is kept, only the item's +1 goes
+  })
+
+  test('an item on a skill counts in a challenge skill bonus', async () => {
+    const { s, id } = await finished()
+    s.train(id, 'athletics', 1, 'Mara') // rank 1
+    s.startChallenge({ description: 'Climb', framingAbility: null, resolutionAbility: 'agility', difficulty: 7, stakes: 'normal' }, 'GM')
+    const ch = s.currentChallenge()!
+    s.setChallengePlayer(ch.id, id, null, 'athletics', 'GM')
+    expect(s.challengeSkillBonus(s.currentChallenge()!).bonus).toBe(1)
+    s.addItem(id, 'Climbing gear', [{ target: 'athletics', delta: 2 }], 'Mara')
+    expect(s.challengeSkillBonus(s.currentChallenge()!).bonus).toBe(3)
+  })
+
+  test('bad items are refused: no name, no or unknown modifiers, zero or fractional changes, a draft', async () => {
+    const { s, id } = await finished()
+    expect(s.addItem(id, '  ', [{ target: 'strength', delta: 1 }], 'Mara')).toBeNull()
+    expect(s.addItem(id, 'Nothing', [], 'Mara')).toBeNull()
+    expect(s.addItem(id, 'Odd', [{ target: 'nope', delta: 1 }], 'Mara')).toBeNull()
+    expect(s.addItem(id, 'Odd', [{ target: 'strength', delta: 0 }], 'Mara')).toBeNull()
+    expect(s.addItem(id, 'Odd', [{ target: 'strength', delta: 1.5 }], 'Mara')).toBeNull()
+    expect(s.addItem(id, 'Odd', [{ target: 'pts', delta: 1 }], 'Mara')).not.toBeNull() // a stat is fine
+    const draft = s.createCharacter('Bo').id
+    expect(s.addItem(draft, 'Early', [{ target: 'strength', delta: 1 }], 'Bo')).toBeNull()
+  })
+
+  test('the GM can give an item; it is logged, undoable and survives a restart', async () => {
+    const { s, id, open } = await finished()
+    s.addItem(id, 'Sword', [{ target: 'attack_damage', delta: 2 }, { target: 'agility', delta: -1 }], 'GM')
+    const itemId = s.addItem(id, 'Shield', [{ target: 'stamina', delta: 1 }], 'GM')!
+    s.setItemEnabled(id, itemId, false, 'Mara')
+    expect(s.recentChanges().some((e) => e.type === 'item_added')).toBe(true)
+    const replayed = open().characters.get(id)!
+    expect(replayed.items.map((it) => [it.name, it.enabled])).toEqual([['Sword', true], ['Shield', false]])
+    expect(Number(open().valueOf(replayed, s.rules.fields.get('agility')!))).toBe(2)
+    s.undoLast(id, 'Mara') // the disable
+    s.undoLast(id, 'Mara') // the Shield
+    expect(s.characters.get(id)!.items.map((it) => it.name)).toEqual(['Sword'])
+  })
+
+  test('money is a plain number the player sets freely', async () => {
+    const { s, id, value } = await finished()
+    expect(s.setField(id, 'money', '250', 'Mara')).toBe(true)
+    expect(value('money')).toBe(250)
+    expect(s.setField(id, 'money', '-5', 'Mara')).toBe(true) // held to its min of 0
+    expect(value('money')).toBe(0)
+  })
+})
 
 describe('opposition roll', () => {
   const ABILITIES = { framingAbility: 'agility', resolutionAbility: 'strength' }

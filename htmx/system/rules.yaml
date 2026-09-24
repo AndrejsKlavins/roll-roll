@@ -229,8 +229,8 @@ traits:
     - { id: very_intuitive,       label: Very intuitive,       category: basic, tags: [base_intuition],  cost: -2, description: "+2 Intuition",  modifiers: [{ field: intuition, delta: 2 }] }
     - { id: unintuitive,          label: Unintuitive,          category: basic, tags: [base_intuition],  cost: 1,  description: "-1 Intuition",  modifiers: [{ field: intuition, delta: -1 }] }
     - { id: very_unintuitive,     label: Very unintuitive,     category: basic, tags: [base_intuition],  cost: 2,  description: "-2 Intuition",  modifiers: [{ field: intuition, delta: -2 }] }
-    # "starts with gear/money" isn't tracked by anything in the system yet (no inventory/money
-    # mechanic) — kept in the description only, same treatment as other not-yet-automatable bits.
+    # "starts with gear/money" is kept in the description only: Money and equipment are on the
+    # sheet now, but nothing fills them in automatically from a background.
     - { id: military, label: Military, category: background, cost: -1,
         description: "+4 skill points to Melee combat, +4 skill points to Ranged combat. Starts with basic combat gear.",
         modifiers: [{ field: melee_combat, skill_points: 4 }, { field: ranged_combat, skill_points: 4 }] }
@@ -330,8 +330,21 @@ sections:
 
   - label: Gear & Notes
     fields:
+      # "input: true": typed into a box (no − / +), for a number that jumps around freely.
+      - { id: money, label: Money, type: number, min: 0, default: 0, input: true }
+      # The equipment list: items the player (or the GM, for them) defines, each with modifiers
+      # that apply while it is enabled. What an item may modify: abilities, skills, calculated
+      # stats, and the item-only stats listed under "equipment:" below.
+      - { id: equipment, label: Equipment, type: equipment }
+      # Free text for everything that isn't worth a defined item.
       - { id: gear,  label: Gear,  type: text, lines: 4 }
       - { id: notes, label: Notes, type: text, lines: 3 }
+
+# Stats that exist only on items (shown with the item, used by no sheet row or formula).
+equipment:
+  item_stats:
+    - { id: attack_damage,   label: Attack damage }
+    - { id: attack_accuracy, label: Attack accuracy }
 
 # Calculated values not placed in a section are listed here and shown in a compact block
 # at the bottom of the sheet. All current ones live in the sections above.
