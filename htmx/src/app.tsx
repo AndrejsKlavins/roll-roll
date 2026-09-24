@@ -441,6 +441,16 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // The player's choice for a point of exertion: "Reroll a die" (armed=1) or back out (armed=0).
+  app.post('/c/:id/challenge/reroll-mode', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch) return c.notFound()
+    const armed = c.req.query('armed') === '1'
+    if (session.setExertionReroll(ch.id, char.id, armed, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
   app.post('/c/:id/challenge/reroll', (c) => {
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
@@ -460,23 +470,28 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
-  // One route for every die an activated effect asks the player to tap. `effect` names what the
-  // tap does; effects that need no target (extra dice, match highest) apply on Activate instead.
+  // One route for every pick an activated effect asks for. `effect` names what it does: a tapped
+  // die (discard / reroll / face / copy, on `roll`) or, for extra dice, the `roll` they join.
+  // Match highest needs no pick and applies on Activate instead.
   app.post('/c/:id/challenge/approach-pick', (c) => {
     const char = session.characters.get(c.req.param('id'))
     const ch = session.currentChallenge()
     if (!char || !ch) return c.notFound()
     const index = Number(c.req.query('index'))
+    // The tapped die may sit on either roll; anything but 'framing' is the resolution.
+    const roll = c.req.query('roll') === 'framing' ? 'framing' : 'resolution'
     const by = actorName(c)
     const effect = c.req.query('effect')
     const done =
       effect === 'discard'
-        ? session.discardDie(ch.id, char.id, index, by)
+        ? session.discardDie(ch.id, char.id, index, by, roll)
         : effect === 'reroll'
-          ? session.approachReroll(ch.id, char.id, index, by)
+          ? session.approachReroll(ch.id, char.id, index, by, roll)
           : effect === 'face'
-            ? session.changeDieFace(ch.id, char.id, index, by)
-            : effect === 'copy' && session.duplicateDie(ch.id, char.id, index, by)
+            ? session.changeDieFace(ch.id, char.id, index, by, roll)
+            : effect === 'copy'
+              ? session.duplicateDie(ch.id, char.id, index, by, roll)
+              : effect === 'dice' && session.addApproachDice(ch.id, char.id, roll, by)
     if (done) pushChallenge()
     return noContent(c)
   })

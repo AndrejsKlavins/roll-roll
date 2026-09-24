@@ -217,8 +217,6 @@ function RollBox(props: {
   attemptLabel?: boolean
   /** What the roll's own footer says once it has landed: the rung, or the success/degree line. */
   caption?: Child
-  /** The header's own exert control — offered only to the player while it is theirs to spend. */
-  exertButton?: Child
 }) {
   const { field, label, side, outcome } = props
   const cls = ['difficulty-box', outcome && (outcome.success ? 'success' : 'failure')].filter(Boolean).join(' ')
@@ -250,7 +248,6 @@ function RollBox(props: {
         <span class="roll-kind">{props.kind}</span>
         <IconChip icon={field?.icon} />
         <span class="roll-ability">{label}</span>
-        {props.exertButton}
       </div>
       {side && outcome && (
         <div class="difficulty-result">
@@ -323,7 +320,7 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
   return (
     <div class="challenge-player-setup">
       <div class="approach-pick">
-        <span class="approach-legend">Approach (resolution roll)</span>
+        <span class="approach-legend">Approach (both rolls)</span>
         {rules.challenges.approaches.map((a) => (
           <div class="approach-row">
             <p class="approach-desc">{a.description || whenHint(a.when)}</p>
@@ -365,10 +362,11 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
 }
 
 /**
- * The approach die: one plain d6 rolled with the **resolution** dice. When it counts follows the
- * approach's `when` (always / only while failing / the player's choice); what it does on that
- * face comes from `effects` in rules.yaml. Effects that need a die put the board in a pending
- * state and the resolution dice become tappable; the rest apply the moment Activate is pressed.
+ * The approach die: one plain d6 rolled with the challenge's dice. When it counts follows the
+ * approach's `when` (always / only if a roll failed as it landed / the player's choice); what it
+ * does on that face comes from `effects` in rules.yaml. Effects that need a die put the board in a
+ * pending state and the dice of both rolls become tappable; extra dice ask which roll they join;
+ * Perfect balance applies to both rolls the moment Activate is pressed.
  */
 function ApproachDie(props: {
   session: Session
@@ -385,6 +383,8 @@ function ApproachDie(props: {
   const { effect } = state
   // "Challenge done" ends the pick too: an effect nobody applied in time simply went unused.
   const pending = state.pending && !!effect && !ch.closed
+  // A `failure` approach is judged on both rolls at the moment they landed (Challenge.failingAtRoll).
+  const skipped = ch.framing ? 'Skipped — both rolls succeeded' : 'Skipped — the roll succeeded'
   // What this face is (the effect's own words, or a plain note for an approach with no effects).
   const note = effect
     ? effect.label
@@ -392,10 +392,10 @@ function ApproachDie(props: {
       ? ch.approachActivated
         ? 'Activated'
         : state.approach.when === 'failure'
-          ? 'In effect — the resolution is failing'
+          ? 'In effect — a roll failed'
           : 'In effect'
       : state.status === 'skipped'
-        ? 'Skipped — the resolution succeeded'
+        ? skipped
         : 'Not activated'
   // Tweak only offers dice that have somewhere to go, so it can run out of targets (every die at
   // the worst face while lowering, say). Saying so beats prompting for a tap nothing can satisfy.
@@ -416,7 +416,7 @@ function ApproachDie(props: {
               ? 'In effect'
               : 'Done'
             : state.status === 'skipped'
-              ? 'Skipped — the resolution succeeded'
+              ? skipped
               : null
   const cls = ['approach-die', `approach-${state.status}`, pending && 'approach-pending'].filter(Boolean).join(' ')
   return (
@@ -436,6 +436,27 @@ function ApproachDie(props: {
         >
           Activate result
         </button>
+      )}
+      {/* Extra dice have no die to tap — the player picks which roll they join instead. */}
+      {acting && pending && effect!.kind === 'extra_dice' && (
+        <div class="approach-sides">
+          {(['framing', 'resolution'] as const).map((roll) => {
+            const id = roll === 'framing' ? ch.framingAbility : ch.resolutionAbility
+            const field = id ? (session.rules.fields.get(id) as NumberField | undefined) : undefined
+            return (
+              <button
+                type="button"
+                class="approach-side-btn"
+                style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}
+                hx-post={`/c/${props.charId}/challenge/approach-pick?effect=dice&roll=${roll}`}
+                hx-swap="none"
+              >
+                <IconChip icon={field?.icon} />
+                <span class="label">{roll === 'framing' ? 'Framing' : 'Resolution'}: {field?.label ?? id}</span>
+              </button>
+            )
+          })}
+        </div>
       )}
       {props.debug && <ApproachDieDebug approach={state.approach} die={state.die} />}
     </div>
@@ -476,8 +497,8 @@ function ApproachDieDebug(props: { approach: { effects: ApproachEffect[] }; die:
 /**
  * What the player (or everyone else, watching) is told to tap while an effect waits for a die.
  * Effects over several dice count down, so the prompt always says how many are still to come;
- * two-step effects (Tweak, Perfect choice) name the step they are on instead. Effects that need
- * no die never get here — they apply on Activate.
+ * two-step effects (Tweak, Perfect choice) name the step they are on instead, and extra dice ask
+ * for a roll. Perfect balance never gets here — it applies on Activate.
  */
 function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, step: 'first' | 'second') {
   const who = acting ? 'Tap' : 'Player taps'
@@ -490,12 +511,18 @@ function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, 
   if (effect.kind === 'lower_raise') {
     return step === 'first' ? `${who} a die to lower it one face` : `${who} another die to raise it one face`
   }
+  if (effect.kind === 'extra_dice') {
+    const extra = effect.dice === 1 ? 'the extra die' : `the ${effect.dice} extra dice`
+    return acting ? `Pick the roll ${extra} join` : `Player picks the roll ${extra} join`
+  }
   return step === 'first' ? `${who} a die to discard it` : `${who} another die to copy it`
 }
 
 /**
- * Exertion: burn a point of a pool stat (stamina/willpower) for one exertion, then spend it as
- * +1 on a side or to reroll a die. Shown to the rolling player while the challenge is open.
+ * Exertion: burn a point of a pool stat (stamina/willpower) for one exertion, then choose what it
+ * does — **+1** on a roll's result, or **Reroll a die**, which turns every die in play (added ones
+ * too) into a tap target until one is rerolled or the player cancels. Shown to the rolling player
+ * while the challenge is open.
  */
 function ExertionControls(props: { session: Session; ch: Challenge; charId: string }) {
   const { session, ch, charId } = props
@@ -507,12 +534,55 @@ function ExertionControls(props: { session: Session; ch: Challenge; charId: stri
     return stat && value ? [{ stat, left: value.current }] : []
   })
   if (sources.length === 0) return null
+  // A pending approach effect owns the dice, so a reroll can't be chosen until it is resolved.
+  const approachBusy = ch.approachPicksLeft > 0
+  const ability = (id: string | null) => (id ? session.rules.fields.get(id)?.label ?? id : null)
+  const plusOne = (roll: 'framing' | 'resolution', label: string) => (
+    <button
+      type="button"
+      class="exert-spend"
+      hx-post={`/c/${charId}/challenge/spend-exertion`}
+      hx-vals={JSON.stringify({ roll })}
+      hx-swap="none"
+    >
+      +1 to {label}
+    </button>
+  )
   return (
     <div class="exertion">
       <p class="exertion-left">
         Exertion: <b>{available}</b>
-        {available > 0 && <span class="muted"> — add it to a result or tap a die to reroll</span>}
+        {available > 0 && !ch.exertionRerollArmed && <span class="muted"> — choose what it does</span>}
       </p>
+      {available > 0 &&
+        (ch.exertionRerollArmed ? (
+          <div class="exert-options">
+            <span class="exert-prompt">Tap any die to reroll it</span>
+            <button
+              type="button"
+              class="exert-spend"
+              hx-post={`/c/${charId}/challenge/reroll-mode?armed=0`}
+              hx-swap="none"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div class="exert-options">
+            {ch.framing && plusOne('framing', `framing (${ability(ch.framingAbility)})`)}
+            {plusOne('resolution', `resolution (${ability(ch.resolutionAbility)})`)}
+            <button
+              type="button"
+              class="exert-spend"
+              hx-post={`/c/${charId}/challenge/reroll-mode?armed=1`}
+              hx-swap="none"
+              disabled={approachBusy || undefined}
+              title={approachBusy ? 'Finish the approach effect first' : undefined}
+            >
+              Reroll a die
+            </button>
+          </div>
+        ))}
       <div class="exert-buttons">
         {sources.map(({ stat, left }) => (
           <button
@@ -615,46 +685,31 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   // Only the player who rolled acts on it, and only once the dice are in, until the GM closes it.
   const acting = isViewerTurn && rolled && !ch.closed
   const exertion = session.availableExertion(ch)
-  const spendControls = (roll: 'framing' | 'resolution') =>
-    acting ? (
-      <button
-        type="button"
-        class="exert-spend"
-        hx-post={`/c/${viewerCharId}/challenge/spend-exertion`}
-        hx-vals={JSON.stringify({ roll })}
-        hx-swap="none"
-        disabled={exertion <= 0 || undefined}
-        title={exertion > 0 ? `Spend a point of exertion on ${roll}` : 'No exertion in hand — burn a pool point below'}
-      >
-        Exert
-      </button>
-    ) : undefined
   const approach = session.approachState(ch)
-  // Whenever exertion is in hand and no approach effect is waiting, a roll's dice are reroll
-  // buttons — on both rolls, since both are on the table at once.
+  // Once the player has chosen "Reroll a die" for a point of exertion, every die in play on both
+  // rolls is a reroll button — added dice included — until one is picked or they cancel.
   const rerollAction = (roll: 'framing' | 'resolution') => {
-    if (!acting || approach?.pending || exertion <= 0) return undefined
+    if (!acting || !ch.exertionRerollArmed || approach?.pending || exertion <= 0) return undefined
     return (index: number): DieAction => ({
       kind: 'reroll',
       url: `/c/${viewerCharId}/challenge/reroll?roll=${roll}&index=${index}`,
       title: 'Reroll with exertion',
     })
   }
-  // A pending approach effect owns the resolution dice while it lasts — it is the step the board
-  // is waiting on, so it takes those dice over from the reroll buttons. The framing roll is never
-  // an approach target, so its dice stay rerollable throughout.
+  // A pending approach effect owns the dice of both rolls while it lasts — it is the step the
+  // board is waiting on, so it takes them over from the reroll buttons.
   const pendingKind = acting && approach?.pending ? approach.effect?.kind : undefined
-  // Multi-die effects never take the same die twice, so dice already used drop out.
-  const picked = (index: number) => ch.approachPicked.includes(`resolution:${index}`)
-  const tap = (kind: DieAction['kind'], effect: string, title: string) => (index: number) =>
-    picked(index)
-      ? undefined
-      : {
-          kind,
-          url: `/c/${viewerCharId}/challenge/approach-pick?effect=${effect}&index=${index}`,
-          title: `${title} (${approach!.approach.label})`,
-        }
-  const resolutionDieAction = () => {
+  const dieAction = (roll: 'framing' | 'resolution') => {
+    // Multi-die effects never take the same die twice, so dice already used drop out.
+    const picked = (index: number) => ch.approachPicked.includes(`${roll}:${index}`)
+    const tap = (kind: DieAction['kind'], effect: string, title: string) => (index: number) =>
+      picked(index)
+        ? undefined
+        : {
+            kind,
+            url: `/c/${viewerCharId}/challenge/approach-pick?effect=${effect}&roll=${roll}&index=${index}`,
+            title: `${title} (${approach!.approach.label})`,
+          }
     if (pendingKind === 'discard') return tap('discard', 'discard', 'Discard this die')
     if (pendingKind === 'reroll') return tap('reroll', 'reroll', 'Reroll this die')
     if (pendingKind === 'raise_face') return tap('face-change', 'face', 'Raise this die one face')
@@ -666,7 +721,7 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
     if (pendingKind === 'lower_raise') {
       const lowering = approach!.step === 'first'
       const tapper = tap('face-change', 'face', lowering ? 'Lower this die one face' : 'Raise this die one face')
-      return (index: number) => (session.tweakableDie(ch, index) ? tapper(index) : undefined)
+      return (index: number) => (session.tweakableDie(ch, index, roll) ? tapper(index) : undefined)
     }
     // Perfect choice: discard one die, then copy another (the discarded one is already spent).
     if (pendingKind === 'discard_double') {
@@ -674,7 +729,7 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
         ? tap('discard', 'discard', 'Discard this die')
         : tap('face-change', 'copy', 'Copy this die')
     }
-    return rerollAction('resolution')
+    return rerollAction(roll)
   }
   return (
     <div class="challenge">
@@ -714,9 +769,8 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             skillLabel={math.skillLabel}
             skillIcon={math.skillIcon}
             exertion={ch.exertionFraming}
-            dieAction={rerollAction('framing')}
+            dieAction={dieAction('framing')}
             attemptLabel={role !== 'player'}
-            exertButton={spendControls('framing')}
             caption={<FramingCaption math={math} />}
           />
         )}
@@ -732,9 +786,8 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           skillIcon={math.skillIcon}
           exertion={ch.exertionResolution}
           framingBonus={math.rungBonus}
-          dieAction={resolutionDieAction()}
+          dieAction={dieAction('resolution')}
           attemptLabel={role !== 'player'}
-          exertButton={spendControls('resolution')}
           caption={<ResolutionCaption math={math} />}
         />
       </div>
@@ -765,26 +818,17 @@ function ChallengeLog(props: { session: Session; entries: Challenge[] }) {
     <ul class="challenge-log">
       {entries.map((ch) => {
         const math = session.challengeMath(ch)
-        const framingField = ch.framingAbility ? session.rules.fields.get(ch.framingAbility) : undefined
-        const resolutionField = session.rules.fields.get(ch.resolutionAbility)
-        const char = ch.charId ? session.characters.get(ch.charId) : null
+        // "Mara attempts to scale the wall (challenging) 7 and succeeds with +4" (user-specified).
+        // The tier is named from the GM's own difficulty, the number is the effective target the
+        // resolution had to reach, and the margin is the resolution's, measured against it.
+        const tier = session.rules.challenges.difficulties.find((d) => d.value === ch.difficulty)?.label
+        const name = (ch.charId ? session.characters.get(ch.charId)?.name : null) ?? 'Someone'
+        const margin = math.resolution?.difference
         return (
           <li class={math.success === null ? undefined : math.success ? 'success' : 'failure'}>
-            <span class="challenge-log-what">{ch.description || '—'}</span>
-            <span class="challenge-log-who">{char?.name ?? 'Nobody rolled'}</span>
-            {/* The effective number, not the GM's raw one — hence the note when something moved it. */}
-            <span class="challenge-log-numbers">
-              {math.target} ·{framingField ? ` ${framingField.label} /` : ''}{' '}
-              {resolutionField?.label} · {stakesLabel(ch.stakes)}
-              {ch.circumstance !== 0 && ' · circumstance'}
-              {math.skillBonus > 0 && ` · ${math.skillLabel?.toLowerCase()}`}
-            </span>
-            {math.success !== null && (
-              <span class="challenge-log-result">
-                {math.success ? 'Success' : 'Failure'}
-                {degreeText(math.degrees) && ` · ${degreeText(math.degrees)}`}
-              </span>
-            )}
+            <b>{name}</b> attempts to {ch.description || 'the challenge'}
+            {tier && ` (${tier.toLowerCase()})`} {math.target}
+            {margin !== undefined && ` and ${math.success ? 'succeeds' : 'fails'} with ${margin >= 0 ? `+${margin}` : margin}`}
           </li>
         )
       })}
@@ -1103,7 +1147,8 @@ function SoloRollCard(props: { session: Session; solo: SoloRoll; role: 'gm' | 'p
 export function SoloRollBoard(props: { session: Session; role: 'gm' | 'player' | 'table'; oob?: boolean }) {
   const { session, role } = props
   const solo = session.currentSoloRoll()
-  const visible = solo && (role === 'gm' || solo.visibility === 'public')
+  // No player is ever part of a solo roll, so players never see one; a public one goes to the table.
+  const visible = solo && (role === 'gm' || (role === 'table' && solo.visibility === 'public'))
   return (
     <section id="solo-board" class="solo-board" hx-swap-oob={oobAttr(props.oob)}>
       {role === 'gm' && (
@@ -1503,8 +1548,9 @@ function oppositionStatus(session: Session, opp: Opposition) {
 
 /**
  * The opposition-roll section: the GM's "Start opposition roll" button and the contest itself.
- * Its own swap target, and mounted on all three screens — a contest is public (the hidden part is
- * only what each side has committed, until both are ready).
+ * Its own swap target, and mounted on all three screens. The GM and the table see every contest;
+ * a player sees it only when their character is one of the two sides (and even then not what the
+ * other side has committed, until both are ready).
  */
 export function OppositionBoard(props: {
   session: Session
@@ -1513,7 +1559,10 @@ export function OppositionBoard(props: {
   oob?: boolean
 }) {
   const { session, role, viewerCharId } = props
-  const opp = session.currentOpposition()
+  const current = session.currentOpposition()
+  // A player sees the current contest only when their character is one of its two sides.
+  const involved = !!current && [current.a, current.b].some((o) => o.charId !== null && o.charId === viewerCharId)
+  const opp = role === 'player' && !involved ? null : current
   const outcome = opp && session.oppositionOutcome(opp)
   return (
     <section id="opposition-board" class="opposition-board" hx-swap-oob={oobAttr(props.oob)}>
@@ -1763,7 +1812,11 @@ export function OppositionDialog(props: { session: Session }) {
 
 export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' | 'table'; viewerCharId?: string; oob?: boolean }) {
   const { session, role, viewerCharId } = props
-  const ch = session.currentChallenge()
+  const current = session.currentChallenge()
+  // A player sees only the current challenge, and only when it is theirs to roll (user decision);
+  // the GM and the table see every one. The section stays mounted either way, so a live update
+  // still has somewhere to land when a challenge is handed to this player.
+  const ch = role === 'player' && current?.charId !== viewerCharId ? null : current
   const history = session.challenges.slice(0, -1).reverse()
   return (
     <section id="challenge-board" class="challenge-board" hx-swap-oob={oobAttr(props.oob)}>
@@ -1775,7 +1828,7 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
       {ch ? (
         <CurrentChallenge session={session} ch={ch} role={role} viewerCharId={viewerCharId} />
       ) : (
-        <p class="muted">No challenge yet.</p>
+        role !== 'player' && <p class="muted">No challenge yet.</p>
       )}
       {role !== 'player' && <ChallengeLog session={session} entries={history} />}
     </section>

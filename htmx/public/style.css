@@ -384,7 +384,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .roll-box-head .field-icon { flex-shrink: 0; width: 24px; height: 24px; border-radius: 6px; }
 .roll-box-head .field-icon svg, .roll-box-head .field-icon img { width: 15px; height: 15px; }
 .roll-ability { min-width: 0; overflow-wrap: break-word; font-weight: 700; color: var(--field-color, var(--text)); }
-.roll-box-head .exert-spend { margin-left: auto; margin-top: 0; }
+
 .roll-waiting { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.8rem; font-style: italic; }
 /* A roll box's own footer: the framing rung it landed on, or the resolution's success/degrees. */
 .roll-caption { margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); text-align: center; }
@@ -464,6 +464,11 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .approach-active .die-face { border-color: var(--accent); }
 .approach-skipped { opacity: 0.55; }
 .approach-activate { min-height: 34px; padding: 0.2rem 0.7rem; font-size: 0.8rem; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+/* Extra dice: one button per roll, coloured like its ability, to pick where the dice go. */
+.approach-sides { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+.approach-side-btn { display: flex; align-items: center; gap: 0.4rem; color: var(--field-color, var(--text)); border-color: color-mix(in srgb, var(--field-color, var(--line)) 50%, var(--line)); }
+.approach-side-btn .field-icon { width: 24px; height: 24px; border-radius: 7px; }
+.approach-side-btn .field-icon svg, .approach-side-btn .field-icon img { width: 15px; height: 15px; }
 /* ---- opposition roll: two contestants compared, no difficulty number ---- */
 .opposition-board { display: grid; gap: 0.6rem; margin-top: 1rem; }
 .opposition-board:empty { display: none; }
@@ -583,6 +588,10 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .exertion { display: grid; gap: 0.5rem; }
 .exertion-left { margin: 0; text-align: center; color: var(--muted); font-size: 0.9rem; }
 .exertion-left b { color: var(--secret); font-size: 1.2rem; }
+/* What a point of exertion does: +1 on a roll, or reroll a die (then a prompt and Cancel). */
+.exert-options { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; align-items: center; }
+.exert-options .exert-spend { margin-top: 0; }
+.exert-prompt { color: var(--secret); font-size: 0.9rem; font-weight: 600; }
 .exert-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
 .exert-btn { display: flex; align-items: center; gap: 0.5rem; color: var(--field-color, var(--text)); border-color: color-mix(in srgb, var(--field-color, var(--line)) 50%, var(--line)); }
 .exert-btn .field-icon { width: 26px; height: 26px; border-radius: 7px; }
@@ -591,11 +600,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .badge.closed { background: var(--muted); color: var(--bg); }
 
 .challenge-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
-.challenge-log li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; padding: 0.4rem 0.6rem; background: var(--panel-2); border-radius: 8px; border-left: 3px solid var(--line); font-size: 0.9rem; }
+.challenge-log li { padding: 0.4rem 0.6rem; background: var(--panel-2); border-radius: 8px; border-left: 3px solid var(--line); font-size: 0.9rem; }
 .challenge-log li.success { border-left-color: #5cc27a; }
 .challenge-log li.failure { border-left-color: var(--danger); }
-.challenge-log-what { font-weight: 600; flex-basis: 100%; }
-.challenge-log-who { color: var(--muted); }
-.challenge-log-numbers { color: var(--muted); }
-.challenge-log-result { margin-left: auto; font-weight: 600; }
 .trait-choice-desc { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }

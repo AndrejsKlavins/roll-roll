@@ -554,6 +554,12 @@ async function challengeOnFace(face: number, approach = 'precise', difficulty = 
   return { s, id, open, ch: s.currentChallenge()! }
 }
 
+/** An exertion reroll as the board does it: choose "Reroll a die", then tap the die. */
+const reroll = (s: Session, chId: string, id: string, roll: 'framing' | 'resolution', index: number, by: string) => {
+  s.setExertionReroll(chId, id, true, by) // refused (harmlessly) when already chosen or not allowed
+  return s.rerollDie(chId, id, roll, index, by)
+}
+
 /** Faces and values of one of the two rolls, for before/after comparisons. */
 const snapshot = (s: Session, roll: 'framing' | 'resolution' = 'resolution') => {
   const rolled = s.currentChallenge()![roll]!
@@ -806,19 +812,19 @@ describe('exertion', () => {
     expect(s.exert(ch.id, id, 'strength', 'Mara')).toBe(false) // not a listed pool
 
     const kept = s.currentChallenge()!.resolution!.dice[1]
-    expect(s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')).toBe(true)
+    expect(reroll(s, ch.id, id, 'resolution', 0, 'Mara')).toBe(true)
     const after = s.currentChallenge()!.resolution!
     expect(after.dice[1]).toBe(kept)
     expect(after.sum).toBe(sideSum(after))
     expect(s.availableExertion(s.currentChallenge()!)).toBe(0)
-    expect(s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')).toBe(false) // nothing left
+    expect(reroll(s, ch.id, id, 'resolution', 0, 'Mara')).toBe(false) // nothing left
   })
 
   test('the framing roll can be rerolled too, and its bonus to the resolution follows it', async () => {
     const { s, id, ch } = await rolledChallenge()
     s.exert(ch.id, id, 'stamina', 'Mara')
     const before = s.challengeMath(ch)
-    expect(s.rerollDie(ch.id, id, 'framing', 0, 'Mara')).toBe(true)
+    expect(reroll(s, ch.id, id, 'framing', 0, 'Mara')).toBe(true)
     const rolled = s.currentChallenge()!
     const after = s.challengeMath(rolled)
     expect(rolled.framing!.rerolled).toEqual([1, 0])
@@ -834,12 +840,44 @@ describe('exertion', () => {
     s.exert(ch.id, id, 'stamina', 'Mara')
     expect(s.currentChallenge()!.resolution!.rerolled).toBeUndefined() // nothing rerolled yet
 
-    s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')
+    reroll(s, ch.id, id, 'resolution', 0, 'Mara')
     expect(s.currentChallenge()!.resolution!.rerolled).toEqual([1, 0])
-    s.rerollDie(ch.id, id, 'resolution', 0, 'Mara') // the same die again
+    reroll(s, ch.id, id, 'resolution', 0, 'Mara') // the same die again
     expect(s.currentChallenge()!.resolution!.rerolled).toEqual([2, 0])
     expect(s.currentChallenge()!.framing!.rerolled).toBeUndefined() // the other roll is untouched
     expect(s.availableExertion(s.currentChallenge()!)).toBe(0) // both exertions spent
+  })
+
+  test('a point is spent as +1 or a reroll — the reroll has to be chosen first', async () => {
+    const { s, id, ch } = await rolledChallenge()
+    s.exert(ch.id, id, 'stamina', 'Mara')
+    expect(s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')).toBe(false) // not chosen yet
+
+    expect(s.setExertionReroll(ch.id, id, true, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.exertionRerollArmed).toBe(true)
+    expect(s.spendExertion(ch.id, id, 'resolution', 'Mara')).toBe(false) // this point is a reroll now
+
+    // Changing their mind hands the point back for either use.
+    expect(s.setExertionReroll(ch.id, id, false, 'Mara')).toBe(true)
+    expect(s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')).toBe(false)
+    expect(s.availableExertion(s.currentChallenge()!)).toBe(1)
+
+    expect(s.setExertionReroll(ch.id, id, true, 'Mara')).toBe(true)
+    expect(s.rerollDie(ch.id, id, 'framing', 1, 'Mara')).toBe(true) // any die, either roll
+    expect(s.currentChallenge()!.exertionRerollArmed).toBe(false) // one die per point
+    expect(s.availableExertion(s.currentChallenge()!)).toBe(0)
+  })
+
+  test('a reroll cannot be chosen without a point, or while an approach effect wants the dice', async () => {
+    const { s, id, ch } = await challengeWithFace(1) // Limitless face 1: discard a die
+    expect(s.setExertionReroll(ch.id, id, true, 'Mara')).toBe(false) // no exertion in hand
+    s.exert(ch.id, id, 'stamina', 'Mara')
+    expect(s.setExertionReroll(ch.id, id, true, 'Mara')).toBe(true)
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.currentChallenge()!.exertionRerollArmed).toBe(false) // the effect took the dice over
+    expect(s.setExertionReroll(ch.id, id, true, 'Mara')).toBe(false)
+    s.discardDie(ch.id, id, 0, 'Mara')
+    expect(s.setExertionReroll(ch.id, id, true, 'Mara')).toBe(true) // free again
   })
 
   test('nothing can be spent before the dice, or after the GM is done', async () => {
@@ -851,7 +889,7 @@ describe('exertion', () => {
     expect(s.currentChallenge()!.closed).toBe(true)
     expect(s.closeChallenge(ch.id, 'GM')).toBe(false)
     expect(s.exert(ch.id, id, 'stamina', 'Mara')).toBe(false)
-    expect(s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')).toBe(false)
+    expect(reroll(s, ch.id, id, 'resolution', 0, 'Mara')).toBe(false)
   })
 })
 
@@ -876,6 +914,49 @@ describe('approach die', () => {
 
     const passing = await rolledChallenge('stubborn', 2)
     expect(passing.s.approachState(passing.s.currentChallenge()!)!.status).toBe('skipped')
+  })
+
+  test('a failed framing is enough for a "failure" approach, even with the resolution succeeding', async () => {
+    const { s, id } = await rolledChallenge('stubborn', 9)
+    for (let i = 0; i < 600; i++) {
+      const ch = s.currentChallenge()!
+      const math = s.challengeMath(ch)
+      if (math.framing!.success === false && math.resolution!.success) {
+        expect(ch.failingAtRoll).toBe(true)
+        expect(s.approachState(ch)!.status).toBe('active')
+        return
+      }
+      startAndRoll(s, id, 'stubborn', 9)
+    }
+    throw new Error('never rolled a failed framing with a successful resolution')
+  })
+
+  test('exerting the failed framing into a success leaves a "failure" approach in effect', async () => {
+    const { s, id } = await rolledChallenge('stubborn', 9)
+    for (let i = 0; i < 600; i++) {
+      const ch = s.currentChallenge()!
+      const math = s.challengeMath(ch)
+      // Only the framing failed, and by little enough for the stamina pool (2) to rescue it.
+      if (math.framing!.success === false && math.framing!.difference >= -2 && math.resolution!.success) {
+        while (s.challengeMath(s.currentChallenge()!).framing!.success === false) {
+          expect(s.exert(ch.id, id, 'stamina', 'Mara')).toBe(true)
+          expect(s.spendExertion(ch.id, id, 'framing', 'Mara')).toBe(true)
+        }
+        const after = s.currentChallenge()!
+        expect(s.challengeMath(after).success).toBe(true) // both rolls now succeed…
+        expect(s.approachState(after)!.status).toBe('active') // …and Unbreakable is still there
+        expect(s.approachState(after)!.canActivate || !s.approachState(after)!.effect).toBe(true)
+        return
+      }
+      startAndRoll(s, id, 'stubborn', 9)
+    }
+    throw new Error('never rolled a framing failure within reach of the stamina pool')
+  })
+
+  test('with framing skipped only the resolution counts', async () => {
+    const passing = await rolledChallenge('stubborn', 2, null)
+    expect(passing.ch.failingAtRoll).toBe(false)
+    expect(passing.s.approachState(passing.ch)!.status).toBe('skipped')
   })
 
   test('a "choice" approach waits for the player to activate it', async () => {
@@ -1392,7 +1473,7 @@ describe('circumstance modifier', () => {
       const math = s.challengeMath(ch)
       // Short by no more than the clamp, so one ruling can rescue the roll.
       if (math.success === false && math.resolution!.difference >= -MAX_CIRCUMSTANCE) {
-        expect(ch.resolutionSucceededAtRoll).toBe(false)
+        expect(ch.failingAtRoll).toBe(true)
         expect(s.approachState(ch)!.status).toBe('active') // failing, so Unbreakable applies
         s.adjustCircumstance(ch.id, math.resolution!.difference, 'GM')
         expect(s.challengeMath(s.currentChallenge()!).success).toBe(true)
@@ -1411,14 +1492,14 @@ describe('circumstance modifier', () => {
       const math = s.challengeMath(ch)
       // Short by no more than 2 (the fixture's stamina pool), so exertion alone can rescue it.
       if (math.success === false && math.resolution!.difference >= -2) {
-        expect(ch.resolutionSucceededAtRoll).toBe(false)
+        expect(ch.failingAtRoll).toBe(true)
         expect(s.approachState(ch)!.status).toBe('active')
         while (s.challengeMath(s.currentChallenge()!).success === false) {
           expect(s.exert(ch.id, id, 'stamina', 'Mara')).toBe(true)
           expect(s.spendExertion(ch.id, id, 'resolution', 'Mara')).toBe(true)
         }
         expect(s.approachState(s.currentChallenge()!)!.status).toBe('active') // still in effect
-        expect(s.currentChallenge()!.resolutionSucceededAtRoll).toBe(false) // the snapshot never moves
+        expect(s.currentChallenge()!.failingAtRoll).toBe(true) // the snapshot never moves
         return
       }
       startAndRoll(s, id, 'stubborn', 9)
@@ -1522,8 +1603,8 @@ describe('Perfect balance (match_highest): the lowest die rises to the highest',
     const high = Math.max(...before.faces)
     const lowIndex = before.faces.indexOf(low)
 
-    // The approach only ever acts on the resolution roll, so there is no ability to pick: it
-    // applies the moment Activate is pressed.
+    // It runs on every roll by itself, so there is no ability to pick: it applies the moment
+    // Activate is pressed.
     expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
     const after = s.currentChallenge()!.resolution!
     expect(after.faces![lowIndex]).toBe(high)
@@ -1538,11 +1619,24 @@ describe('Perfect balance (match_highest): the lowest die rises to the highest',
     expect(s.approachState(ch)!.effect!.kind).toBe('match_highest')
   })
 
-  test('the framing roll is untouched', async () => {
+  test('the framing roll is balanced too, against its own dice', async () => {
     const { s, id, ch } = await challengeOnFace(3)
-    const framing = snapshot(s, 'framing')
+    const before = snapshot(s, 'framing')
+    const low = Math.min(...before.faces)
+    const high = Math.max(...before.faces)
+    const lowIndex = before.faces.indexOf(low)
     s.activateApproach(ch.id, id, 'Mara')
-    expect(snapshot(s, 'framing')).toEqual(framing)
+    const after = s.currentChallenge()!.framing!
+    expect(after.faces![lowIndex]).toBe(high)
+    expect(after.changed?.[lowIndex] ?? null).toBe(low === high ? null : 'matched')
+    expect(after.sum).toBe(before.sum + (high - low))
+  })
+
+  test('with framing skipped only the resolution roll is balanced', async () => {
+    const { s, id, ch } = await rolledChallenge('precise', 9, null)
+    s.setApproachDie(ch.id, 3, 'GM')
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.framing).toBeNull()
   })
 
   test('dice that already match move nothing', async () => {
@@ -1613,16 +1707,17 @@ describe('exertion rerolls reach every die on the resolution roll', () => {
   }
 
   test('a die added by extra_dice can be rerolled with exertion', async () => {
-    // Limitless face 6 ("tricky" in the fixture) adds two dice on Activate.
+    // Limitless face 6 ("tricky" in the fixture) adds two dice to the roll the player picks.
     const { s, id, ch } = await challengeOnFace(6, 'tricky')
     expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.addApproachDice(ch.id, id, 'resolution', 'Mara')).toBe(true)
     const grown = s.currentChallenge()!.resolution!
     expect(grown.dice).toHaveLength(4) // the original pair plus two
 
     bank(s, ch.id, id, 2)
     // The added dice are at index 2 and 3 — the bug refused anything but 0 and 1.
     for (const index of [2, 3]) {
-      expect(s.rerollDie(ch.id, id, 'resolution', index, 'Mara')).toBe(true)
+      expect(reroll(s, ch.id, id, 'resolution', index, 'Mara')).toBe(true)
       const after = s.currentChallenge()!.resolution!
       expect(after.rerolled![index]).toBe(1)
       expect(after.sum).toBe(sideSum(after))
@@ -1638,7 +1733,7 @@ describe('exertion rerolls reach every die on the resolution roll', () => {
     expect(s.currentChallenge()!.resolution!.dice).toHaveLength(3)
 
     bank(s, ch.id, id, 1)
-    expect(s.rerollDie(ch.id, id, 'resolution', 2, 'Mara')).toBe(true)
+    expect(reroll(s, ch.id, id, 'resolution', 2, 'Mara')).toBe(true)
     const after = s.currentChallenge()!.resolution!
     expect(after.rerolled![2]).toBe(1)
     expect(after.changed![2]).toBe('copied') // still a copy, now rolled again
@@ -1651,12 +1746,12 @@ describe('exertion rerolls reach every die on the resolution roll', () => {
     expect(s.discardDie(ch.id, id, 0, 'Mara')).toBe(true)
 
     bank(s, ch.id, id, 2)
-    expect(s.rerollDie(ch.id, id, 'resolution', 0, 'Mara')).toBe(false) // out of play
-    expect(s.rerollDie(ch.id, id, 'resolution', 2, 'Mara')).toBe(false) // no such die
-    expect(s.rerollDie(ch.id, id, 'resolution', -1, 'Mara')).toBe(false)
-    expect(s.rerollDie(ch.id, id, 'resolution', 1.5, 'Mara')).toBe(false)
+    expect(reroll(s, ch.id, id, 'resolution', 0, 'Mara')).toBe(false) // out of play
+    expect(reroll(s, ch.id, id, 'resolution', 2, 'Mara')).toBe(false) // no such die
+    expect(reroll(s, ch.id, id, 'resolution', -1, 'Mara')).toBe(false)
+    expect(reroll(s, ch.id, id, 'resolution', 1.5, 'Mara')).toBe(false)
     expect(s.availableExertion(s.currentChallenge()!)).toBe(2) // nothing was spent on a refusal
-    expect(s.rerollDie(ch.id, id, 'resolution', 1, 'Mara')).toBe(true) // the die still in play
+    expect(reroll(s, ch.id, id, 'resolution', 1, 'Mara')).toBe(true) // the die still in play
   })
 })
 
@@ -1711,7 +1806,9 @@ describe('approach die debug tool', () => {
     expect(after.resolution!.discarded![0]).toBe(true) // the discard already happened
     expect(s.approachState(after)!.canActivate).toBe(true)
     expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
-    expect(s.currentChallenge()!.resolution!.dice).toHaveLength(4) // the extra dice, straight away
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(1) // which roll gets the extra dice
+    expect(s.addApproachDice(ch.id, id, 'resolution', 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.resolution!.dice).toHaveLength(4)
   })
 })
 
@@ -1757,6 +1854,29 @@ describe('approach die effects', () => {
     expect(s.approachReroll(ch.id, id, 0, 'Mara')).toBe(false) // one pick only
   })
 
+  test('a tapped die may be on the framing roll', async () => {
+    const { s, id, ch } = await challengeWithFace(1)
+    const resolution = snapshot(s)
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.discardDie(ch.id, id, 0, 'Mara', 'framing')).toBe(true)
+    const after = s.currentChallenge()!
+    expect(after.framing!.discarded).toEqual([true, false])
+    expect(after.framing!.sum).toBe(after.framing!.dice[1]!)
+    expect(snapshot(s)).toEqual(resolution) // the pick went to the framing roll alone
+    expect(after.approachPicked).toEqual(['framing:0'])
+    expect(s.discardDie(ch.id, id, 0, 'Mara')).toBe(false) // one pick only, on either roll
+  })
+
+  test('an approach reroll on the framing roll uses the framing rank', async () => {
+    const { s, id, ch } = await challengeWithFace(3)
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.approachReroll(ch.id, id, 1, 'Mara', 'framing')).toBe(true)
+    const framing = s.currentChallenge()!.framing!
+    expect(framing.rerolled).toEqual([0, 1])
+    expect(framing.sum).toBe(sideSum(framing))
+    expect(s.currentChallenge()!.rerolls).toBe(0) // still free
+  })
+
   test('the pending effect only accepts its own kind of pick', async () => {
     const { s, id, ch } = await challengeWithFace(3)
     s.activateApproach(ch.id, id, 'Mara')
@@ -1765,26 +1885,43 @@ describe('approach die effects', () => {
     expect(s.approachReroll(ch.id, id, 5, 'Mara')).toBe(false) // no such die
   })
 
-  test('faces 4 and 5 add one die on Activate, face 6 adds two', async () => {
+  test('faces 4 and 5 add one die to the roll the player picks, face 6 adds two', async () => {
     for (const [face, extra] of [[4, 1], [5, 1], [6, 2]] as const) {
-      const { s, id, ch } = await challengeWithFace(face)
-      const framing = { ...s.currentChallenge()!.framing! }
-      expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
-      const after = s.currentChallenge()!
-      expect(after.resolution!.dice).toHaveLength(2 + extra)
-      expect(after.resolution!.faces).toHaveLength(2 + extra)
-      expect(after.resolution!.sum).toBe(sideSum(after.resolution!))
-      expect(after.framing!.dice).toEqual(framing.dice) // the framing roll is untouched
-      // The math's own sum is the raw dice plus whatever bonus the framing rung landed on.
-      expect(s.challengeMath(after).resolution!.sum).toBe(after.resolution!.sum + s.challengeMath(after).rungBonus)
-      expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false) // once only
+      for (const roll of ['framing', 'resolution'] as const) {
+        const other = roll === 'framing' ? 'resolution' : 'framing'
+        const { s, id, ch } = await challengeWithFace(face)
+        const untouched = snapshot(s, other)
+        expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+        expect(s.approachState(s.currentChallenge()!)!.pending).toBe(true) // waiting for the pick
+        expect(s.currentChallenge()![roll]!.dice).toHaveLength(2) // nothing added yet
+        expect(s.addApproachDice(ch.id, id, roll, 'Mara')).toBe(true)
+        const after = s.currentChallenge()!
+        expect(after[roll]!.dice).toHaveLength(2 + extra)
+        expect(after[roll]!.faces).toHaveLength(2 + extra)
+        expect(after[roll]!.sum).toBe(sideSum(after[roll]!))
+        expect(snapshot(s, other)).toEqual(untouched) // the other roll gets nothing
+        expect(s.approachState(after)!.pending).toBe(false)
+        expect(s.addApproachDice(ch.id, id, other, 'Mara')).toBe(false) // one roll only
+        expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false) // once only
+      }
     }
   })
 
-  test('extra dice take the resolution ability rank shift, like the dice they join', async () => {
+  test('with framing skipped the extra dice go straight onto the resolution', async () => {
+    const { s, id, ch } = await rolledChallenge('tricky', 9, null)
+    s.setApproachDie(ch.id, 6, 'GM')
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!
+    expect(after.resolution!.dice).toHaveLength(4)
+    expect(after.approachPicksLeft).toBe(0) // nothing to choose
+    expect(s.addApproachDice(ch.id, id, 'framing', 'Mara')).toBe(false)
+  })
+
+  test('extra dice take the rank shift of the roll they join', async () => {
     const { s, id, ch } = await challengeWithFace(6)
     s.adjustBase(id, 'agility', 2, 'GM') // rank 5 → every face +2
     s.activateApproach(ch.id, id, 'Mara')
+    s.addApproachDice(ch.id, id, 'resolution', 'Mara')
     const side = s.currentChallenge()!.resolution!
     for (const i of [2, 3]) expect(side.dice[i]).toBe(side.faces![i]! + 2)
   })

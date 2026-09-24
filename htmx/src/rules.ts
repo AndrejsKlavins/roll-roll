@@ -197,13 +197,14 @@ export const approachEffect = (approach: Approach, face: number) =>
   approach.effects.find((e) => e.face === face) ?? null
 
 /**
- * How many dice applying this effect asks the player to tap. The approach die belongs to the
- * **resolution** roll alone, so the kinds that used to ask which of two abilities to act on
- * (`extra_dice`, `match_highest`) have only one side to land on and apply on Activate.
+ * How many picks applying this effect asks the player for. Most are dice to tap, on either roll;
+ * `extra_dice` is one pick of **which roll** the dice join (the session skips it when framing was
+ * skipped and there is only one roll). `match_highest` needs none — it runs on every roll.
  */
 export const effectPicks = (effect: ApproachEffect | null) => {
   if (!effect || effect.kind === 'none' || effect.kind === 'declare') return 0
-  if (effect.kind === 'extra_dice' || effect.kind === 'match_highest') return 0
+  if (effect.kind === 'match_highest') return 0
+  if (effect.kind === 'extra_dice') return 1
   if (TWO_STEP_KINDS.includes(effect.kind)) return 2
   return TAP_KINDS.includes(effect.kind) ? effect.dice : 1
 }

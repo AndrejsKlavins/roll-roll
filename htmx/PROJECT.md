@@ -364,6 +364,7 @@ results that are already showing.
 **Events**: `challenge_started` (one `difficulty`, a nullable `framingAbility`,
 `resolutionAbility`), `challenge_player_set`, `challenge_rolled` (both sides and the approach die
 in one event; `framing` absent when there is none), `challenge_circumstance_set` (no side),
+`challenge_exertion_reroll_armed`,
 `challenge_exertion_spent` / `challenge_rerolled` / `challenge_die_discarded` /
 `challenge_face_changed` / `challenge_dice_added` (all carry `roll: 'framing' | 'resolution'`),
 and `challenge_closed`. Gone: the old per-side `challenge_rolled`, `challenge_skill_points_set`
@@ -406,8 +407,9 @@ Exquisite / Limitless) from **one stacked button per approach, each with its `de
 rules.yaml to the left** (user-specified layout; `ChallengeSetupControls`). A pick posts straight to
 `/c/:id/challenge/setup` and the board comes back with that button marked `on` — no radios, no form,
 and the Skill select posts on `change` by itself. An approach with no `description` falls back
-to a hint made from `when`. The approach die belongs to the **resolution roll**: `rollChallenge`
-rolls **one plain d6** alongside the resolution dice — no rank shift, stored as `approachDie` on
+to a hint made from `when`. The approach die acts on **both rolls** (user decision — it used to
+act on the resolution roll alone): `rollChallenge` rolls **one plain d6** alongside the framing and
+resolution dice — no rank shift, stored as `approachDie` on
 `challenge_rolled` (absent when no approach is picked). Two things are configured per
 approach in `challenges.approaches`:
 
@@ -418,13 +420,15 @@ approach in `challenges.approaches`:
 | `when` | approach | status shown |
 |---|---|---|
 | `always` | Limitless | always `active` |
-| `failure` | Unbreakable | `active` while the **resolution** roll is short of its target, `skipped` once it succeeds — derived, so it flips live as exertion and circumstance move the sum. **Once activated the status locks to `active`**, so an effect that turns the roll into a success (raising dice, say) doesn't grey out the thing that caused it |
+| `failure` | Unbreakable | `active` if **at least one** roll — the framing (when there is one) or the resolution — was short of its target **the instant the dice landed**, else `skipped` (user decision). It is a snapshot, `Challenge.failingAtRoll`, taken in the `challenge_rolled` reducer: exertion, a reroll or a circumstance nudge that later turns the failure into a success **does not** take Unbreakable away. **Once activated the status locks to `active`** too |
 | `choice` | Exquisite | `ready` until the player activates it, then `active` |
 
 `effects` — what each **face** does, and therefore what the player is asked to tap after Activate.
-All user-designed. Everything here acts on the **resolution roll** — that is the only roll the
-approach die belongs to, so the two kinds that used to ask *which of the two abilities* to act on
-have nothing to choose and apply the moment Activate is pressed:
+All user-designed. Everything here acts on **both rolls**: a tapped die may sit on either the
+framing or the resolution roll (a multi-pick effect may split its taps between them).
+`match_highest` has nothing to tap and applies to **each roll** — framing only when there is one —
+the moment Activate is pressed. `extra_dice` goes onto **one** roll, which **the player picks**
+(user decision). (`when: failure` looks at both rolls too — see below.)
 
 | kind | after Activate | used by |
 |---|---|---|
@@ -432,11 +436,11 @@ have nothing to choose and apply the moment Activate is pressed:
 | `declare` | a ruling with no dice to change; Activate just records it ("In effect") | Unbreakable 2 (Unshakable) |
 | `discard` | tap a die; it stays on screen struck through and drops out of the sum | Limitless 1 |
 | `reroll` | tap a die; it is rolled again, **free of exertion** | Limitless 3 |
-| `extra_dice` | **nothing to tap**: `dice` more dice are rolled at the resolution ability's rank and join it | Limitless 4/5 (1), 6 (2) |
+| `extra_dice` | **pick a roll** (one button per roll under the approach die): `dice` more dice join it, rolled at that roll's ability rank. With framing skipped there is no choice, so they go straight onto the resolution on Activate | Limitless 4/5 (1), 6 (2) |
 | `raise_face` | tap `dice` dice; each moves one face up. A die already on the **top face stays put** and the pick is still spent (user decision), so it gets no marker | Unbreakable 3/4 (2 dice) |
 | `set_face` | tap `dice` dice; each is set to `to_face`, **up or down** (user decision — a good die may be lowered) | Unbreakable 5/6 (2 dice → face 3) |
-| `lower_raise` | **two steps**: tap a die to lower it one face, then *another* to raise it one face | Exquisite 2 (Tweak) |
-| `match_highest` | **nothing to tap**: the resolution's **lowest** die rises to the face of its **highest** | Exquisite 3/4 (Perfect balance) |
+| `lower_raise` | **two steps**: tap a die to lower it one face, then *another* to raise it one face | Exquisite 2/3 (Tweak) |
+| `match_highest` | **nothing to tap**: on each roll, its **lowest** die rises to the face of its own **highest** | Exquisite 4 (Perfect balance) |
 | `discard_double` | **two steps**: tap a die to discard it, then *another* to copy (the twin joins the roll and counts) | Exquisite 5/6 (Perfect choice) |
 
 Any **cost is settled at the table** — the app never deducts one (user decision); the rules.yaml
@@ -449,8 +453,8 @@ surfaced on `approachState` as `step` so the board and the session agree on one 
 
 | face | effect | first pick | second pick |
 |---|---|---|---|
-| Exquisite 2 | Tweak (`lower_raise`) | tap a die → one face **down**, marker `lowered` | tap another → one face **up**, marker `raised` |
-| Exquisite 3/4 | Perfect balance (`match_highest`) | — applied on Activate, marker `matched` | — |
+| Exquisite 2/3 | Tweak (`lower_raise`) | tap a die → one face **down**, marker `lowered` | tap another → one face **up**, marker `raised` |
+| Exquisite 4 | Perfect balance (`match_highest`) | — applied on Activate, marker `matched` | — |
 | Exquisite 5/6 | Perfect choice (`discard_double`) | tap a die → discarded (as `discard`) | tap another → a twin joins the roll, marker `copied` |
 
 Decisions inside those: Tweak **only offers a die that has somewhere to go** (user decision) — one
@@ -460,19 +464,20 @@ face is still a legal *raise* target. `session.tweakableDie(ch, index)` is the s
 the board asks it before making a die a button, so refused dice are simply not tappable;
 `anyTweakableDie(ch)` backs a status line for the (rare) case where no die qualifies, rather than
 prompting for a tap nothing can satisfy. Tweak-only — `raise_face` (Unbreakable) keeps its earlier
-decision of spending the pick on a top-face die. Note the resolution roll is usually a **pair**, so
-Tweak can run out of legal targets far more often than it could across two abilities. The
+decision of spending the pick on a top-face die. With framing skipped only the resolution **pair**
+is on the board, so Tweak can run out of legal targets more often there. The
 one-pick-per-die rule still means the raise cannot undo the die just lowered. Perfect balance moves
 nothing when the dice already match. Perfect choice **doubles by copying** (user decision): the twin
-carries the tapped die's face *and* its rank-shifted value, and the one-pick-per-die rule keeps it
-off the die just discarded.
+carries the tapped die's face *and* its rank-shifted value and joins **that die's own roll**, and
+the one-pick-per-die rule keeps it off the die just discarded.
 
 `DieMarker` therefore has five values (`raised`, `lowered`, `squashed`, `matched`, `copied`), named
 under the die by `markerLabel`; `lowered` reads in red and `copied` in purple, since neither is a
 plain bonus. Copies ride on `challenge_dice_added`, which carries an optional `markers[]` (what to
 show under each added die) and `from` (the index copied, so the pick is spent on that die —
-`extra_dice` has no `from` and spends no pick at all). The pick route
-`/c/:id/challenge/approach-pick` dispatches on `effect=`: `discard | reroll | face | copy`.
+`extra_dice` has no `from`; its one pick is the choice of roll, which the event clears). The pick
+route `/c/:id/challenge/approach-pick` dispatches on `effect=`: `discard | reroll | face | copy |
+dice` (`dice` = extra dice onto `roll`, via `session.addApproachDice`).
 
 One consequence of Exquisite finally having effects: its **blank face 1 no longer offers Activate**.
 Before, an approach with no `effects` fell back to `when === 'choice'` for the button, so every
@@ -482,15 +487,17 @@ A label containing a comma must be **quoted** in rules.yaml — unquoted inside 
 the comma, silently truncating (the Exquisite labels hit this; the older ones have no commas).
 
 Flow and state: **Activate** (`challenge_approach_activated`) sets `approachActivated` and
-`approachPicksLeft` = however many dice the effect wants tapped (`effectPicks`), then applies the
-kinds that need no target (`extra_dice`, `match_highest`) there and then. While picks are left the
-board waits: the resolution dice become tap targets
-(`/c/:id/challenge/approach-pick?effect=discard|reroll|face|copy&index=…`), and each resolving event
+`approachPicksLeft` = however many picks the effect wants (`effectPicks`; 1 for `extra_dice`, or 0
+when framing was skipped), then applies the kinds that need no pick (`match_highest`, and
+`extra_dice` with no framing) there and then. While picks are left the
+board waits: the dice of both rolls become tap targets
+(`/c/:id/challenge/approach-pick?effect=discard|reroll|face|copy&roll=framing|resolution&index=…`),
+and each resolving event
 (`challenge_die_discarded`, `challenge_face_changed`, `challenge_dice_added`, or `challenge_rerolled`
 with `source: 'approach'`, which costs no exertion) spends one pick. `spendApproachPick` is a no-op
 when nothing is outstanding, so the effects that apply on Activate pass through it without spending
 one. **The same die is never tapped twice for one effect** (user decision): `approachPicked` holds
-`"resolution:index"` keys and those dice stop being buttons. The prompt counts down ("Tap 2 dice…" →
+`"roll:index"` keys and those dice stop being buttons. The prompt counts down ("Tap 2 dice…" →
 "Tap a die…"). A pending effect owns the dice, so exertion rerolls stand down until it is resolved.
 "Challenge done" ends the pick too — the status line then reads "Not used".
 
@@ -565,6 +572,16 @@ State lives in `oppositions` (`Opposition` with an `a` and a `b` `Contestant`); 
 swap target mounted on all three screens, so a contest never disturbs the challenge board or the
 solo board. Not undoable, like the rest.
 
+**Who sees which roll** (user decision): the **GM** sees everything. **`/table`** sees every public
+roll — the current challenge and the challenge history log, the current opposition, and a solo roll
+once it is `public`. A **player** sees only rolls they are part of, and only the current one: the
+current challenge when `ch.charId` is theirs, the current opposition when their character is one of
+its sides, and **never** a solo roll (no player is in one) nor the challenge history. The filtering
+is in the three boards themselves (`ChallengeBoard`, `OppositionBoard`, `SoloRollBoard`), which is
+safe because every push renders per client (`hub.send` with the client's role and `charId`); each
+board always renders its empty `<section>` so the next live update has somewhere to land — e.g. the
+moment the GM hands a challenge to that player.
+
 **Solo roll** (user-designed): the GM's own roll, for an NPC's attempt or a hidden check — no
 character, no approach, no exertion and **nobody joins it**. Its own **"Start solo roll"** button
 opens `<dialog id="solo-dialog">` (`SoloRollDialog`, rendered by `GmPage` outside the boards so live
@@ -589,8 +606,8 @@ by how much, never a boon or a complication (solo rolls have no stakes picker).
 
 `SoloRollBoard` (`#solo-board`) is its own swap target mounted on **all three screens**, so a solo
 roll never disturbs the challenge board and a challenge in progress is untouched. It renders an
-empty section for anyone who should not see the roll, which also clears a roll that has just been
-hidden again. The GM always sees the card and gets a **"Show the table" / "Hide again"** button
+empty section for anyone who should not see the roll — players always, `/table` while it is GM-only
+— which also clears a roll that has just been hidden again. The GM always sees the card and gets a **"Show the table" / "Hide again"** button
 (`solo_visibility_set`), so a roll made in private can be revealed after the fact — and taken back.
 Not undoable, like challenges.
 
@@ -602,8 +619,15 @@ roll** (`challenge_exertion_spent` → `exertionFraming`/`exertionResolution`, f
 `challengeMath`) or to **reroll one of its dice** (`challenge_rerolled` → new face + rank-shifted
 value, sum recomputed).
 
-**Which roll it lands on is the player's choice**, because both are on the table at once: each box
-carries its own "+ exertion" button and its own tappable dice, and the routes take
+**A point in hand offers two options** (user decision), in the exertion panel under the board:
+**+1** — one button per roll, "+1 to framing (Strength)" / "+1 to resolution (Agility)" — or
+**Reroll a die**. The dice are **not** tappable until the player picks Reroll: that sets
+`exertionRerollArmed` (`challenge_exertion_reroll_armed`, via `/c/:id/challenge/reroll-mode?armed=1`),
+every die in play on both rolls becomes a reroll button, and the panel shows "Tap any die to reroll
+it" with **Cancel** (`armed=0`), which hands the point back for either use. The reroll itself clears
+the flag, so one point is one die. While armed, `spendExertion` is refused; `rerollDie` is refused
+unless armed. Reroll can't be picked while an approach effect is waiting for taps (that effect owns
+the dice), and activating one drops a reroll already chosen. The routes take
 `roll=framing|resolution`. A point put on the **framing** is the interesting one — it changes that
 margin, so the rung, the resolution's target and the complication all move with it, without the
 resolution's own dice being touched. A challenge with no framing roll refuses exertion on one.
@@ -612,8 +636,8 @@ The pool is shared: `availableExertion = gained − framing − resolution − r
 Any die on either roll may be rerolled, **including ones an approach effect added** (`extra_dice`,
 `discard_double`), which sit at index 2 and up; only a discarded die is refused, since it no longer
 counts. Both paths share `dieInPlay()`, so a roll is never assumed to be a fixed pair. Exert buttons
-carry each stat's icon/colour and disable at 0; dice become reroll buttons only while exertion is in
-hand (a faint purple ring marks them, since phones have no hover). Repeatable while pools last.
+carry each stat's icon/colour and disable at 0; dice become reroll buttons only once Reroll a die is
+chosen (a faint purple ring marks them, since phones have no hover). Repeatable while pools last.
 Every reroll — exertion or approach — is counted per die in `ChallengeSide.rerolled[i]` and shown
 under that die as **"Reroll N"**, so the table can see a 1 that was bought three times.
 
@@ -644,9 +668,13 @@ control and shows a "Done" badge. None of these are undoable.
 - The player's board hides the joined character's ability line (they know their own values). The
   skill is not split between sides — it is a flat bonus on both — so `SkillBonusControls` and
   `/c/:id/challenge/skill-points` are gone.
-- The history log names the **effective** resolution target, the abilities in play (one when
-  framing was skipped) and the stakes, and flags "· circumstance" / "· <skill>" so those numbers
-  aren't mistaken for the GM's raw one.
+- The history log (GM and `/table`) is **one sentence per challenge** (user-specified format):
+  "Mara attempts to scale the wall (challenging) 7 and succeeds with +4". The tier in brackets is
+  named from the GM's own difficulty (left out when the number isn't on the ladder); the number is
+  the **effective** target (difficulty + circumstance); the margin is the **resolution's**
+  (`math.resolution.difference`, so framing bonus, skill and exertion are all in it), "+0" on a
+  bare success. Unrolled challenges stop after the number. The row keeps its green/red left border
+  for success/failure; abilities, stakes and degrees are no longer listed there.
 
 
 ### 6.7 Client script (`public/app.js`)

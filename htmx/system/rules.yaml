@@ -101,9 +101,10 @@ challenges:
       - { from: 3,  bonus: 1,               label: An advantage }                            # 3 … 5
       - { from: 6,  bonus: 3,               label: A big advantage }                         # 6 … 8
       - { from: 9,  bonus: 6,               label: Critical advantage }                      # 9 or better
-  # Each approach rolls its own d6 (the approach die) alongside the resolution dice. "when" says
-  # whether that die's effect applies: always, only while the resolution roll is short of its
-  # target, or by the player's choice (an Activate button).
+  # Each approach rolls its own d6 (the approach die) alongside the challenge dice. "when" says
+  # whether that die's effect applies: always, only if the framing or the resolution roll was
+  # short of its target as the dice landed (later exertion doesn't undo that), or by the player's
+  # choice (an Activate button).
   # "effects" says what each face of that approach's die does, and therefore what the player is
   # asked to tap after pressing Activate (nothing, for effects that need no target).
   # Faces with no effect (or kind: none) offer no Activate button. Any cost for an effect is
@@ -129,10 +130,10 @@ challenges:
         - { face: 1, kind: none }
         # Labels with a comma must be quoted: an unquoted one would end at the comma in { } flow.
         - { face: 2, kind: lower_raise,    label: "Tweak — lower one die a face, raise another a face" }
-        - { face: 3, kind: match_highest,  label: "Perfect balance — your lowest resolution die rises to your highest" }
-        - { face: 4, kind: match_highest,  label: "Perfect balance — your lowest resolution die rises to your highest" }
-        - { face: 5, kind: discard_double, label: "Perfect choice — discard one resolution die, copy another" }
-        - { face: 6, kind: discard_double, label: "Perfect choice — discard one resolution die, copy another" }
+        - { face: 3, kind: lower_raise,    label: "Tweak — lower one die a face, raise another a face" }
+        - { face: 4, kind: match_highest,  label: "Perfect balance — on each roll, the lowest die rises to the highest" }
+        - { face: 5, kind: discard_double, label: "Perfect choice — discard one die, copy another" }
+        - { face: 6, kind: discard_double, label: "Perfect choice — discard one die, copy another" }
     - id: limitless
       label: Limitless
       when: always
@@ -141,9 +142,9 @@ challenges:
         - { face: 1, kind: discard }
         - { face: 2, kind: none }
         - { face: 3, kind: reroll,     label: Emotional outburst - Reroll one die and get a hindrance (-1 next roll) }
-        - { face: 4, kind: extra_dice, dice: 1, label: Wreck it - Roll one extra resolution die and break something }
-        - { face: 5, kind: extra_dice, dice: 1, label: Push too far - Roll one extra resolution die and lose a resource }
-        - { face: 6, kind: extra_dice, dice: 2, label: Lose your head - Roll two extra resolution dice and get a light injury }
+        - { face: 4, kind: extra_dice, dice: 1, label: Wreck it - Roll one extra die on a roll of your choice and break something }
+        - { face: 5, kind: extra_dice, dice: 1, label: Push too far - Roll one extra die on a roll of your choice and lose a resource }
+        - { face: 6, kind: extra_dice, dice: 2, label: Lose your head - Roll two extra dice on a roll of your choice and get a light injury }
   # Pool stats a player can burn during a challenge: 1 point → 1 exertion, spent as +1 on the
   # open roll or to reroll one of its dice. Must be pools (pool: true).
   exertion_sources: [stamina, willpower]
