@@ -303,16 +303,17 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
         ? {
             charId: null,
             name: body[`${p}_name`] ?? '',
-            coreRank: Number(body[`${p}_core_rank`]),
-            supportRank: Number(body[`${p}_support_rank`]),
+            framingRank: Number(body[`${p}_framing_rank`]),
+            resolutionRank: Number(body[`${p}_resolution_rank`]),
           }
         : {
             charId: body[`${p}_char`] ?? '',
-            coreAbility: body[`${p}_core`] ?? '',
-            supportAbility: body[`${p}_support`] ?? '',
+            framingAbility: body[`${p}_framing`] ?? '',
+            resolutionAbility: body[`${p}_resolution`] ?? '',
           }
     if (session.startOpposition({ description: body.description ?? '', a: side('a'), b: side('b') }, actorName(c))) {
       pushOpposition()
+      pushChallenge() // the contest it replaces moves into the table's history log
     }
     return noContent(c)
   })
@@ -341,7 +342,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const char = session.characters.get(c.req.param('id'))
     const opp = session.currentOpposition()
     if (!char || !opp) return c.notFound()
-    const check = c.req.query('check') === 'support' ? 'support' : 'core'
+    const check = c.req.query('check') === 'framing' ? 'framing' : 'resolution'
     if (session.commitOppositionExertion(opp.id, char.id, check, (await form(c)).stat ?? '', actorName(c))) {
       pushOpposition()
       pushStatChange(char)
@@ -357,17 +358,6 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
-  app.post('/c/:id/opposition/skill-points', async (c) => {
-    const char = session.characters.get(c.req.param('id'))
-    const opp = session.currentOpposition()
-    if (!char || !opp) return c.notFound()
-    const body = await form(c)
-    if (session.setOppositionSkillPoints(opp.id, char.id, Number(body.core), Number(body.support), actorName(c))) {
-      pushOpposition()
-    }
-    return noContent(c)
-  })
-
   app.post('/gm/solo/roll', async (c) => {
     const body = await form(c)
     const rolled = session.rollSolo(
@@ -380,13 +370,20 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       },
       actorName(c),
     )
-    if (rolled) pushSolo()
+    // A public solo roll is also a line in the history log, which lives on the challenge board.
+    if (rolled) {
+      pushSolo()
+      pushChallenge()
+    }
     return noContent(c)
   })
 
   app.post('/gm/solo/visibility', (c) => {
     const to = c.req.query('to') === 'public' ? 'public' : 'gm'
-    if (session.setSoloVisibility(c.req.query('id') ?? '', to, actorName(c))) pushSolo()
+    if (session.setSoloVisibility(c.req.query('id') ?? '', to, actorName(c))) {
+      pushSolo()
+      pushChallenge() // showing it adds its line to the history log; hiding it takes it out
+    }
     return noContent(c)
   })
 

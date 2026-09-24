@@ -1039,7 +1039,7 @@ async function tweakWithDieOn(face: number) {
 
 
 describe('opposition roll', () => {
-  const ABILITIES = { coreAbility: 'strength', supportAbility: 'agility' }
+  const ABILITIES = { framingAbility: 'agility', resolutionAbility: 'strength' }
 
   /** Two finished characters, ready to be put on either side of a contest. */
   const twoPlayers = async () => {
@@ -1064,51 +1064,80 @@ describe('opposition roll', () => {
     return s.currentOpposition()!
   }
 
-  test('player vs player: two checks each, no difficulty anywhere', async () => {
+  test('player vs player: a framing and a resolution check each, no difficulty anywhere', async () => {
     const { s, mara, jorik } = await twoPlayers()
     expect(start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })).not.toBeNull()
     const opp = s.currentOpposition()!
     expect([opp.a.name, opp.b.name]).toEqual(['Mara', 'Jorik'])
-    expect(opp.a.coreAbility).toBe('strength')
-    expect(opp.a.supportAbility).toBe('agility')
+    expect(opp.a.framingAbility).toBe('agility')
+    expect(opp.a.resolutionAbility).toBe('strength')
 
     const done = resolve(s, opp.id)
     for (const one of [done.a, done.b]) {
-      expect(one.core!.dice).toHaveLength(2)
-      expect(one.support!.dice).toHaveLength(2)
+      expect(one.framing!.dice).toHaveLength(2)
+      expect(one.resolution!.dice).toHaveLength(2)
     }
     const outcome = s.oppositionOutcome(done)!
-    expect(outcome.core.aSum).toBe(done.a.core!.sum)
-    expect(outcome.core.bSum).toBe(done.b.core!.sum)
-    expect(outcome.core.margin).toBe(outcome.core.aSum - outcome.core.bSum)
+    expect(outcome.framing.aSum).toBe(done.a.framing!.sum)
+    expect(outcome.framing.bSum).toBe(done.b.framing!.sum)
+    expect(outcome.framing.margin).toBe(outcome.framing.aSum - outcome.framing.bSum)
+  })
+
+  test('each side\'s framing margin against the other picks its rung, whose bonus goes on its resolution', async () => {
+    const { s, mara, jorik } = await twoPlayers()
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const done = resolve(s, s.currentOpposition()!.id)
+    const o = s.oppositionOutcome(done)!
+    const ladder = s.rules.challenges.framing
+    // The same ladder a challenge uses: a reads +margin, b reads −margin.
+    expect(o.rungs.a).toEqual(framingRung(ladder, o.framing.margin))
+    expect(o.rungs.b).toEqual(framingRung(ladder, -o.framing.margin))
+    expect(o.resolution.aSum).toBe(done.a.resolution!.sum + (o.rungs.a?.resolutionBonus ?? 0))
+    expect(o.resolution.bSum).toBe(done.b.resolution!.sum + (o.rungs.b?.resolutionBonus ?? 0))
+  })
+
+  test('a big framing lead can swing a resolution the leader would otherwise lose', async () => {
+    const { s } = await twoPlayers()
+    // Framing rank 5 against 1 makes a big margin likely; keep contesting until the bonus decides.
+    for (let i = 0; i < 2000; i++) {
+      start(s, { name: 'Wolf', framingRank: 5, resolutionRank: 3 }, { name: 'Guard', framingRank: 1, resolutionRank: 3 })
+      const done = resolve(s, s.currentOpposition()!.id)
+      const o = s.oppositionOutcome(done)!
+      const bare = (s.oppositionSum(done.a, 'resolution') ?? 0) - (s.oppositionSum(done.b, 'resolution') ?? 0)
+      if (bare >= 0 || o.resolution.winner !== 'a') continue
+      expect(o.winner).toBe('a') // behind on the dice, ahead once the framing bonus is in
+      expect(o.decidedBy).toBe('resolution')
+      return
+    }
+    throw new Error('the framing bonus never swung a resolution')
   })
 
   test('player vs npc and npc vs npc both work', async () => {
     const { s, mara } = await twoPlayers()
-    const npc = { name: 'Guard', coreRank: 4, supportRank: 2 }
+    const npc = { name: 'Guard', framingRank: 2, resolutionRank: 4 }
     expect(start(s, { charId: mara, ...ABILITIES }, npc)).not.toBeNull()
     expect(s.currentOpposition()!.b.name).toBe('Guard')
     expect(s.currentOpposition()!.b.charId).toBeNull()
 
-    expect(start(s, { name: 'Wolf', coreRank: 5, supportRank: 5 }, npc)).not.toBeNull()
+    expect(start(s, { name: 'Wolf', framingRank: 5, resolutionRank: 5 }, npc)).not.toBeNull()
     const both = s.currentOpposition()!
     expect([both.a.charId, both.b.charId]).toEqual([null, null])
     const done = resolve(s, both.id)
     // An NPC rolls at its flat rank: every face shifted by (rank − 3).
-    for (const [i, face] of done.a.core!.faces!.entries()) {
-      expect(done.a.core!.dice[i]).toBe(face + (5 - 3))
+    for (const [i, face] of done.a.resolution!.faces!.entries()) {
+      expect(done.a.resolution!.dice[i]).toBe(face + (5 - 3))
     }
   })
 
   test('an unnamed contest, a missing ability or an off-ladder NPC rank are all refused', async () => {
     const { s, mara } = await twoPlayers()
     const ok = { charId: mara, ...ABILITIES }
-    const npc = { name: 'Guard', coreRank: 3, supportRank: 3 }
+    const npc = { name: 'Guard', framingRank: 3, resolutionRank: 3 }
     expect(start(s, ok, npc, '   ')).toBeNull()
-    expect(start(s, { charId: mara, coreAbility: 'strength', supportAbility: 'nope' }, npc)).toBeNull()
+    expect(start(s, { charId: mara, framingAbility: 'nope', resolutionAbility: 'strength' }, npc)).toBeNull()
     expect(start(s, { charId: 'nobody', ...ABILITIES }, npc)).toBeNull()
-    expect(start(s, ok, { name: 'Guard', coreRank: 0, supportRank: 3 })).toBeNull() // ladder is 1..5
-    expect(start(s, ok, { name: 'Guard', coreRank: 3, supportRank: 9 })).toBeNull()
+    expect(start(s, ok, { name: 'Guard', framingRank: 3, resolutionRank: 0 })).toBeNull() // ladder is 1..5
+    expect(start(s, ok, { name: 'Guard', framingRank: 9, resolutionRank: 3 })).toBeNull()
     expect(s.oppositions).toHaveLength(0)
   })
 
@@ -1140,37 +1169,36 @@ describe('opposition roll', () => {
     start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
     const opp = s.currentOpposition()!
 
-    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(true)
-    expect(s.commitOppositionExertion(opp.id, mara, 'support', 'willpower', 'Mara')).toBe(true)
+    expect(s.commitOppositionExertion(opp.id, mara, 'resolution', 'stamina', 'Mara')).toBe(true)
+    expect(s.commitOppositionExertion(opp.id, mara, 'framing', 'willpower', 'Mara')).toBe(true)
     expect(s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')).toBe(true)
-    expect(s.oppositionSkillState(s.currentOpposition()!.a)).toMatchObject({ rank: 3, left: 3 })
-    expect(s.setOppositionSkillPoints(opp.id, mara, 2, 1, 'Mara')).toBe(true)
+    expect(s.oppositionSkillState(s.currentOpposition()!.a)).toMatchObject({ label: 'Athletics' })
 
     const committed = s.currentOpposition()!.a
-    expect(committed.exertionCore).toBe(1)
-    expect(committed.exertionSupport).toBe(1)
-    expect([committed.skillCore, committed.skillSupport]).toEqual([2, 1])
+    expect(committed.exertionResolution).toBe(1)
+    expect(committed.exertionFraming).toBe(1)
+    expect(s.oppositionSkillBonus(committed)).toBe(3) // the skill's rank, on each check
     // Burning a pool point shows on the sheet, as a challenge's exertion does.
     expect(s.statOf(s.characters.get(mara)!, 'stamina')!.current).toBe(1)
 
     const done = resolve(s, opp.id)
-    expect(s.oppositionSum(done.a, 'core')).toBe(done.a.core!.sum + 1 + 2)
-    expect(s.oppositionSum(done.a, 'support')).toBe(done.a.support!.sum + 1 + 1)
-    expect(s.oppositionOutcome(done)!.core.aSum).toBe(done.a.core!.sum + 3)
+    // Exertion where it was put, and the whole skill rank (3) on both checks.
+    expect(s.oppositionSum(done.a, 'resolution')).toBe(done.a.resolution!.sum + 1 + 3)
+    expect(s.oppositionSum(done.a, 'framing')).toBe(done.a.framing!.sum + 1 + 3)
+    expect(s.oppositionOutcome(done)!.framing.aSum).toBe(done.a.framing!.sum + 4)
+    expect(s.oppositionSum(done.b, 'framing')).toBe(done.b.framing!.sum) // Jorik declared nothing
   })
 
-  test('a skill split cannot exceed its rank, and changing skill drops the split', async () => {
+  test('clearing the skill takes its bonus off both checks', async () => {
     const { s, mara, jorik } = await twoPlayers()
-    s.train(mara, 'athletics', 6, 'Mara')
+    s.train(mara, 'athletics', 6, 'Mara') // rank 3
     start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
     const opp = s.currentOpposition()!
     s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')
-    s.setOppositionSkillPoints(opp.id, mara, 99, 99, 'Mara')
-    const one = s.currentOpposition()!.a
-    expect(one.skillCore + one.skillSupport).toBe(3) // the whole rank, no more
+    expect(s.oppositionSkillBonus(s.currentOpposition()!.a)).toBe(3)
     s.setOppositionSkill(opp.id, mara, null, 'Mara')
-    expect(s.currentOpposition()!.a).toMatchObject({ skill: null, skillCore: 0, skillSupport: 0 })
-    expect(s.setOppositionSkillPoints(opp.id, mara, 1, 0, 'Mara')).toBe(false) // no skill declared
+    expect(s.currentOpposition()!.a.skill).toBeNull()
+    expect(s.oppositionSkillBonus(s.currentOpposition()!.a)).toBe(0)
   })
 
   test('a ready side cannot change its commitment, and only un-ready before the reveal', async () => {
@@ -1179,10 +1207,10 @@ describe('opposition roll', () => {
     const opp = s.currentOpposition()!
 
     s.setOppositionReady(opp.id, 'a', true, 'Mara')
-    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(false)
+    expect(s.commitOppositionExertion(opp.id, mara, 'resolution', 'stamina', 'Mara')).toBe(false)
     expect(s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')).toBe(false)
     expect(s.setOppositionReady(opp.id, 'a', false, 'Mara')).toBe(true) // still time to change
-    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(true)
+    expect(s.commitOppositionExertion(opp.id, mara, 'resolution', 'stamina', 'Mara')).toBe(true)
 
     s.setOppositionReady(opp.id, 'a', true, 'Mara')
     s.setOppositionReady(opp.id, 'b', true, 'Jorik')
@@ -1212,50 +1240,49 @@ describe('opposition roll', () => {
     const done = resolve(s, opp.id)
     expect(s.oppositionPhase(done)).toBe('done')
 
-    expect(s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')).toBe(false)
+    expect(s.commitOppositionExertion(opp.id, mara, 'resolution', 'stamina', 'Mara')).toBe(false)
     expect(s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')).toBe(false)
-    expect(s.setOppositionSkillPoints(opp.id, mara, 1, 0, 'Mara')).toBe(false)
     expect(s.setOppositionReady(opp.id, 'a', false, 'Mara')).toBe(false)
     expect(s.rollOpposition(opp.id, 'a', 'Mara')).toBe(false)
   })
 
   test('someone who is not in the contest cannot commit to it', async () => {
     const { s, mara, jorik } = await twoPlayers()
-    start(s, { charId: mara, ...ABILITIES }, { name: 'Guard', coreRank: 3, supportRank: 3 })
+    start(s, { charId: mara, ...ABILITIES }, { name: 'Guard', framingRank: 3, resolutionRank: 3 })
     const opp = s.currentOpposition()!
-    expect(s.commitOppositionExertion(opp.id, jorik, 'core', 'stamina', 'Jorik')).toBe(false)
+    expect(s.commitOppositionExertion(opp.id, jorik, 'resolution', 'stamina', 'Jorik')).toBe(false)
     expect(s.setOppositionSkill(opp.id, jorik, 'athletics', 'Jorik')).toBe(false)
   })
 
-  test('the core check decides when the two checks disagree', async () => {
+  test('the resolution decides when the two checks disagree', async () => {
     const { s, mara, jorik } = await twoPlayers()
     // Rolling is random, so keep contesting until a split turns up, then check which check won.
     for (let i = 0; i < 400; i++) {
       start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
       const done = resolve(s, s.currentOpposition()!.id)
       const o = s.oppositionOutcome(done)!
-      if (!o.core.winner || !o.support.winner || o.core.winner === o.support.winner) continue
-      expect(o.decidedBy).toBe('core')
-      expect(o.winner).toBe(o.core.winner) // and not the side that took the support check
-      expect(o.degrees).toBe(Math.floor(Math.abs(o.core.margin) / 3)) // high stakes: one per 3
+      if (!o.resolution.winner || !o.framing.winner || o.resolution.winner === o.framing.winner) continue
+      expect(o.decidedBy).toBe('resolution')
+      expect(o.winner).toBe(o.resolution.winner) // and not the side that took the framing
+      expect(o.degrees).toBe(Math.floor(Math.abs(o.resolution.margin) / 3)) // high stakes: one per 3
       return
     }
     throw new Error('the two checks never disagreed')
   })
 
-  test('a level core check falls through to the supporting one', async () => {
+  test('a level resolution falls through to the framing', async () => {
     const { s, mara, jorik } = await twoPlayers()
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 2000; i++) {
       start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
       const done = resolve(s, s.currentOpposition()!.id)
       const o = s.oppositionOutcome(done)!
-      if (o.core.winner || !o.support.winner) continue
-      expect(o.decidedBy).toBe('support')
-      expect(o.winner).toBe(o.support.winner)
-      expect(o.degrees).toBe(Math.floor(Math.abs(o.support.margin) / 3))
+      if (o.resolution.winner || !o.framing.winner) continue
+      expect(o.decidedBy).toBe('framing')
+      expect(o.winner).toBe(o.framing.winner)
+      expect(o.degrees).toBe(Math.floor(Math.abs(o.framing.margin) / 3))
       return
     }
-    throw new Error('the core check was never level with a decided support check')
+    throw new Error('the resolution was never level with a decided framing')
   })
 
   test('level on both checks is a tie with no winner named', async () => {
@@ -1264,7 +1291,7 @@ describe('opposition roll', () => {
       start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
       const done = resolve(s, s.currentOpposition()!.id)
       const o = s.oppositionOutcome(done)!
-      if (o.core.winner || o.support.winner) continue
+      if (o.resolution.winner || o.framing.winner) continue
       expect(o.winner).toBeNull()
       expect(o.decidedBy).toBeNull()
       expect(o.degrees).toBe(0)
@@ -1278,16 +1305,42 @@ describe('opposition roll', () => {
     s.train(mara, 'athletics', 6, 'Mara')
     start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES }, '  Shoving match  ')
     const opp = s.currentOpposition()!
-    s.commitOppositionExertion(opp.id, mara, 'core', 'stamina', 'Mara')
+    s.commitOppositionExertion(opp.id, mara, 'resolution', 'stamina', 'Mara')
     s.setOppositionSkill(opp.id, mara, 'athletics', 'Mara')
-    s.setOppositionSkillPoints(opp.id, mara, 2, 1, 'Mara')
     const done = resolve(s, opp.id)
 
-    const replayed = open().currentOpposition()!
+    const reopened = open()
+    const replayed = reopened.currentOpposition()!
     expect(replayed).toEqual(done)
     expect(replayed.description).toBe('Shoving match')
-    expect(replayed.a.exertionCore).toBe(1)
-    expect([replayed.a.skillCore, replayed.a.skillSupport]).toEqual([2, 1])
+    expect(replayed.a.exertionResolution).toBe(1)
+    expect(replayed.a.skill).toBe('athletics')
+    expect(reopened.oppositionOutcome(replayed)).toEqual(s.oppositionOutcome(done))
+  })
+
+  test('contests logged before the rename (core / support) still load: core = resolution, support = framing', async () => {
+    const { s, open, mara } = await twoPlayers()
+    s.train(mara, 'athletics', 6, 'Mara') // rank 3
+    const side = (x: object) => ({ exertionCore: 0, exertionSupport: 0, skill: null, skillCore: 0, skillSupport: 0, ready: false, core: null, support: null, ...x })
+    const log = (e: object) => (s as unknown as { append: (e: object) => void }).append({ by: 'GM', ...e })
+    log({
+      type: 'opposition_started',
+      oppositionId: 'old1',
+      description: 'Old contest',
+      a: side({ charId: mara, name: 'Mara', coreAbility: 'strength', supportAbility: 'agility', coreRank: null, supportRank: null }),
+      b: side({ charId: null, name: 'Guard', coreAbility: null, supportAbility: null, coreRank: 4, supportRank: 2 }),
+    })
+    log({ type: 'opposition_exerted', oppositionId: 'old1', side: 'a', check: 'core', charId: mara, stat: 'stamina', adj: -1, from: 2, to: 1 })
+    log({ type: 'opposition_skill_set', oppositionId: 'old1', side: 'a', skill: 'athletics' })
+    log({ type: 'opposition_skill_points_set', oppositionId: 'old1', side: 'a', core: 2, support: 1 }) // an old split: ignored
+    const dice = (n: number) => ({ faces: [n, n], dice: [n, n], sum: n * 2 })
+    log({ type: 'opposition_rolled', oppositionId: 'old1', side: 'a', core: dice(5), support: dice(2) })
+    const opp = open().currentOpposition()!
+    expect(opp.a).toMatchObject({ resolutionAbility: 'strength', framingAbility: 'agility', exertionResolution: 1 })
+    expect(opp.a.skill).toBe('athletics')
+    expect(opp.a.resolution!.sum).toBe(10)
+    expect(opp.a.framing!.sum).toBe(4)
+    expect(opp.b).toMatchObject({ resolutionRank: 4, framingRank: 2 })
   })
 })
 
@@ -1297,6 +1350,19 @@ describe('solo roll', () => {
     const { open } = await setup(CHALLENGE_RULES)
     return open()
   }
+
+  test('solo rolls and challenges share one time order (for the history log), also after a restart', async () => {
+    const { s, id, open } = await rolledChallenge()
+    s.rollSolo({ difficulty: 7, rank: 3, visibility: 'public' }, 'GM')
+    startAndRoll(s, id, 'bold', 9)
+    const [first, second] = s.challenges.slice(-2)
+    const solo = s.soloRolls.at(-1)!
+    expect(first!.seq).toBeLessThan(solo.seq)
+    expect(solo.seq).toBeLessThan(second!.seq)
+    const replayed = open()
+    expect(replayed.soloRolls.at(-1)!.seq).toBe(solo.seq)
+    expect(replayed.challenges.at(-1)!.seq).toBe(second!.seq)
+  })
 
   test('rolls two dice at the given rank, shifted like an ability side', async () => {
     const s = await soloSession()

@@ -952,12 +952,50 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
 }
 
 /** Past challenges (everything except the current one), most recent first. */
-function ChallengeLog(props: { session: Session; entries: Challenge[] }) {
+/** A past challenge, or a solo roll the GM showed the table — the history log mixes both. */
+type LogEntry =
+  | { kind: 'challenge'; ch: Challenge }
+  | { kind: 'solo'; solo: SoloRoll }
+  | { kind: 'opposition'; opp: Opposition }
+
+/** " and succeeds with +4" / " and fails with -2" — how every history line ends. */
+const verdict = (success: boolean, margin: number) =>
+  ` and ${success ? 'succeeds' : 'fails'} with ${margin >= 0 ? `+${margin}` : margin}`
+
+/**
+ * A public solo roll's line (user-specified format): "Ogre notices you (easy) 4 and succeeds with
+ * +4" — the GM's description, the tier it was picked from (left out once a nudge moved the number
+ * off it), the opposition number, and the margin. No description reads "Solo roll".
+ */
+function SoloLogLine(props: { session: Session; solo: SoloRoll }) {
+  const { solo } = props
+  const outcome = props.session.soloOutcome(solo)
+  return (
+    <li class={outcome.success ? 'success' : 'failure'}>
+      <b>{solo.description || 'Solo roll'}</b>
+      {solo.tier && ` (${solo.tier.toLowerCase()})`} {solo.difficulty}
+      {verdict(outcome.success, outcome.difference)}
+    </li>
+  )
+}
+
+function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
   const { session, entries } = props
   if (entries.length === 0) return null
   return (
     <ul class="challenge-log">
-      {entries.map((ch) => {
+      {entries.map((entry) => {
+        if (entry.kind === 'solo') return <SoloLogLine session={session} solo={entry.solo} />
+        if (entry.kind === 'opposition') {
+          // "Mara vs Guard: arm wrestle — Mara wins by 1 degree", with the board's own verdict.
+          const { opp } = entry
+          return (
+            <li class="opposition-line">
+              <b>{opp.a.name}</b> vs <b>{opp.b.name}</b>: {opp.description} — {oppositionStatus(session, opp)}
+            </li>
+          )
+        }
+        const { ch } = entry
         const math = session.challengeMath(ch)
         // "Mara attempts to scale the wall (challenging) 7 and succeeds with +4" (user-specified).
         // The tier is named from the GM's own difficulty, the number is the effective target the
@@ -969,7 +1007,7 @@ function ChallengeLog(props: { session: Session; entries: Challenge[] }) {
           <li class={math.success === null ? undefined : math.success ? 'success' : 'failure'}>
             <b>{name}</b> attempts to {ch.description || 'the challenge'}
             {tier && ` (${tier.toLowerCase()})`} {math.target}
-            {margin !== undefined && ` and ${math.success ? 'succeeds' : 'fails'} with ${margin >= 0 ? `+${margin}` : margin}`}
+            {margin !== undefined && verdict(!!math.success, margin)}
           </li>
         )
       })}
@@ -1459,95 +1497,125 @@ export function SoloRollDialog(props: { session: Session }) {
   )
 }
 
+/** Who is looking at an opposition roll, and so what they may see and do on it. */
+type OppViewer = { session: Session; opp: Opposition; role: 'gm' | 'player' | 'table'; viewerCharId?: string }
+
+/** Whether this viewer is the player on `side`, and whether they (or the GM) act for it now. */
+function oppActing(v: OppViewer, side: OppositionSide) {
+  const one = v.opp[side]
+  const phase = v.session.oppositionPhase(v.opp)
+  const mine = !!one.charId && one.charId === v.viewerCharId
+  const forSide = mine || v.role === 'gm' // the GM can act for any side (an NPC has nobody else)
+  return { mine, phase, commits: phase === 'committing' && !one.ready && forSide, forSide }
+}
+
 /**
- * One contestant's column: who they are, their two checks, and — while committing — the controls
- * for the player whose side it is. What has been committed is **hidden from everyone else until
- * both sides are ready**, so the column shows a "committed" marker instead of the numbers.
+ * A contestant's name cell: the name, NPC / Ready badges, and — while it is hidden from this
+ * viewer — the note that something has been committed. Marked `won` / `lost` once it is over.
  */
-function ContestantColumn(props: {
-  session: Session
-  opp: Opposition
-  side: OppositionSide
-  role: 'gm' | 'player' | 'table'
-  viewerCharId?: string
-}) {
-  const { session, opp, side, role, viewerCharId } = props
+function OppName(props: OppViewer & { side: OppositionSide }) {
+  const { session, opp, side } = props
   const one = opp[side]
-  const phase = session.oppositionPhase(opp)
   const outcome = session.oppositionOutcome(opp)
-  const open = session.oppositionCommitVisible(opp, side, role, viewerCharId)
-  const won = outcome?.winner === side
-  const mine = !!one.charId && one.charId === viewerCharId
-  // The player whose side it is commits; the GM can act for any side (an NPC has nobody else).
-  const acting = phase === 'committing' && !one.ready && (mine || role === 'gm')
-  const canReady = phase === 'committing' && (mine || role === 'gm')
-  const hidden = !open && (one.exertionCore + one.exertionSupport > 0 || !!one.skill)
-  const skill = one.charId ? session.oppositionSkillState(one) : null
-
-  const checkRow = (check: 'core' | 'support', label: string) => {
-    const rolled = check === 'core' ? one.core : one.support
-    const abilityId = check === 'core' ? one.coreAbility : one.supportAbility
-    const field = abilityId ? (session.rules.fields.get(abilityId) as NumberField | undefined) : undefined
-    const rank = check === 'core' ? one.coreRank : one.supportRank
-    const bonus = open
-      ? check === 'core'
-        ? one.exertionCore + one.skillCore
-        : one.exertionSupport + one.skillSupport
-      : 0
-    const sum = rolled ? session.oppositionSum(one, check) : null
-    const winsIt = outcome && (check === 'core' ? outcome.core.winner : outcome.support.winner) === side
-    return (
-      <div
-        class={`opp-check ${winsIt ? 'takes-it' : ''}`}
-        style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}
-      >
-        <div class="opp-check-head">
-          <span class="opp-check-label">{label}</span>
-          <IconChip icon={field?.icon} />
-          <span class="opp-ability">{field?.label ?? (rank !== null ? `Rank ${rank}` : '\u2014')}</span>
-        </div>
-        {rolled ? (
-          <Equation
-            rows={[
-              rolled.dice.map((d, i) => (
-                <Die value={d} faceId={rolled.faces?.[i]} faces={session.rules.challenges.faces} />
-              )),
-              [
-                ...(open && (check === 'core' ? one.skillCore : one.skillSupport)
-                  ? [bonusChip(check === 'core' ? one.skillCore : one.skillSupport, skill?.label ?? 'Skill', skill?.icon ?? undefined, 'skill')]
-                  : []),
-                ...(open && (check === 'core' ? one.exertionCore : one.exertionSupport)
-                  ? [bonusChip(check === 'core' ? one.exertionCore : one.exertionSupport, 'Exertion', undefined, 'exertion')]
-                  : []),
-              ],
-            ]}
-            result={<span class="opp-sum">{sum}</span>}
-          />
-        ) : (
-          <div class="opp-waiting">{open && bonus !== 0 ? `committed ${signed(bonus)}` : '\u2014'}</div>
-        )}
-        {acting && <CommitControls session={session} opp={opp} one={one} check={check} />}
-      </div>
-    )
-  }
-
+  const open = session.oppositionCommitVisible(opp, side, props.role, props.viewerCharId)
+  const hidden = !open && (one.exertionFraming + one.exertionResolution > 0 || !!one.skill)
+  const result = outcome?.winner ? (outcome.winner === side ? 'won' : 'lost') : ''
   return (
-    <div class={`opp-side ${won ? 'won' : ''} ${outcome && !won && outcome.winner ? 'lost' : ''}`}>
+    <div class={`opp-name-cell ${result}`}>
       <div class="opp-name">
         <span>{one.name}</span>
         {!one.charId && <span class="badge opp-npc">NPC</span>}
-        {one.ready && phase === 'committing' && <span class="badge opp-ready">Ready</span>}
+        {one.ready && session.oppositionPhase(opp) === 'committing' && <span class="badge opp-ready">Ready</span>}
       </div>
       {hidden && <p class="opp-hidden">Bonus committed — hidden until both are ready</p>}
-      {checkRow('core', 'Core')}
-      {checkRow('support', 'Support')}
-      {open && skill && one.skill && (
-        <p class="opp-skill-left">
-          {skill.label}: <b>{skill.left}</b> left of {skill.rank}
-        </p>
+    </div>
+  )
+}
+
+/**
+ * One contestant's check, framing or resolution — shown like a challenge's roll box: the dice,
+ * then the committed skill and exertion, and on the resolution the **framing rung's bonus**, which
+ * only exists once both sides have rolled (it comes off the framing margin against the other
+ * side). The framing cell names the rung it landed on underneath, like a challenge's framing.
+ */
+function OppCheckCell(props: OppViewer & { side: OppositionSide; check: 'framing' | 'resolution' }) {
+  const { session, opp, side, check } = props
+  const one = opp[side]
+  const outcome = session.oppositionOutcome(opp)
+  const open = session.oppositionCommitVisible(opp, side, props.role, props.viewerCharId)
+  const skill = one.charId ? session.oppositionSkillState(one) : null
+  const rolled = one[check]
+  const framing = check === 'framing'
+  const abilityId = framing ? one.framingAbility : one.resolutionAbility
+  const field = abilityId ? (session.rules.fields.get(abilityId) as NumberField | undefined) : undefined
+  const rank = framing ? one.framingRank : one.resolutionRank
+  const skillOn = session.oppositionSkillBonus(one) // the skill counts in full on both checks
+  const exertionOn = framing ? one.exertionFraming : one.exertionResolution
+  const rung = outcome?.rungs[side] ?? null
+  const rungBonus = !framing ? (rung?.resolutionBonus ?? 0) : 0
+  const own = session.oppositionSum(one, check)
+  const sum = outcome ? (framing ? outcome.framing : outcome.resolution)[side === 'a' ? 'aSum' : 'bSum'] : own
+  const takesIt = outcome && (framing ? outcome.framing : outcome.resolution).winner === side
+  const bonuses: Child[] = []
+  if (open && skillOn) bonuses.push(bonusChip(skillOn, skill?.label ?? 'Skill', skill?.icon ?? undefined, 'skill'))
+  if (open && exertionOn) bonuses.push(bonusChip(exertionOn, 'Exertion', undefined, 'exertion'))
+  if (rungBonus) bonuses.push(bonusChip(rungBonus, 'Framing', undefined, rungBonus > 0 ? 'help' : 'hinder'))
+  const tone = rung && (rung.resolutionBonus > 0 ? 'help' : rung.resolutionBonus < 0 || rung.degrees < 0 ? 'hinder' : 'even')
+  return (
+    <div
+      class={`opp-check ${takesIt ? 'takes-it' : ''}`}
+      style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}
+    >
+      <div class="opp-check-head">
+        <span class="opp-check-label">{framing ? 'Framing' : 'Resolution'}</span>
+        <IconChip icon={field?.icon} />
+        <span class="opp-ability">{field?.label ?? (rank !== null ? `Rank ${rank}` : '\u2014')}</span>
+      </div>
+      {rolled ? (
+        <Equation
+          rows={[
+            rolled.dice.map((d, i) => (
+              <Die value={d} faceId={rolled.faces?.[i]} faces={session.rules.challenges.faces} />
+            )),
+            bonuses,
+          ]}
+          result={
+            <span class="opp-result">
+              <span class="opp-sum">{sum}</span>
+              {/* The winner's resolution shows by how much it beat the other side's. */}
+              {!framing && outcome?.resolution.winner === side && (
+                <span class="opp-diff">+{Math.abs(outcome.resolution.margin)}</span>
+              )}
+            </span>
+          }
+        />
+      ) : (
+        <div class="opp-waiting">
+          {open && skillOn + exertionOn !== 0 ? `committed ${signed(skillOn + exertionOn)}` : '\u2014'}
+        </div>
       )}
-      {acting && one.charId && <SkillPick session={session} opp={opp} one={one} />}
-      {canReady && (
+      {framing && rung && (
+        <div class={`roll-caption roll-caption-${tone}`}>
+          <span class="roll-caption-title">{rung.label}</span>
+          {rung.resolutionBonus !== 0 && (
+            <span class="roll-caption-sub">({signed(rung.resolutionBonus)} bonus to resolution)</span>
+          )}
+        </div>
+      )}
+      {oppActing(props, side).commits && <CommitControls session={session} opp={opp} one={one} check={check} />}
+    </div>
+  )
+}
+
+/** Under a contestant: the skill split, the skill pick, and Ready / Roll for whoever acts for it. */
+function OppFooter(props: OppViewer & { side: OppositionSide }) {
+  const { session, opp, side } = props
+  const one = opp[side]
+  const { phase, commits, forSide } = oppActing(props, side)
+  return (
+    <div class="opp-footer">
+      {commits && one.charId && <SkillPick session={session} opp={opp} one={one} />}
+      {phase === 'committing' && forSide && (
         <button
           type="button"
           class={one.ready ? 'small' : 'primary'}
@@ -1557,30 +1625,67 @@ function ContestantColumn(props: {
           {one.ready ? 'Not ready after all' : 'Ready'}
         </button>
       )}
-      {phase === 'rolling' && !one.core && (mine || role === 'gm') && (
+      {phase === 'rolling' && !one.resolution && forSide && (
         <button type="button" class="primary" hx-post={`/gm/opposition/roll?side=${side}`} hx-swap="none">
           Roll
         </button>
       )}
-      {phase === 'rolling' && one.core && <p class="muted">Rolled — waiting for the other side</p>}
+      {phase === 'rolling' && one.resolution && <p class="muted">Rolled — waiting for the other side</p>}
     </div>
   )
 }
 
-/** Stamina/willpower burned onto one check, and (for a skill) the points put on it. */
+/**
+ * A player's view of the contest: **their own side only** (user decision) — name, framing,
+ * resolution, and their controls. The other side's checks are not shown to them at all.
+ */
+function OppOwnSide(props: OppViewer & { side: OppositionSide }) {
+  const result = props.session.oppositionOutcome(props.opp)?.winner
+  return (
+    <div class={`opp-side ${result ? (result === props.side ? 'won' : 'lost') : ''}`}>
+      <OppName {...props} />
+      <OppCheckCell {...props} check="framing" />
+      <OppCheckCell {...props} check="resolution" />
+      <OppFooter {...props} />
+    </div>
+  )
+}
+
+/**
+ * Both sides **side by side in a 2 × 2 grid** (user decision, for the table; the GM gets the same):
+ * one column per contestant, framing in the top row and resolution below it, so the two checks
+ * being compared always sit next to each other. Names head the columns; controls go underneath.
+ */
+function OppGrid(props: OppViewer) {
+  const cell = (side: OppositionSide, check: 'framing' | 'resolution') => (
+    <OppCheckCell {...props} side={side} check={check} />
+  )
+  return (
+    <div class="opp-grid">
+      <OppName {...props} side="a" />
+      <OppName {...props} side="b" />
+      {cell('a', 'framing')}
+      {cell('b', 'framing')}
+      {cell('a', 'resolution')}
+      {cell('b', 'resolution')}
+      <OppFooter {...props} side="a" />
+      <OppFooter {...props} side="b" />
+    </div>
+  )
+}
+
+/** Stamina/willpower burned onto one check. (A declared skill needs no split: it counts on both.) */
 function CommitControls(props: {
   session: Session
   opp: Opposition
   one: Contestant
-  check: 'core' | 'support'
+  check: 'framing' | 'resolution'
 }) {
   const { session, opp, one, check } = props
   if (!one.charId) return null // an NPC commits nothing
   const char = session.characters.get(one.charId)
   if (!char) return null
   const side: OppositionSide = opp.a.charId === one.charId ? 'a' : 'b'
-  const skill = session.oppositionSkillState(one)
-  const onCheck = check === 'core' ? one.skillCore : one.skillSupport
   const post = (path: string) => `/c/${one.charId}/opposition/${path}`
   return (
     <div class="opp-commit">
@@ -1604,44 +1709,11 @@ function CommitControls(props: {
           </button>
         )
       })}
-      {skill && one.skill && (
-        <span class="opp-skill-step">
-          <button
-            type="button"
-            class="circumstance-step"
-            hx-post={`${post('skill-points')}?side=${side}`}
-            hx-vals={JSON.stringify(
-              check === 'core'
-                ? { core: Math.max(0, onCheck - 1), support: one.skillSupport }
-                : { core: one.skillCore, support: Math.max(0, onCheck - 1) },
-            )}
-            hx-swap="none"
-            disabled={onCheck <= 0 || undefined}
-          >
-            {'\u2212'}
-          </button>
-          <output>{onCheck}</output>
-          <button
-            type="button"
-            class="circumstance-step"
-            hx-post={`${post('skill-points')}?side=${side}`}
-            hx-vals={JSON.stringify(
-              check === 'core'
-                ? { core: onCheck + 1, support: one.skillSupport }
-                : { core: one.skillCore, support: onCheck + 1 },
-            )}
-            hx-swap="none"
-            disabled={skill.left <= 0 || undefined}
-          >
-            +
-          </button>
-        </span>
-      )}
     </div>
   )
 }
 
-/** Declares which trained skill this side is committing (its rank is then split per check). */
+/** Declares which trained skill this side is committing (its rank then counts on both checks). */
 function SkillPick(props: { session: Session; opp: Opposition; one: Contestant }) {
   const { session, one } = props
   const skills = [...session.rules.fields.values()].filter(
@@ -1676,22 +1748,22 @@ function oppositionStatus(session: Session, opp: Opposition) {
     return `Committing — waiting on ${waiting.join(' and ')}`
   }
   if (phase === 'rolling') {
-    const waiting = [opp.a, opp.b].filter((o) => !o.core).map((o) => o.name)
+    const waiting = [opp.a, opp.b].filter((o) => !o.resolution).map((o) => o.name)
     return waiting.length ? `Both ready — waiting for ${waiting.join(' and ')} to roll` : 'Rolling\u2026'
   }
   const outcome = session.oppositionOutcome(opp)!
   if (!outcome.winner) return 'Tie — the GM rules on it'
   const winner = outcome.winner === 'a' ? opp.a.name : opp.b.name
   const degrees = outcome.degrees === 0 ? 'by a hair' : `by ${outcome.degrees} degree${outcome.degrees > 1 ? 's' : ''}`
-  const split = outcome.decidedBy === 'support' ? ' (the core check was level)' : ''
+  const split = outcome.decidedBy === 'framing' ? ' (the resolution was level, so the framing decided)' : ''
   return `${winner} wins ${degrees}${split}`
 }
 
 /**
  * The opposition-roll section: the GM's "Start opposition roll" button and the contest itself.
- * Its own swap target, and mounted on all three screens. The GM and the table see every contest;
- * a player sees it only when their character is one of the two sides (and even then not what the
- * other side has committed, until both are ready).
+ * Its own swap target, and mounted on all three screens. The GM and the table see every contest
+ * as a 2 × 2 grid (OppGrid); a player sees it only when their character is one of the two sides,
+ * and then **only their own side** (OppOwnSide) — never the other player's checks.
  */
 export function OppositionBoard(props: {
   session: Session
@@ -1719,11 +1791,18 @@ export function OppositionBoard(props: {
             <span class="stakes stakes-high">High stakes</span>
           </div>
           <p class="opp-status">{oppositionStatus(session, opp)}</p>
-          <div class="opp-sides">
-            <ContestantColumn session={session} opp={opp} side="a" role={role} viewerCharId={viewerCharId} />
-            <span class="opp-versus">vs</span>
-            <ContestantColumn session={session} opp={opp} side="b" role={role} viewerCharId={viewerCharId} />
-          </div>
+          {role === 'player' ? (
+            // Only reachable when the viewer is in it (see `involved`), so `mine` is one side.
+            <OppOwnSide
+              session={session}
+              opp={opp}
+              role={role}
+              viewerCharId={viewerCharId}
+              side={opp.a.charId === viewerCharId ? 'a' : 'b'}
+            />
+          ) : (
+            <OppGrid session={session} opp={opp} role={role} viewerCharId={viewerCharId} />
+          )}
         </div>
       )}
     </section>
@@ -1735,8 +1814,8 @@ const AFTER_OPPOSITION = [
   'if (!event.detail.successful) return;',
   'const d = Alpine.$data(this);',
   "Object.assign(d, { description: '',",
-  "  aKind: 'character', aChar: '', aCore: '', aSupport: '', aName: '', aCoreRank: d.defRank, aSupportRank: d.defRank,",
-  "  bKind: 'character', bChar: '', bCore: '', bSupport: '', bName: '', bCoreRank: d.defRank, bSupportRank: d.defRank });",
+  "  aKind: 'character', aChar: '', aFraming: '', aResolution: '', aName: '', aFramingRank: d.defRank, aResolutionRank: d.defRank,",
+  "  bKind: 'character', bChar: '', bFraming: '', bResolution: '', bName: '', bFramingRank: d.defRank, bResolutionRank: d.defRank });",
   "this.closest('dialog').close()",
 ].join(' ')
 
@@ -1825,10 +1904,10 @@ function ContestantPicker(props: {
             ))}
           </div>
         )}
-        <h5>Core ability</h5>
-        {abilityCol(`${side}Core`)}
-        <h5>Supporting ability</h5>
-        {abilityCol(`${side}Support`)}
+        <h5>Framing ability</h5>
+        {abilityCol(`${side}Framing`)}
+        <h5>Resolution ability</h5>
+        {abilityCol(`${side}Resolution`)}
       </div>
 
       <div x-show={`${kind} === 'npc'`} x-cloak>
@@ -1838,10 +1917,10 @@ function ContestantPicker(props: {
           maxlength={40}
           autocomplete="off"
         />
-        <h5>Core rank</h5>
-        {rankCol(`${side}CoreRank`)}
-        <h5>Supporting rank</h5>
-        {rankCol(`${side}SupportRank`)}
+        <h5>Framing rank</h5>
+        {rankCol(`${side}FramingRank`)}
+        <h5>Resolution rank</h5>
+        {rankCol(`${side}ResolutionRank`)}
       </div>
     </section>
   )
@@ -1866,22 +1945,22 @@ export function OppositionDialog(props: { session: Session }) {
     defRank: def,
     aKind: 'character',
     aChar: '',
-    aCore: '',
-    aSupport: '',
+    aFraming: '',
+    aResolution: '',
     aName: '',
-    aCoreRank: def,
-    aSupportRank: def,
+    aFramingRank: def,
+    aResolutionRank: def,
     bKind: 'character',
     bChar: '',
-    bCore: '',
-    bSupport: '',
+    bFraming: '',
+    bResolution: '',
     bName: '',
-    bCoreRank: def,
-    bSupportRank: def,
+    bFramingRank: def,
+    bResolutionRank: def,
   }
   // A side is settled once it is a character with both abilities, or an NPC (ranks always have
   // a value, and the name falls back to "NPC" server-side).
-  const ready = (p: 'a' | 'b') => `(${p}Kind === 'npc' ? true : (${p}Char && ${p}Core && ${p}Support))`
+  const ready = (p: 'a' | 'b') => `(${p}Kind === 'npc' ? true : (${p}Char && ${p}Framing && ${p}Resolution))`
   return (
     <dialog id="opposition-dialog" class="challenge-dialog opposition-dialog">
       <form
@@ -1932,11 +2011,11 @@ export function OppositionDialog(props: { session: Session }) {
           <>
             <input type="hidden" name={`${p}_kind`} x-model={`${p}Kind`} />
             <input type="hidden" name={`${p}_char`} x-model={`${p}Char`} />
-            <input type="hidden" name={`${p}_core`} x-model={`${p}Core`} />
-            <input type="hidden" name={`${p}_support`} x-model={`${p}Support`} />
+            <input type="hidden" name={`${p}_framing`} x-model={`${p}Framing`} />
+            <input type="hidden" name={`${p}_resolution`} x-model={`${p}Resolution`} />
             <input type="hidden" name={`${p}_name`} x-model={`${p}Name`} />
-            <input type="hidden" name={`${p}_core_rank`} x-model={`${p}CoreRank`} />
-            <input type="hidden" name={`${p}_support_rank`} x-model={`${p}SupportRank`} />
+            <input type="hidden" name={`${p}_framing_rank`} x-model={`${p}FramingRank`} />
+            <input type="hidden" name={`${p}_resolution_rank`} x-model={`${p}ResolutionRank`} />
           </>
         ))}
         <button
@@ -1958,7 +2037,19 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
   // the GM and the table see every one. The section stays mounted either way, so a live update
   // still has somewhere to land when a challenge is handed to this player.
   const ch = role === 'player' && current?.charId !== viewerCharId ? null : current
-  const history = session.challenges.slice(0, -1).reverse()
+  // Past challenges (the current one is on the board above), every solo roll the GM has shown
+  // the table, and finished earlier opposition rolls — newest first. Hiding a solo roll again
+  // takes it back out.
+  const history: LogEntry[] = [
+    ...session.challenges.slice(0, -1).map((c) => ({ kind: 'challenge' as const, ch: c, seq: c.seq })),
+    ...session.soloRolls.filter((s) => s.visibility === 'public').map((s) => ({ kind: 'solo' as const, solo: s, seq: s.seq })),
+    // Finished contests before the current one (which is on its own board): once the next one
+    // starts, this is where the table can still read how it went.
+    ...session.oppositions
+      .slice(0, -1)
+      .filter((o) => session.oppositionPhase(o) === 'done')
+      .map((o) => ({ kind: 'opposition' as const, opp: o, seq: o.seq })),
+  ].sort((a, b) => b.seq - a.seq)
   return (
     <section id="challenge-board" class="challenge-board" hx-swap-oob={oobAttr(props.oob)}>
       {role === 'gm' && (
@@ -1971,7 +2062,8 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
       ) : (
         role !== 'player' && <p class="muted">No challenge yet.</p>
       )}
-      {role !== 'player' && <ChallengeLog session={session} entries={history} />}
+      {/* The history log is the table screen's alone (user decision): the GM reads it there. */}
+      {role === 'table' && <ChallengeLog session={session} entries={history} />}
     </section>
   )
 }

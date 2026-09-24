@@ -548,20 +548,31 @@ where each side is either a character with **two of its abilities** or an NPC wi
 character's ranks are read off the sheet **when it rolls**, so a wound taken between setup and roll
 counts.
 
-**Two checks per contestant** (user decision): a **core** ability and a **supporting** one, giving
-two head-to-head comparisons. **The core check decides** — when the two disagree it is the core one
-that names the winner. A level core check falls through to the supporting one rather than throwing
-that away, and only a contest level on both is a **tie**, which the app reports without naming a
-winner for the GM to rule on. It is **always high stakes** (no picker), so the deciding check's
-margin reads as **degrees of victory** — one per full 3 points, via `outcomeFor` like every other
-degree. The board says it in a line: "Mara wins by 1 degree", or "… (the core check was level)" when
-the support check had to decide.
+**Framing and resolution, like a challenge** (user decision; they used to be "core" and
+"supporting"): each contestant rolls a **framing** check and a **resolution** check.
+- **Framing influences resolution the same way as in a challenge**: there is no difficulty, so each
+  side's framing **margin is its framing total against the other side's** (a's is +m, b's −m). That
+  margin picks a rung on the **same `challenges.framing` ladder**, and the rung's bonus goes straight
+  onto that side's resolution total — shown in its breakdown as a "Framing" chip, with the rung's
+  label (and any "— a complication") under the framing check, like `FramingCaption`. The rung
+  depends on both framings, so it only exists once **both sides have rolled** (`oppositionOutcome`
+  works it out; `oppositionSum` is a side's own total without it).
+- **The resolution decides** (with the rung bonus in). A level resolution falls through to the
+  framing margin rather than throwing that away, and only level on both is a **tie**, reported
+  without a winner for the GM to rule on. **Always high stakes** (no picker): the deciding margin
+  reads as **degrees of victory**, one per full 3 points via `outcomeFor`. The board says it in a
+  line: "Mara wins by 2 degrees", or "… (the resolution was level, so the framing decided)". A
+  rung's complication is shown on that side, not folded into the degrees of victory. **The
+  winner's resolution shows its margin** next to its total ("= 12 +4", in green; user request) —
+  only on the side that took the resolution.
+- **Old logs still load**: events from before the rename carry `core` (= resolution) and `support`
+  (= framing) — `contestantFromLog` and the reducer read both spellings (tested).
 
 **Commit → Ready → Roll**, in three phases (`oppositionPhase`):
 
 | phase | what happens |
 |---|---|
-| `committing` | each player commits **before the dice**: pool points (stamina/willpower, +1 each) and a declared skill's rank, both split across the two checks. An NPC commits nothing. |
+| `committing` | each player commits **before the dice**: pool points (stamina/willpower, +1 each, on the check they pick) and a declared skill, whose **rank counts in full on both checks** (user decision, as in a challenge — it used to be split by hand; old `opposition_skill_points_set` events are ignored on replay). An NPC commits nothing. |
 | `rolling` | both sides have pressed **Ready**, which reveals the commitments and opens **Roll**; each side rolls its own two checks. |
 | `done` | both rolled. **Nothing can be changed** (user decision): no rerolls, no late exertion, no circumstance — every control disappears and the session refuses the routes. |
 
@@ -583,7 +594,17 @@ State lives in `oppositions` (`Opposition` with an `a` and a `b` `Contestant`); 
 swap target mounted on all three screens, so a contest never disturbs the challenge board or the
 solo board. Not undoable, like the rest.
 
-**Who sees which roll** (user decision): the **GM** sees everything. **`/table`** sees every public
+**Layout** (user decision): `/table` (and the GM) get **`OppGrid`, a 2 × 2 grid** — one column per
+contestant, names on top, **framing in the first row and resolution in the second**, so the two
+checks being compared sit side by side; Ready / Roll go underneath. A **player sees only their own
+side** (`OppOwnSide`: name, framing, resolution, their controls) — never the other contestant's
+checks; the status line above still names who is being waited on and who won. Both layouts are
+built from the same `OppName` / `OppCheckCell` / `OppFooter` pieces. A finished contest also goes
+into the **table's history log** once the next one starts ("Mara vs Guard: stare down — Guard wins
+by a hair", accent border), ordered by its `seq` like everything else there.
+
+**Who sees which roll** (user decision): the **GM** sees every current roll (but **not the history
+log** — they read it on `/table`). **`/table`** sees every public
 roll — the current challenge and the challenge history log, the current opposition, and a solo roll
 once it is `public`. A **player** sees only rolls they are part of, and only the current one: the
 current challenge when `ch.charId` is theirs, the current opposition when their character is one of
@@ -698,13 +719,22 @@ control and shows a "Done" badge. None of these are undoable.
 - The player's board hides the joined character's ability line (they know their own values). The
   skill is not split between sides — it is a flat bonus on both — so `SkillBonusControls` and
   `/c/:id/challenge/skill-points` are gone.
-- The history log (GM and `/table`) is **one sentence per challenge** (user-specified format):
+- The history log is **on `/table` only** (user decision: the GM reads it there, so the GM screen
+  doesn't repeat it). It is **one sentence per challenge** (user-specified format):
   "Mara attempts to scale the wall (challenging) 7 and succeeds with +4". The tier in brackets is
   named from the GM's own difficulty (left out when the number isn't on the ladder); the number is
   the **effective** target (difficulty + circumstance); the margin is the **resolution's**
   (`math.resolution.difference`, so framing bonus, skill and exertion are all in it), "+0" on a
   bare success. Unrolled challenges stop after the number. The row keeps its green/red left border
   for success/failure; abilities, stakes and degrees are no longer listed there.
+- **Public solo rolls are in the same log** (user request): every solo roll whose visibility is
+  `public` gets a line — "Guard spots the rope (easy) 4 and succeeds with +6" (the GM's description,
+  or "Solo roll"; the tier, left out once a nudge moved the number off it; the opposition number;
+  the margin). GM-only ones never appear; **"Show the table" adds the line and "Hide again" takes it
+  back out**, so both solo routes also push the challenge board. Lines are ordered by `seq` — the
+  id of the event that created the challenge or rolled the solo roll — so a roll revealed later
+  keeps its place in time. Unlike challenges, the current solo roll is listed too (its card sits in
+  its own board, not above the log).
 
 
 ### 6.7 Client script (`public/app.js`)
