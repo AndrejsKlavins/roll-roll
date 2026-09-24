@@ -129,6 +129,8 @@ const APPROACH_WHEN: ApproachWhen[] = ['always', 'failure', 'choice']
  * - `lower_face` (Setup) — the player taps one die; it moves one face **down**. Only a die that
  *   can go lower is offered, and with none left the effect can't be activated at all. Whatever it
  *   buys (Setup's "Improved" on a later roll) is handled at the table, not by the app.
+ * - `max_face` (Perfect choice) — the player taps one die; it goes straight to the **top** face.
+ *   Only a die below the top face is offered, and with none left it can't be activated at all.
  *
  * Two of them are **two-step**: one effect, two taps that do different things (so `dice` does
  * not apply — they always ask for exactly the picks listed).
@@ -151,6 +153,7 @@ export type ApproachEffectKind =
   | 'raise_face'
   | 'set_face'
   | 'lower_face'
+  | 'max_face'
   | 'lower_raise'
   | 'match_highest'
   | 'discard_double'
@@ -171,6 +174,7 @@ const APPROACH_EFFECT_KINDS: ApproachEffectKind[] = [
   'raise_face',
   'set_face',
   'lower_face',
+  'max_face',
   'lower_raise',
   'match_highest',
   'discard_double',
@@ -194,6 +198,8 @@ const defaultEffectLabel = (kind: ApproachEffectKind, dice: number, toFace: numb
             ? `Set ${dice} ${plural(dice)} to face ${toFace}`
             : kind === 'lower_face'
               ? 'Lower one die a face'
+              : kind === 'max_face'
+              ? 'Set one die to its top face'
               : kind === 'lower_raise'
               ? 'Lower one die a face, raise another'
               : kind === 'match_highest'

@@ -385,6 +385,7 @@ challenges:
       when: choice
       effects:
         - { face: 1, kind: lower_face }
+        - { face: 2, kind: max_face }
     - id: tricky
       label: Tricky
       when: always
@@ -1445,6 +1446,46 @@ describe('Setup (lower_face): lower one die a face', () => {
     expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false)
     // One die lifted off the bottom, and it is available again.
     s.setDieFace(ch.id, null, 'framing', 0, 2, 'GM')
+    expect(s.approachState(s.currentChallenge()!)!.canActivate).toBe(true)
+  })
+})
+
+describe('Perfect choice (max_face): one die to its top face', () => {
+  test('Activate, then the tapped die goes to the top face, keeping its rank shift', async () => {
+    const { s, id, ch } = await challengeOnFace(2, 'canny')
+    expect(s.approachState(ch)!.effect!.kind).toBe('max_face')
+    s.setDieFace(ch.id, null, 'resolution', 0, 2, 'GM')
+    const before = snapshot(s)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.changeDieFace(ch.id, id, 0, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.resolution!
+    expect(after.faces![0]).toBe(6)
+    expect(after.dice[0]).toBe(before.dice[0]! + 4)
+    expect(after.changed![0]).toBe('maxed')
+    expect(s.approachState(s.currentChallenge()!)!.pending).toBe(false)
+    expect(s.changeDieFace(ch.id, id, 1, 'Mara')).toBe(false) // one die only
+  })
+
+  test('a framing die can be the one maxed; a die already at the top is not offered', async () => {
+    const { s, id, ch } = await challengeOnFace(2, 'canny')
+    s.setDieFace(ch.id, null, 'framing', 0, 6, 'GM')
+    s.setDieFace(ch.id, null, 'framing', 1, 3, 'GM')
+    s.activateApproach(ch.id, id, 'Mara')
+    const now = s.currentChallenge()!
+    expect(s.tweakableDie(now, 0, 'framing')).toBe(false)
+    expect(s.changeDieFace(ch.id, id, 0, 'Mara', 'framing')).toBe(false)
+    expect(s.changeDieFace(ch.id, id, 1, 'Mara', 'framing')).toBe(true)
+    expect(s.currentChallenge()!.framing!.faces![1]).toBe(6)
+  })
+
+  test('with every die at its top face it cannot be activated', async () => {
+    const { s, id, ch } = await challengeOnFace(2, 'canny')
+    for (const roll of ['framing', 'resolution'] as const) {
+      for (const i of [0, 1]) s.setDieFace(ch.id, null, roll, i, 6, 'GM')
+    }
+    expect(s.approachState(s.currentChallenge()!)!.canActivate).toBe(false)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false)
+    s.setDieFace(ch.id, null, 'resolution', 1, 5, 'GM')
     expect(s.approachState(s.currentChallenge()!)!.canActivate).toBe(true)
   })
 })

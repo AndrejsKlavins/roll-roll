@@ -54,7 +54,7 @@ export const APPROACH_DIE_SIDES = 6
  * 'raised'/'lowered' moved it one face, 'squashed' set it to a fixed face, 'matched' raised it to
  * the highest face on its own side, and 'copied' marks a twin an effect added.
  */
-export type DieMarker = 'raised' | 'squashed' | 'lowered' | 'matched' | 'copied' | 'set' | null
+export type DieMarker = 'raised' | 'squashed' | 'lowered' | 'matched' | 'copied' | 'set' | 'maxed' | null
 export type ChallengeSide = {
   faces?: number[]
   dice: number[]
@@ -1555,10 +1555,11 @@ export class Session {
     const effect = approachEffect(approach, ch.approachDie)
     // With effects configured the button applies one, so a blank face offers nothing. Without
     // them (Exquisite — effects still to come) only `choice` has a button at all.
-    // Setup lowers a die, so with every die already on its worst face there is nothing to do and
-    // it can't be activated (user decision).
+    // Setup lowers a die and Perfect choice maxes one, so with every die already at that end there
+    // is nothing to do and it can't be activated (user decision).
+    const needsMovableDie = effect?.kind === 'lower_face' || effect?.kind === 'max_face'
     const worthActivating = approach.effects.length
-      ? effectCanActivate(effect) && (effect!.kind !== 'lower_face' || ch.approachActivated || this.anyTweakableDie(ch))
+      ? effectCanActivate(effect) && (!needsMovableDie || ch.approachActivated || this.anyTweakableDie(ch))
       : approach.when === 'choice'
     return {
       approach,
@@ -1657,7 +1658,16 @@ export class Session {
     if (face === undefined) return false
     const { faces } = this.rules.challenges
     if (faces.length === 0) return true // no faces configured, so nothing to be at the end of
-    return this.stepOf(ch) === 'first' ? face > faces[0]!.value : face < faces.at(-1)!.value
+    return this.lowersNow(ch) ? face > faces[0]!.value : face < faces.at(-1)!.value
+  }
+
+  /**
+   * Whether the effect's next tap moves a die **down** (Setup, Tweak's first step) rather than up
+   * (Tweak's second step, Perfect choice's `max_face`) — which end a die must be off to be offered.
+   */
+  private lowersNow(ch: Challenge) {
+    const kind = this.approachEffectOf(ch)?.kind
+    return kind === 'lower_face' || (kind === 'lower_raise' && this.stepOf(ch) === 'first')
   }
 
   /** Whether any die on the board — either roll — is still a legal target for Tweak's current step. */
@@ -1703,24 +1713,33 @@ export class Session {
    * the die then carries no marker because nothing moved.
    */
   changeDieFace(challengeId: string, charId: string, index: number, by: string, roll: ChallengeRoll = 'resolution') {
-    const pending = this.pendingEffect(challengeId, charId, ['raise_face', 'set_face', 'lower_raise', 'lower_face'])
+    const pending = this.pendingEffect(challengeId, charId, ['raise_face', 'set_face', 'lower_raise', 'lower_face', 'max_face'])
     const rolled = pending && this.pickableDie(pending.ch, roll, index)
     if (!pending || !rolled?.faces) return false
     const was = rolled.faces[index]!
     const { kind } = pending.effect
     // Tweak (`lower_raise`) lowers on its first pick and raises on its second, and refuses a die
     // that is already at the end it would move toward (see tweakableDie).
-    // Setup (`lower_face`) only ever lowers, under the same rule.
-    const onlyMovable = kind === 'lower_raise' || kind === 'lower_face'
+    // Setup (`lower_face`) only ever lowers, and Perfect choice (`max_face`) only ever maxes,
+    // under the same rule.
+    const onlyMovable = kind === 'lower_raise' || kind === 'lower_face' || kind === 'max_face'
     if (onlyMovable && !this.tweakableDie(pending.ch, index, roll)) return false
-    const lowering = kind === 'lower_face' || (kind === 'lower_raise' && this.stepOf(pending.ch) === 'first')
+    const lowering = this.lowersNow(pending.ch)
     const face = lowering
       ? Math.max(this.bottomFace(was), was - 1)
       : kind === 'set_face'
         ? pending.effect.toFace
-        : Math.min(this.topFace(was), was + 1)
+        : kind === 'max_face'
+          ? this.topFace(6)
+          : Math.min(this.topFace(was), was + 1)
     const shift = rolled.dice[index]! - was
-    const moved: DieMarker = lowering ? 'lowered' : kind === 'set_face' ? 'squashed' : 'raised'
+    const moved: DieMarker = lowering
+      ? 'lowered'
+      : kind === 'set_face'
+        ? 'squashed'
+        : kind === 'max_face'
+          ? 'maxed'
+          : 'raised'
     const marker: DieMarker = face === was ? null : moved
     this.append({
       type: 'challenge_face_changed',

@@ -123,7 +123,9 @@ const markerLabel = (marker: NonNullable<DieMarker>) =>
           ? 'Copy'
           : marker === 'set'
             ? 'Set'
-            : 'Squashed'
+            : marker === 'maxed'
+              ? 'Max'
+              : 'Squashed'
 
 /**
  * The challenge's one difficulty — "Difficulty", the number, and its tier — sitting beside the
@@ -527,7 +529,9 @@ function ApproachDie(props: {
               ? skipped
               : effect.kind === 'lower_face' && !state.canActivate
                 ? "Can't be used — every die is at its worst face"
-                : null
+                : effect.kind === 'max_face' && !state.canActivate
+                  ? "Can't be used — every die is already at its top face"
+                  : null
   const cls = ['approach-die', `approach-${state.status}`, pending && 'approach-pending'].filter(Boolean).join(' ')
   return (
     <div class={cls}>
@@ -622,6 +626,7 @@ function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, 
     return step === 'first' ? `${who} a die to lower it one face` : `${who} another die to raise it one face`
   }
   if (effect.kind === 'lower_face') return `${who} a die to lower it one face`
+  if (effect.kind === 'max_face') return `${who} a die to set it to its top face`
   if (effect.kind === 'extra_dice') {
     const extra = effect.dice === 1 ? 'the extra die' : `the ${effect.dice} extra dice`
     return acting ? `Pick the roll ${extra} join` : `Player picks the roll ${extra} join`
@@ -841,6 +846,11 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
     // Setup: one die down a face; a die already on the worst face isn't offered.
     if (pendingKind === 'lower_face') {
       const tapper = tap('face-change', 'face', 'Lower this die one face')
+      return (index: number) => (session.tweakableDie(ch, index, roll) ? tapper(index) : undefined)
+    }
+    // Perfect choice: one die to its top face; a die already there isn't offered.
+    if (pendingKind === 'max_face') {
+      const tapper = tap('face-change', 'face', 'Set this die to its top face')
       return (index: number) => (session.tweakableDie(ch, index, roll) ? tapper(index) : undefined)
     }
     if (pendingKind === 'lower_raise') {

@@ -451,7 +451,8 @@ the moment Activate is pressed. `extra_dice` goes onto **one** roll, which **the
 | `lower_face` | tap **one** die (either roll); it moves one face **down**, marker `lowered`. Only a die that can go lower is offered (`tweakableDie`), and with **every die on its worst face there is no Activate button** — the status reads "Can't be used — every die is at its worst face" (user decision). What Setup buys — **"Improved"** on the next roll that uses the lowered die's ability, letting the player set any die to max — is **handled at the table, not by the app** (user decision); the label says so | Exquisite 4/5 (Setup) |
 | `lower_raise` | **two steps**: tap a die to lower it one face, then *another* to raise it one face | Exquisite 2/3 (Tweak) |
 | `match_highest` | **nothing to tap**: on each roll, its **lowest** die rises to the face of its own **highest** | none right now (was Exquisite 4, Perfect balance); the kind still works |
-| `discard_double` | **two steps**: tap a die to discard it, then *another* to copy (the twin joins the roll and counts) | Exquisite 6 (Perfect choice) |
+| `max_face` | tap **one** die (either roll); it goes straight to the **top** face, keeping its rank shift, marker `maxed` ("Max"). Only a die below the top face is offered, and with **every die already at the top there is no Activate button** ("Can't be used — every die is already at its top face") — the same rule as Setup, the other way up | Exquisite 6 (Perfect choice) |
+| `discard_double` | **two steps**: tap a die to discard it, then *another* to copy (the twin joins the roll and counts) | none right now (was Exquisite 5/6, the old Perfect choice); the kind still works |
 
 Any **cost is settled at the table** — the app never deducts one (user decision); the rules.yaml
 labels say so and nothing is spent automatically.
@@ -464,7 +465,7 @@ surfaced on `approachState` as `step` so the board and the session agree on one 
 | face | effect | first pick | second pick |
 |---|---|---|---|
 | Exquisite 2/3 | Tweak (`lower_raise`) | tap a die → one face **down**, marker `lowered` | tap another → one face **up**, marker `raised` |
-| Exquisite 6 | Perfect choice (`discard_double`) | tap a die → discarded (as `discard`) | tap another → a twin joins the roll, marker `copied` |
+| (unused) | `discard_double` | tap a die → discarded (as `discard`) | tap another → a twin joins the roll, marker `copied` |
 
 Decisions inside those: Tweak **only offers a die that has somewhere to go** (user decision) — one
 already on the **worst** face cannot be lowered and one on the **best** face cannot be raised, since
@@ -480,7 +481,8 @@ nothing when the dice already match. Perfect choice **doubles by copying** (user
 carries the tapped die's face *and* its rank-shifted value and joins **that die's own roll**, and
 the one-pick-per-die rule keeps it off the die just discarded.
 
-`DieMarker` therefore has five values (`raised`, `lowered`, `squashed`, `matched`, `copied`), named
+`DieMarker` has `raised`, `lowered`, `squashed`, `matched`, `copied`, `maxed` (Perfect choice) and
+`set` (the hand-edit Set die), named
 under the die by `markerLabel`; `lowered` reads in red and `copied` in purple, since neither is a
 plain bonus. Copies ride on `challenge_dice_added`, which carries an optional `markers[]` (what to
 show under each added die) and `from` (the index copied, so the pick is spent on that die —

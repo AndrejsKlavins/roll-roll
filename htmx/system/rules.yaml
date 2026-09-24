@@ -135,7 +135,7 @@ challenges:
         # is tracked at the table; the app only enforces the lowering.
         - { face: 4, kind: lower_face,     label: "Setup — lower a die one face; your next roll with that ability is Improved (set any die to max)" }
         - { face: 5, kind: lower_face,     label: "Setup — lower a die one face; your next roll with that ability is Improved (set any die to max)" }
-        - { face: 6, kind: discard_double, label: "Perfect choice — discard one die, copy another" }
+        - { face: 6, kind: max_face,       label: "Perfect choice — set one die to its maximum" }
     - id: limitless
       label: Limitless
       when: always
