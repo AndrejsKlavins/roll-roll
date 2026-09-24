@@ -525,7 +525,9 @@ function ApproachDie(props: {
               : 'Done'
             : state.status === 'skipped'
               ? skipped
-              : null
+              : effect.kind === 'lower_face' && !state.canActivate
+                ? "Can't be used — every die is at its worst face"
+                : null
   const cls = ['approach-die', `approach-${state.status}`, pending && 'approach-pending'].filter(Boolean).join(' ')
   return (
     <div class={cls}>
@@ -619,6 +621,7 @@ function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, 
   if (effect.kind === 'lower_raise') {
     return step === 'first' ? `${who} a die to lower it one face` : `${who} another die to raise it one face`
   }
+  if (effect.kind === 'lower_face') return `${who} a die to lower it one face`
   if (effect.kind === 'extra_dice') {
     const extra = effect.dice === 1 ? 'the extra die' : `the ${effect.dice} extra dice`
     return acting ? `Pick the roll ${extra} join` : `Player picks the roll ${extra} join`
@@ -835,6 +838,11 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
     }
     // Tweak: the first tap lowers a die, the second raises another. A die already on the worst
     // face (lowering) or the best one (raising) has nowhere to go, so it is not offered at all.
+    // Setup: one die down a face; a die already on the worst face isn't offered.
+    if (pendingKind === 'lower_face') {
+      const tapper = tap('face-change', 'face', 'Lower this die one face')
+      return (index: number) => (session.tweakableDie(ch, index, roll) ? tapper(index) : undefined)
+    }
     if (pendingKind === 'lower_raise') {
       const lowering = approach!.step === 'first'
       const tapper = tap('face-change', 'face', lowering ? 'Lower this die one face' : 'Raise this die one face')

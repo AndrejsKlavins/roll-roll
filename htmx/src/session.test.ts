@@ -380,6 +380,11 @@ challenges:
         - { face: 4, kind: match_highest }
         - { face: 5, kind: discard_double }
         - { face: 6, kind: discard_double }
+    - id: canny
+      label: Canny
+      when: choice
+      effects:
+        - { face: 1, kind: lower_face }
     - id: tricky
       label: Tricky
       when: always
@@ -1389,6 +1394,58 @@ describe('solo roll', () => {
     expect(replayed.description).toBe('Guard patrol') // trimmed on the way in
     expect(replayed.tier).toBeNull() // 11 is not the Easy value
     expect(replayed.visibility).toBe('public')
+  })
+})
+
+describe('Setup (lower_face): lower one die a face', () => {
+  test('Activate, then the tapped die drops one face, keeping its rank shift', async () => {
+    const { s, id, ch } = await challengeOnFace(1, 'canny')
+    const state = s.approachState(ch)!
+    expect(state.effect!.kind).toBe('lower_face')
+    // Make sure the resolution's first die can go lower.
+    if (ch.resolution!.faces![0] === 1) s.setDieFace(ch.id, null, 'resolution', 0, 4, 'GM')
+    const before = snapshot(s)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.approachPicksLeft).toBe(1)
+    expect(s.changeDieFace(ch.id, id, 0, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.resolution!
+    expect(after.faces![0]).toBe(before.faces[0]! - 1)
+    expect(after.dice[0]).toBe(before.dice[0]! - 1)
+    expect(after.changed![0]).toBe('lowered')
+    expect(s.approachState(s.currentChallenge()!)!.pending).toBe(false)
+    expect(s.changeDieFace(ch.id, id, 1, 'Mara')).toBe(false) // one die only
+  })
+
+  test('a framing die can be the one lowered', async () => {
+    const { s, id, ch } = await challengeOnFace(1, 'canny')
+    s.setDieFace(ch.id, null, 'framing', 1, 5, 'GM')
+    s.activateApproach(ch.id, id, 'Mara')
+    expect(s.changeDieFace(ch.id, id, 1, 'Mara', 'framing')).toBe(true)
+    expect(s.currentChallenge()!.framing!.faces![1]).toBe(4)
+  })
+
+  test('a die already on the worst face is not offered', async () => {
+    const { s, id, ch } = await challengeOnFace(1, 'canny')
+    s.setDieFace(ch.id, null, 'resolution', 0, 1, 'GM')
+    s.setDieFace(ch.id, null, 'resolution', 1, 4, 'GM')
+    s.activateApproach(ch.id, id, 'Mara')
+    const now = s.currentChallenge()!
+    expect(s.tweakableDie(now, 0)).toBe(false)
+    expect(s.changeDieFace(ch.id, id, 0, 'Mara')).toBe(false)
+    expect(s.tweakableDie(now, 1)).toBe(true)
+  })
+
+  test('with every die on its worst face it cannot be activated', async () => {
+    const { s, id, ch } = await challengeOnFace(1, 'canny')
+    for (const roll of ['framing', 'resolution'] as const) {
+      for (const i of [0, 1]) s.setDieFace(ch.id, null, roll, i, 1, 'GM')
+    }
+    const state = s.approachState(s.currentChallenge()!)!
+    expect(state.canActivate).toBe(false)
+    expect(s.activateApproach(ch.id, id, 'Mara')).toBe(false)
+    // One die lifted off the bottom, and it is available again.
+    s.setDieFace(ch.id, null, 'framing', 0, 2, 'GM')
+    expect(s.approachState(s.currentChallenge()!)!.canActivate).toBe(true)
   })
 })
 

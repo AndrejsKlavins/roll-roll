@@ -1555,7 +1555,11 @@ export class Session {
     const effect = approachEffect(approach, ch.approachDie)
     // With effects configured the button applies one, so a blank face offers nothing. Without
     // them (Exquisite — effects still to come) only `choice` has a button at all.
-    const worthActivating = approach.effects.length ? effectCanActivate(effect) : approach.when === 'choice'
+    // Setup lowers a die, so with every die already on its worst face there is nothing to do and
+    // it can't be activated (user decision).
+    const worthActivating = approach.effects.length
+      ? effectCanActivate(effect) && (effect!.kind !== 'lower_face' || ch.approachActivated || this.anyTweakableDie(ch))
+      : approach.when === 'choice'
     return {
       approach,
       die: ch.approachDie,
@@ -1638,13 +1642,14 @@ export class Session {
   }
 
   /**
-   * Whether Tweak (`lower_raise`) may be pointed at this die right now. On top of being pickable,
+   * Whether Tweak (`lower_raise`) or Setup (`lower_face`) may be pointed at this die right now. On top of being pickable,
    * the die must have somewhere to go: **a die on the worst face cannot be lowered and one on the
    * best face cannot be raised** (user decision), because that tap would spend the pick and move
    * nothing. The board asks this before making a die a button, so those dice are never offered.
    *
-   * Only Tweak works this way — `raise_face` (Unbreakable) still spends its pick on a top-face die
-   * by an earlier decision, and its prompt counts those taps down.
+   * Setup always lowers, so it is the "first step" rule throughout (effectStep is 'first' for a
+   * single-pick kind). `raise_face` (Unbreakable) doesn't work this way — it still spends its pick
+   * on a top-face die by an earlier decision, and its prompt counts those taps down.
    */
   tweakableDie(ch: Challenge, index: number, roll: ChallengeRoll = 'resolution') {
     if (!this.pickableDie(ch, roll, index)) return false
@@ -1698,15 +1703,17 @@ export class Session {
    * the die then carries no marker because nothing moved.
    */
   changeDieFace(challengeId: string, charId: string, index: number, by: string, roll: ChallengeRoll = 'resolution') {
-    const pending = this.pendingEffect(challengeId, charId, ['raise_face', 'set_face', 'lower_raise'])
+    const pending = this.pendingEffect(challengeId, charId, ['raise_face', 'set_face', 'lower_raise', 'lower_face'])
     const rolled = pending && this.pickableDie(pending.ch, roll, index)
     if (!pending || !rolled?.faces) return false
     const was = rolled.faces[index]!
     const { kind } = pending.effect
     // Tweak (`lower_raise`) lowers on its first pick and raises on its second, and refuses a die
     // that is already at the end it would move toward (see tweakableDie).
-    if (kind === 'lower_raise' && !this.tweakableDie(pending.ch, index, roll)) return false
-    const lowering = kind === 'lower_raise' && this.stepOf(pending.ch) === 'first'
+    // Setup (`lower_face`) only ever lowers, under the same rule.
+    const onlyMovable = kind === 'lower_raise' || kind === 'lower_face'
+    if (onlyMovable && !this.tweakableDie(pending.ch, index, roll)) return false
+    const lowering = kind === 'lower_face' || (kind === 'lower_raise' && this.stepOf(pending.ch) === 'first')
     const face = lowering
       ? Math.max(this.bottomFace(was), was - 1)
       : kind === 'set_face'

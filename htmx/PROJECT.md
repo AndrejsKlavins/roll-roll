@@ -290,6 +290,15 @@ Notes:
 - Field name and value use the field's colour (`--field-color`). Number rows use `flex-wrap`, so an open row moves its controls to a second line on phones (rated steppers are wide).
 - Active base fields (`BaseField`): the base value is **not** shown by default (user request). While the row is open, "base N" (+ "reset" when modified) appears under the name; when closed, a modified value gets a small ▲/▼ marker (title shows base).
 - Base fields have two steppers: `.play` (posts `/adjust`) and `.base-edit` (posts `/adjust-base`).
+- **Compact sections** (user request, for Bio): a section with `compact: true` in rules.yaml shows,
+  **on the player's own sheet only**, as one row — its values in order, joined with " · " (text as
+  written, empty ones left out, the level as "Level N", numbers as "Label value"; each titled with
+  its label) — plus **✎ Edit**, which opens the usual fields (Level up included) and turns into
+  **Done**. Alpine state `editing` on the fieldset; it starts **open while the character is in
+  creation**, since that is when Bio gets filled in. The GM's sheets always show the section in
+  full. `CompactSummary` has its own id (`compact-<charId>-<sectionIndex>`), and the player-side
+  pushes for field, stat, trait and training changes append `compactSummaries()` so the row follows
+  edits and level-ups live.
 - "✎ Base" toggle is Alpine state on the `<section>` (`x-data="{ editBase: false }"`, class `editing-base`); CSS shows base steppers directly on base rows (hiding value, marker and edit toggle) and a sticky purple "Editing base values" banner. Field oob swaps don't reset the mode (the section isn't replaced); whole-sheet pushes (undo, finalize) do.
 
 ### 6.6c Challenges (`views/challenge.tsx`)
@@ -439,9 +448,10 @@ the moment Activate is pressed. `extra_dice` goes onto **one** roll, which **the
 | `extra_dice` | **pick a roll** (one button per roll under the approach die): `dice` more dice join it, rolled at that roll's ability rank. With framing skipped there is no choice, so they go straight onto the resolution on Activate | Limitless 4/5 (1), 6 (2) |
 | `raise_face` | tap `dice` dice; each moves one face up. A die already on the **top face stays put** and the pick is still spent (user decision), so it gets no marker | Unbreakable 3/4 (2 dice) |
 | `set_face` | tap `dice` dice; each is set to `to_face`, **up or down** (user decision — a good die may be lowered) | Unbreakable 5/6 (2 dice → face 3) |
+| `lower_face` | tap **one** die (either roll); it moves one face **down**, marker `lowered`. Only a die that can go lower is offered (`tweakableDie`), and with **every die on its worst face there is no Activate button** — the status reads "Can't be used — every die is at its worst face" (user decision). What Setup buys — **"Improved"** on the next roll that uses the lowered die's ability, letting the player set any die to max — is **handled at the table, not by the app** (user decision); the label says so | Exquisite 4/5 (Setup) |
 | `lower_raise` | **two steps**: tap a die to lower it one face, then *another* to raise it one face | Exquisite 2/3 (Tweak) |
-| `match_highest` | **nothing to tap**: on each roll, its **lowest** die rises to the face of its own **highest** | Exquisite 4 (Perfect balance) |
-| `discard_double` | **two steps**: tap a die to discard it, then *another* to copy (the twin joins the roll and counts) | Exquisite 5/6 (Perfect choice) |
+| `match_highest` | **nothing to tap**: on each roll, its **lowest** die rises to the face of its own **highest** | none right now (was Exquisite 4, Perfect balance); the kind still works |
+| `discard_double` | **two steps**: tap a die to discard it, then *another* to copy (the twin joins the roll and counts) | Exquisite 6 (Perfect choice) |
 
 Any **cost is settled at the table** — the app never deducts one (user decision); the rules.yaml
 labels say so and nothing is spent automatically.
@@ -454,8 +464,7 @@ surfaced on `approachState` as `step` so the board and the session agree on one 
 | face | effect | first pick | second pick |
 |---|---|---|---|
 | Exquisite 2/3 | Tweak (`lower_raise`) | tap a die → one face **down**, marker `lowered` | tap another → one face **up**, marker `raised` |
-| Exquisite 4 | Perfect balance (`match_highest`) | — applied on Activate, marker `matched` | — |
-| Exquisite 5/6 | Perfect choice (`discard_double`) | tap a die → discarded (as `discard`) | tap another → a twin joins the roll, marker `copied` |
+| Exquisite 6 | Perfect choice (`discard_double`) | tap a die → discarded (as `discard`) | tap another → a twin joins the roll, marker `copied` |
 
 Decisions inside those: Tweak **only offers a die that has somewhere to go** (user decision) — one
 already on the **worst** face cannot be lowered and one on the **best** face cannot be raised, since

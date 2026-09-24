@@ -9,7 +9,7 @@
 // open when the row itself is replaced by a live update.
 import { raw } from 'hono/html'
 import type { Child } from 'hono/jsx'
-import type { Derived, Field, LevelItem, NumberField, Trait, TraitCategory } from '../rules'
+import type { Derived, Field, LevelItem, NumberField, Section, Trait, TraitCategory } from '../rules'
 import { isBaseField, MAX_TRAITS, PLAY_MAX, type Character, type Session } from '../session'
 
 const oobAttr = (oob?: boolean) => (oob ? 'true' : undefined)
@@ -652,6 +652,45 @@ export function SheetHead(props: { session: Session; char: Character; oob?: bool
   )
 }
 
+/**
+ * One compact section's summary row: its values in order, each titled with its field's label.
+ * Text shows as written (empty ones are left out), the level as "Level N", numbers and tracks as
+ * "Label value". Its own id so a field change can re-push just this line (compactSummaries).
+ */
+export function CompactSummary(props: { session: Session; char: Character; section: Section; index: number; oob?: boolean }) {
+  const { session, char, section } = props
+  const parts = section.fields.flatMap((f) => {
+    if (f.type === 'level') return [{ label: f.label, text: `${f.label} ${char.level}` }]
+    if (f.type === 'derived') return []
+    const value = String(session.valueOf(char, f) ?? '').trim()
+    if (!value) return []
+    return [{ label: f.label, text: f.type === 'text' ? value : `${f.label} ${value}` }]
+  })
+  return (
+    <span id={`compact-${char.id}-${props.index}`} class="compact-summary" x-show="!editing" hx-swap-oob={oobAttr(props.oob)}>
+      {parts.length === 0 ? (
+        <span class="muted">Nothing filled in yet</span>
+      ) : (
+        parts.map((p, i) => (
+          <>
+            {i > 0 && <span class="compact-sep"> · </span>}
+            <span title={p.label}>{p.text}</span>
+          </>
+        ))
+      )}
+    </span>
+  )
+}
+
+/** Every compact section's summary for this character, as out-of-band swaps (player screen only). */
+export function compactSummaries(session: Session, char: Character) {
+  return session.rules.sections
+    .map((section, index) =>
+      section.compact ? String(<CompactSummary session={session} char={char} section={section} index={index} oob />) : '',
+    )
+    .join('')
+}
+
 /** GM-only line in Manage: level and skill points, kept current by live updates. */
 export function ManagePoints(props: { session: Session; char: Character; oob?: boolean }) {
   const { session, char } = props
@@ -728,27 +767,59 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
 
       <TraitsSection session={session} char={char} />
 
-      {rules.sections.map((s) => (
-        <fieldset>
-          <legend>{s.label}</legend>
-          {session.rules.training &&
-            s.fields.some((f) => f.type === 'number' && f.trained) &&
-            (draft ? (
-              <p class="stage-note">Skills are trained with skill points once the character is finished.</p>
-            ) : (
-              <TrainBar session={session} char={char} />
-            ))}
-          {s.fields.map((f) =>
-            f.type === 'derived' ? (
-              <DerivedRow session={session} char={char} derived={f} />
-            ) : f.type === 'level' ? (
-              <LevelRow session={session} char={char} item={f} />
-            ) : (
-              <FieldView session={session} char={char} field={f} />
-            ),
-          )}
-        </fieldset>
-      ))}
+      {rules.sections.map((s, i) => {
+        const body = (
+          <>
+            {session.rules.training &&
+              s.fields.some((f) => f.type === 'number' && f.trained) &&
+              (draft ? (
+                <p class="stage-note">Skills are trained with skill points once the character is finished.</p>
+              ) : (
+                <TrainBar session={session} char={char} />
+              ))}
+            {s.fields.map((f) =>
+              f.type === 'derived' ? (
+                <DerivedRow session={session} char={char} derived={f} />
+              ) : f.type === 'level' ? (
+                <LevelRow session={session} char={char} item={f} />
+              ) : (
+                <FieldView session={session} char={char} field={f} />
+              ),
+            )}
+          </>
+        )
+        // A compact section on the player's own sheet (user decision): one summary row, and ✎
+        // opens the usual fields. Open from the start while the character is still in creation,
+        // since that is when those fields get filled in. The GM always sees it in full.
+        if (s.compact && !props.gm) {
+          return (
+            <fieldset class="compact-section" x-data={`{ editing: ${draft} }`}>
+              <legend>{s.label}</legend>
+              <div class="compact-row">
+                <CompactSummary session={session} char={char} section={s} index={i} />
+                <button
+                  type="button"
+                  class="small compact-edit"
+                  x-on:click="editing = !editing"
+                  x-text="editing ? 'Done' : '✎ Edit'"
+                  title={`Edit ${s.label.toLowerCase()}`}
+                >
+                  {draft ? 'Done' : '✎ Edit'}
+                </button>
+              </div>
+              <div class="compact-fields" x-show="editing" x-cloak={!draft || undefined}>
+                {body}
+              </div>
+            </fieldset>
+          )
+        }
+        return (
+          <fieldset>
+            <legend>{s.label}</legend>
+            {body}
+          </fieldset>
+        )
+      })}
 
       <DerivedView session={session} char={char} />
 

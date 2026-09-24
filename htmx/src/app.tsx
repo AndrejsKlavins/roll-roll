@@ -8,7 +8,17 @@ import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from 
 import { ChallengeBoard, ChallengePlayerPicker, OppositionBoard, SoloRollBoard } from './views/challenge'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
-import { DerivedUpdates, FieldView, LevelRow, ManagePoints, Sheet, SheetHead, TrainBar, TraitsSection } from './views/sheet'
+import {
+  compactSummaries,
+  DerivedUpdates,
+  FieldView,
+  LevelRow,
+  ManagePoints,
+  Sheet,
+  SheetHead,
+  TrainBar,
+  TraitsSection,
+} from './views/sheet'
 
 const CHAR_COOKIE = 'char'
 const html = (node: Child) => String(node ?? '')
@@ -47,7 +57,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       html(<FieldView session={session} char={char} field={field} oob />) +
       html(<DerivedUpdates session={session} char={char} />)
     hub.send(toOwnerAndGm(char.id), (client) =>
-      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
+      // Compact sections' summary rows are on the player's own sheet only, so only they get them.
+      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts + compactSummaries(session, char),
     )
   }
 
@@ -150,7 +161,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   const pushStatChange = (char: Character) => {
     const parts = html(<DerivedUpdates session={session} char={char} />)
     hub.send(toOwnerAndGm(char.id), (client) =>
-      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
+      // Compact sections' summary rows are on the player's own sheet only, so only they get them.
+      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts + compactSummaries(session, char),
     )
   }
 
@@ -184,7 +196,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     hub.send(toOwnerAndGm(char.id), (client) =>
       client.role === 'gm'
         ? parts + html(<ManagePoints session={session} char={char} oob />) + html(<ChangeLog session={session} oob />)
-        : parts,
+        : parts + compactSummaries(session, char), // the level shows in a compact summary
     )
   }
 
@@ -218,7 +230,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       html(<TraitsSection session={session} char={char} oob />) +
       html(<DerivedUpdates session={session} char={char} />)
     hub.send(toOwnerAndGm(char.id), (client) =>
-      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts,
+      // Compact sections' summary rows are on the player's own sheet only, so only they get them.
+      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts + compactSummaries(session, char),
     )
   }
 

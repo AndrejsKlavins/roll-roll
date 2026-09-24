@@ -47,7 +47,12 @@ export type Derived = Look & {
 /** The character's level with a Level up button (type: level). Needs "training:". */
 export type LevelItem = Look & { id: string; label: string; type: 'level' }
 export type SectionItem = Field | Derived | LevelItem
-export type Section = { label: string; fields: SectionItem[] }
+/**
+ * `compact`: on the player's own sheet the section collapses to one summary row (its values, in
+ * order) with an ✎ button that opens the usual editable fields. The GM's sheets always show it
+ * in full.
+ */
+export type Section = { label: string; fields: SectionItem[]; compact: boolean }
 export type RollDef = { id: string; label: string; dice: string }
 
 /** base: value is fixed when the character is finished (untrained) or set by trained points. */
@@ -121,6 +126,9 @@ const APPROACH_WHEN: ApproachWhen[] = ['always', 'failure', 'choice']
  * - `raise_face` — the player taps `dice` dice; each moves one face up (a die already on the
  *   top face stays put and the pick is spent).
  * - `set_face` — the player taps `dice` dice; each is set to `toFace`, up or down.
+ * - `lower_face` (Setup) — the player taps one die; it moves one face **down**. Only a die that
+ *   can go lower is offered, and with none left the effect can't be activated at all. Whatever it
+ *   buys (Setup's "Improved" on a later roll) is handled at the table, not by the app.
  *
  * Two of them are **two-step**: one effect, two taps that do different things (so `dice` does
  * not apply — they always ask for exactly the picks listed).
@@ -142,6 +150,7 @@ export type ApproachEffectKind =
   | 'extra_dice'
   | 'raise_face'
   | 'set_face'
+  | 'lower_face'
   | 'lower_raise'
   | 'match_highest'
   | 'discard_double'
@@ -161,6 +170,7 @@ const APPROACH_EFFECT_KINDS: ApproachEffectKind[] = [
   'extra_dice',
   'raise_face',
   'set_face',
+  'lower_face',
   'lower_raise',
   'match_highest',
   'discard_double',
@@ -182,7 +192,9 @@ const defaultEffectLabel = (kind: ApproachEffectKind, dice: number, toFace: numb
           ? `Raise ${dice} ${plural(dice)} one face`
           : kind === 'set_face'
             ? `Set ${dice} ${plural(dice)} to face ${toFace}`
-            : kind === 'lower_raise'
+            : kind === 'lower_face'
+              ? 'Lower one die a face'
+              : kind === 'lower_raise'
               ? 'Lower one die a face, raise another'
               : kind === 'match_highest'
                 ? 'The lowest die rises to the highest'
@@ -381,6 +393,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   let levelItem: LevelItem | undefined
   const sections: Section[] = (raw?.sections ?? []).map((s: any, si: number) => ({
     label: String(s?.label ?? `Section ${si + 1}`),
+    compact: s?.compact === true,
     fields: (s?.fields ?? []).flatMap((f: any, fi: number): SectionItem[] => {
       const where = `sections[${si}].fields[${fi}]`
       if (!checkId(f?.id, where)) return []
