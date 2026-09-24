@@ -384,6 +384,16 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .roll-box-head .field-icon { flex-shrink: 0; width: 24px; height: 24px; border-radius: 6px; }
 .roll-box-head .field-icon svg, .roll-box-head .field-icon img { width: 15px; height: 15px; }
 .roll-ability { min-width: 0; overflow-wrap: break-word; font-weight: 700; color: var(--field-color, var(--text)); }
+/* GM / rolling player hand edits on one roll: −1, +1, Set die — pushed to the header's right. */
+.roll-edit { margin-left: auto; display: flex; gap: 0.25rem; }
+.roll-edit-btn { min-height: 30px; padding: 0.1rem 0.5rem; font-size: 0.75rem; font-weight: 700; color: var(--muted); }
+.roll-edit-btn.on { color: var(--accent); border-color: var(--accent); }
+/* Set die value: the prompt, then one row of faces (named and coloured) for the tapped die. */
+.set-die { margin: -0.2rem 0 0.6rem; }
+.set-die-prompt { margin: 0; text-align: center; color: var(--accent); font-size: 0.8rem; font-weight: 600; }
+.set-die-faces { display: flex; flex-wrap: wrap; gap: 0.3rem; justify-content: center; }
+.set-die-face { min-height: 30px; padding: 0.1rem 0.5rem; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--face-color, var(--text)); border-color: color-mix(in srgb, var(--face-color, var(--line)) 55%, var(--line)); }
+.die-picked .die-face { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
 
 .roll-waiting { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.8rem; font-style: italic; }
 /* A roll box's own footer: the framing rung it landed on, or the resolution's success/degrees. */
@@ -420,6 +430,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .equation-bonus-label .field-icon svg, .equation-bonus-label .field-icon img { width: 11px; height: 11px; }
 .equation-bonus.skill .equation-bonus-value { color: var(--accent); }
 .equation-bonus.exertion .equation-bonus-value { color: var(--secret); }
+.equation-bonus.custom .equation-bonus-value { color: var(--text); }
 .equation-bonus.help .equation-bonus-value { color: #5cc27a; }
 .equation-bonus.hinder .equation-bonus-value { color: var(--danger); }
 /* Each die: square with the number, its name underneath, both in the face's colour. */
@@ -433,6 +444,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 /* Lowering a die is the cost side of Tweak, so it does not read as a bonus; a copy is new dice. */
 .die-changed-lowered { color: var(--danger); }
 .die-changed-copied { color: var(--secret); }
+.die-changed-set { color: var(--muted); }
 /* The attempt's total, in the ability's colour like the target above it — same size as the
    difficulty number (user decision), so the two read as directly comparable. */
 .difficulty-sum { font-size: 2.75rem; font-weight: 800; line-height: 1.1; color: var(--field-color, var(--text)); }

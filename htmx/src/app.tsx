@@ -513,6 +513,31 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // Hand edits on one roll of the current challenge, shared by the GM and the rolling player:
+  // the "custom" ±1 and "Set die value". `charId` null is the GM; the session checks who may.
+  const rollOf = (c: Context) => (c.req.query('roll') === 'framing' ? 'framing' : 'resolution')
+  const customRoute = (c: Context, charId: string | null) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    if (session.adjustCustom(ch.id, charId, rollOf(c), Number(c.req.query('delta')), actorName(c))) pushChallenge()
+    return noContent(c)
+  }
+  const setDieRoute = (c: Context, charId: string | null) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    const [index, face] = [Number(c.req.query('index')), Number(c.req.query('face'))]
+    if (session.setDieFace(ch.id, charId, rollOf(c), index, face, actorName(c))) pushChallenge()
+    return noContent(c)
+  }
+  app.post('/gm/challenge/custom', (c) => customRoute(c, null))
+  app.post('/gm/challenge/set-die', (c) => setDieRoute(c, null))
+  app.post('/c/:id/challenge/custom', (c) =>
+    session.characters.has(c.req.param('id')) ? customRoute(c, c.req.param('id')) : c.notFound(),
+  )
+  app.post('/c/:id/challenge/set-die', (c) =>
+    session.characters.has(c.req.param('id')) ? setDieRoute(c, c.req.param('id')) : c.notFound(),
+  )
+
   app.post('/gm/challenge/done', (c) => {
     const ch = session.currentChallenge()
     if (!ch) return c.notFound()

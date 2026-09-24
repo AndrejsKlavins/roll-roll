@@ -641,6 +641,25 @@ chosen (a faint purple ring marks them, since phones have no hover). Repeatable 
 Every reroll — exertion or approach — is counted per die in `ChallengeSide.rerolled[i]` and shown
 under that die as **"Reroll N"**, so the table can see a 1 that was bought three times.
 
+**Hand edits** (user-designed): once a challenge is rolled and until it is closed, **each roll box**
+(framing and resolution) carries **−1 / +1 / Set die** in its header, for **the GM and the rolling
+player** (not other players, not `/table`). Routes: `/gm/challenge/custom|set-die` and
+`/c/:id/challenge/custom|set-die`, both `?roll=framing|resolution`; the session's
+`editableChallenge(id, charId | null)` decides who may (null = the GM).
+- **±1** → `challenge_custom_set` (stores the **whole new value**, like the circumstance) into
+  `customFraming` / `customResolution`, added to that roll's sum in `challengeMath` and shown in its
+  breakdown as a **"Custom"** chip. A point on the framing moves the rung like exertion does. No clamp.
+- **Set die** → pick a die, then its face. The picking is **browser-side** (Alpine on the roll box:
+  `setting`, `die`) so the GM and the player never see each other's half-made pick; only the chosen
+  face is posted (`SetDieFaces` renders one row of face buttons per die, in the configured names and
+  colours, the current face disabled). `challenge_die_set` puts the die on that face **keeping its
+  own rank shift** and marks it **"Set"** (`DieMarker` `set`). Any die in play may be set, added ones
+  included; discarded dice are not offered. Set die is **disabled while the dice are busy** — an
+  exertion reroll the player chose, or an approach effect waiting for taps — so a tap can't do two
+  things. A live update redraws the board and drops a half-made pick.
+
+These edits are after-the-roll corrections, so they **don't** touch `failingAtRoll` (Unbreakable).
+
 **Challenge done** (GM only, `challenge_closed`) accepts the result: `closed` hides every player
 control and shows a "Done" badge. None of these are undoable.
 - `DifficultyPanel` heads the board on every screen: the number in big type with the GM's tier in

@@ -1392,6 +1392,80 @@ describe('solo roll', () => {
   })
 })
 
+describe('hand edits: custom ±1 and Set die value', () => {
+  test('the GM and the rolling player both nudge a roll, and it lands in that roll\'s sum', async () => {
+    const { s, id, ch } = await rolledChallenge()
+    const before = s.challengeMath(ch)
+    expect(s.adjustCustom(ch.id, null, 'resolution', 1, 'GM')).toBe(true)
+    expect(s.adjustCustom(ch.id, id, 'resolution', 1, 'Mara')).toBe(true)
+    expect(s.adjustCustom(ch.id, id, 'framing', -1, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!
+    expect(after.customResolution).toBe(2)
+    expect(after.customFraming).toBe(-1)
+    const math = s.challengeMath(after)
+    expect(math.framing!.sum).toBe(before.framing!.sum - 1)
+    // The resolution gets its +2, and follows whatever the framing's new rung is worth.
+    expect(math.resolution!.sum).toBe(before.resolution!.sum + 2 - before.rungBonus + math.rungBonus)
+    expect(s.adjustCustom(ch.id, id, 'resolution', 2, 'Mara')).toBe(false) // one step at a time
+  })
+
+  test('nobody else may, and not before the roll or after the GM is done', async () => {
+    const { s, id, ch } = await readyChallenge()
+    expect(s.adjustCustom(ch.id, null, 'resolution', 1, 'GM')).toBe(false) // not rolled yet
+    s.rollChallenge(ch.id, 'Mara')
+    const other = s.createCharacter('Bo').id
+    s.finalizeCharacter(other, 'Bo')
+    expect(s.adjustCustom(ch.id, other, 'resolution', 1, 'Bo')).toBe(false) // not their challenge
+    expect(s.setDieFace(ch.id, other, 'resolution', 0, 1, 'Bo')).toBe(false)
+    s.closeChallenge(ch.id, 'GM')
+    expect(s.adjustCustom(ch.id, null, 'resolution', 1, 'GM')).toBe(false)
+    expect(s.adjustCustom(ch.id, id, 'resolution', 1, 'Mara')).toBe(false)
+    expect(s.setDieFace(ch.id, null, 'resolution', 0, 1, 'GM')).toBe(false)
+  })
+
+  test('a die is set onto the picked face, keeping its rank shift, and marked "Set"', async () => {
+    const { s, id, ch } = await rolledChallenge()
+    s.adjustBase(id, 'agility', 2, 'GM') // rank 5: faces shift +2 on dice rolled from now on
+    const fresh = startAndRoll(s, id, 'bold', 9)
+    const side = fresh.resolution!
+    const face = side.faces![1] === 6 ? 1 : 6
+    const shift = side.dice[1]! - side.faces![1]!
+    expect(s.setDieFace(fresh.id, id, 'resolution', 1, face, 'Mara')).toBe(true)
+    const after = s.currentChallenge()!.resolution!
+    expect(after.faces![1]).toBe(face)
+    expect(after.dice[1]).toBe(face + shift)
+    expect(after.changed![1]).toBe('set')
+    expect(after.sum).toBe(sideSum(after))
+    expect(s.setDieFace(fresh.id, null, 'resolution', 1, face, 'GM')).toBe(false) // already on it
+    expect(s.setDieFace(fresh.id, null, 'resolution', 0, 9, 'GM')).toBe(false) // no such face
+  })
+
+  test('added dice can be set, discarded ones cannot', async () => {
+    const { s, id, ch } = await challengeWithFace(1) // Limitless face 1: discard a die
+    s.activateApproach(ch.id, id, 'Mara')
+    s.discardDie(ch.id, id, 0, 'Mara')
+    expect(s.setDieFace(ch.id, null, 'resolution', 0, 3, 'GM')).toBe(false) // out of play
+    s.setApproachDie(ch.id, 6, 'GM') // two extra dice
+    s.activateApproach(ch.id, id, 'Mara')
+    s.addApproachDice(ch.id, id, 'resolution', 'Mara')
+    const faces = s.currentChallenge()!.resolution!.faces!
+    const target = faces[3] === 6 ? 1 : 6
+    expect(s.setDieFace(ch.id, id, 'resolution', 3, target, 'Mara')).toBe(true)
+    expect(s.currentChallenge()!.resolution!.faces![3]).toBe(target)
+  })
+
+  test('hand edits survive a restart', async () => {
+    const { s, id, ch, open } = await rolledChallenge()
+    s.adjustCustom(ch.id, null, 'resolution', -1, 'GM')
+    const face = ch.resolution!.faces![0] === 6 ? 1 : 6
+    s.setDieFace(ch.id, id, 'resolution', 0, face, 'Mara')
+    const replayed = open().currentChallenge()!
+    expect(replayed.customResolution).toBe(-1)
+    expect(replayed.resolution!.faces![0]).toBe(face)
+    expect(replayed.resolution!.changed![0]).toBe('set')
+  })
+})
+
 describe('circumstance modifier', () => {
   test('a plus raises the target and a minus lowers it', async () => {
     const { s, ch } = await rolledChallenge('bold', 9)

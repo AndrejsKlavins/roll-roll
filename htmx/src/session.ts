@@ -54,7 +54,7 @@ export const APPROACH_DIE_SIDES = 6
  * 'raised'/'lowered' moved it one face, 'squashed' set it to a fixed face, 'matched' raised it to
  * the highest face on its own side, and 'copied' marks a twin an effect added.
  */
-export type DieMarker = 'raised' | 'squashed' | 'lowered' | 'matched' | 'copied' | null
+export type DieMarker = 'raised' | 'squashed' | 'lowered' | 'matched' | 'copied' | 'set' | null
 export type ChallengeSide = {
   faces?: number[]
   dice: number[]
@@ -128,6 +128,12 @@ export type Challenge = {
    * this is how the board knows which one the player picked.
    */
   exertionRerollArmed: boolean
+  /**
+   * The "custom" adjustment on each roll: the ±1 buttons the GM and the rolling player both have
+   * (user decision). Added straight onto that roll's sum and shown in its breakdown as "Custom".
+   */
+  customFraming: number
+  customResolution: number
   /** The GM has accepted the result: nothing more can be spent or rerolled. */
   closed: boolean
   /**
@@ -439,6 +445,19 @@ export type EventData =
   | { type: 'challenge_exertion_spent'; challengeId: string; roll: ChallengeRoll; by: string }
   // The player picks "Reroll a die" for a point of exertion (armed), or backs out of it.
   | { type: 'challenge_exertion_reroll_armed'; challengeId: string; armed: boolean; by: string }
+  // Hand edits by the GM or the rolling player: a roll's custom ±, stored as the whole new value
+  // (like the circumstance), and a die set straight onto a chosen face.
+  | { type: 'challenge_custom_set'; challengeId: string; roll: ChallengeRoll; value: number; by: string }
+  | {
+      type: 'challenge_die_set'
+      challengeId: string
+      roll: ChallengeRoll
+      index: number
+      /** The face id picked, and its value with the die's own rank shift kept. */
+      face: number
+      value: number
+      by: string
+    }
   | {
       type: 'challenge_rerolled'
       challengeId: string
@@ -819,6 +838,8 @@ export class Session {
           exertionResolution: 0,
           rerolls: 0,
           exertionRerollArmed: false,
+          customFraming: 0,
+          customResolution: 0,
           closed: false,
           framing: null,
           resolution: null,
@@ -887,6 +908,21 @@ export class Session {
       case 'challenge_exertion_reroll_armed': {
         const ch = this.challenges.find((x) => x.id === e.challengeId)
         if (ch) ch.exertionRerollArmed = e.armed
+        break
+      }
+      case 'challenge_custom_set': {
+        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        if (ch) ch[e.roll === 'framing' ? 'customFraming' : 'customResolution'] = e.value
+        break
+      }
+      case 'challenge_die_set': {
+        const side = this.challenges.find((x) => x.id === e.challengeId)?.[e.roll]
+        if (!side) break
+        side.dice[e.index] = e.value
+        if (side.faces) side.faces[e.index] = e.face
+        side.changed = side.changed ?? side.dice.map(() => null)
+        side.changed[e.index] = 'set'
+        side.sum = sideSum(side)
         break
       }
       case 'challenge_rerolled': {
@@ -1797,13 +1833,13 @@ export class Session {
     // The skill is a bonus on the roll (user decision), so it never moves the difficulty.
     const target = ch.difficulty + ch.circumstance
     const framing = ch.framing
-      ? outcomeFor(ch.framing.sum + bonus + ch.exertionFraming, target, 'low')
+      ? outcomeFor(ch.framing.sum + bonus + ch.exertionFraming + ch.customFraming, target, 'low')
       : null
     const rung = framing ? framingRung(this.rules.challenges.framing, framing.difference) : null
     // The rung buffs the resolution roll's own sum (user decision — it used to move the target).
     const rungBonus = rung?.resolutionBonus ?? 0
     const resolution = ch.resolution
-      ? outcomeFor(ch.resolution.sum + bonus + ch.exertionResolution + rungBonus, target, ch.stakes)
+      ? outcomeFor(ch.resolution.sum + bonus + ch.exertionResolution + ch.customResolution + rungBonus, target, ch.stakes)
       : null
     const nextRung = framing ? this.rules.challenges.framing.rungs.find((r) => r.from > framing.difference) : undefined
     const framingPointsToNext = framing && nextRung ? nextRung.from - framing.difference : null
@@ -1839,6 +1875,47 @@ export class Session {
     if (!ch || ch.closed || !ch.resolution || ch.charId !== charId) return null
     const char = this.characters.get(charId)
     return char?.status === 'active' ? { ch, char } : null
+  }
+
+  /**
+   * A challenge the GM (`charId` null) or its rolling player may hand-edit: rolled and still open.
+   * The same rule as everything else the player does after the roll; the GM has no character.
+   */
+  private editableChallenge(challengeId: string, charId: string | null) {
+    if (charId !== null) return this.actingCharacter(challengeId, charId)?.ch ?? null
+    const ch = this.challenges.find((x) => x.id === challengeId)
+    return ch && !ch.closed && ch.resolution ? ch : null
+  }
+
+  /**
+   * The "custom" ±1 on one roll (user decision): the GM and the rolling player both have it, and
+   * it lands straight on that roll's sum — shown in the breakdown as "Custom". A point on the
+   * framing moves the ladder rung, and so the resolution's bonus, like exertion does.
+   */
+  adjustCustom(challengeId: string, charId: string | null, roll: ChallengeRoll, delta: number, by: string) {
+    const ch = this.editableChallenge(challengeId, charId)
+    if (!ch || (delta !== 1 && delta !== -1) || !ch[roll]) return false
+    const value = (roll === 'framing' ? ch.customFraming : ch.customResolution) + delta
+    this.append({ type: 'challenge_custom_set', challengeId, roll, value, by })
+    return true
+  }
+
+  /**
+   * "Set die value": puts one die of a roll straight onto a chosen face (user decision), for the
+   * GM or the rolling player. Any die in play may be set, added ones included; a discarded die is
+   * out. The die keeps its own rank shift, so the value stays in step with how it was rolled, and
+   * it is marked "Set". Picking the face it already shows changes nothing and is refused.
+   */
+  setDieFace(challengeId: string, charId: string | null, roll: ChallengeRoll, index: number, face: number, by: string) {
+    const ch = this.editableChallenge(challengeId, charId)
+    const rolled = ch && this.dieInPlay(ch, roll, index)
+    if (!rolled?.faces) return false
+    const { faces } = this.rules.challenges
+    const legal = faces.length ? faces.some((f) => f.value === face) : Number.isInteger(face) && face >= 1 && face <= 6
+    if (!legal || rolled.faces[index] === face) return false
+    const value = face + (rolled.dice[index]! - rolled.faces[index]!)
+    this.append({ type: 'challenge_die_set', challengeId, roll, index, face, value, by })
+    return true
   }
 
   /** Burns one point of a pool stat (stamina/willpower) for one exertion. */

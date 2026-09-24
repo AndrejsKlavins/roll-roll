@@ -54,6 +54,8 @@ function Die(props: {
   /** Set when an approach effect moved this die's face; named under it. */
   changed?: DieMarker
   action?: DieAction
+  /** Set while "Set die value" may pick this die: its index, for the roll box's Alpine state. */
+  pickIndex?: number
 }) {
   const face = faceName(props.faces, props.faceId)
   const style = face?.color ? `--face-color: ${face.color}` : undefined
@@ -84,6 +86,21 @@ function Die(props: {
       </button>
     )
   }
+  // "Set die value" is browser-side until the face is picked: while the roll box is `setting`, a
+  // tap on this die selects it (`die`), and the box then offers its faces.
+  if (props.pickIndex !== undefined) {
+    const i = props.pickIndex
+    return (
+      <span
+        class={cls}
+        style={style}
+        x-on:click={`if (setting) die = ${i}`}
+        x-bind:class={`{ 'die-tappable die-face-change': setting, 'die-picked': setting && die === ${i} }`}
+      >
+        {inner}
+      </span>
+    )
+  }
   return (
     <span class={cls} style={style}>
       {inner}
@@ -94,7 +111,7 @@ function Die(props: {
 /** What tapping a die does right now. `kind` only picks the highlight colour. */
 type DieAction = { kind: 'reroll' | 'discard' | 'face-change'; url: string; title: string }
 
-/** What an approach effect did to a die, named under it. */
+/** What an approach effect (or "Set die value") did to a die, named under it. */
 const markerLabel = (marker: NonNullable<DieMarker>) =>
   marker === 'raised'
     ? 'Raised'
@@ -104,7 +121,9 @@ const markerLabel = (marker: NonNullable<DieMarker>) =>
         ? 'Matched'
         : marker === 'copied'
           ? 'Copy'
-          : 'Squashed'
+          : marker === 'set'
+            ? 'Set'
+            : 'Squashed'
 
 /**
  * The challenge's one difficulty — "Difficulty", the number, and its tier — sitting beside the
@@ -217,8 +236,22 @@ function RollBox(props: {
   attemptLabel?: boolean
   /** What the roll's own footer says once it has landed: the rung, or the success/degree line. */
   caption?: Child
+  /** The custom ± on this roll (the GM's or player's hand adjustment), shown as "Custom". */
+  custom: number
+  /** Which roll this is, for the hand-edit routes. */
+  roll: 'framing' | 'resolution'
+  /**
+   * Set when the viewer may hand-edit this roll (the GM, or the rolling player while it is open):
+   * the route prefix — `/gm/challenge` or `/c/:id/challenge`. It brings the −1 / +1 / Set die
+   * controls.
+   */
+  editUrl?: string
 }) {
   const { field, label, side, outcome } = props
+  // Set die value can't take over dice that something else is already waiting on (an exertion
+  // reroll the player chose, or an approach effect's taps).
+  const diceBusy = !!side && side.dice.some((_, i) => !!props.dieAction?.(i))
+  const pickable = !!props.editUrl && !!side && !diceBusy
   const cls = ['difficulty-box', outcome && (outcome.success ? 'success' : 'failure')].filter(Boolean).join(' ')
   const diceTerms: Child[] = []
   const bonusTerms: Child[] = []
@@ -233,6 +266,7 @@ function RollBox(props: {
           rerolled={side.rerolled?.[i]}
           changed={side.changed?.[i]}
           action={side.discarded?.[i] ? undefined : props.dieAction?.(i)}
+          pickIndex={pickable && !side.discarded?.[i] ? i : undefined}
         />,
       )
     }
@@ -241,14 +275,50 @@ function RollBox(props: {
     if (props.framingBonus) {
       bonusTerms.push(bonusChip(props.framingBonus, 'Framing', undefined, props.framingBonus > 0 ? 'help' : 'hinder'))
     }
+    if (props.custom) bonusTerms.push(bonusChip(props.custom, 'Custom', undefined, 'custom'))
   }
+  const edit = props.editUrl && side ? props.editUrl : null
+  const step = (delta: number) => (
+    <button
+      type="button"
+      class="roll-edit-btn"
+      hx-post={`${edit}/custom?roll=${props.roll}&delta=${delta}`}
+      hx-swap="none"
+      title={`${delta > 0 ? 'Add' : 'Take'} 1 ${delta > 0 ? 'to' : 'from'} this roll (shown as Custom)`}
+    >
+      {delta > 0 ? '+1' : '\u22121'}
+    </button>
+  )
   return (
-    <div class={cls} style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}>
+    <div
+      class={cls}
+      style={field?.color ? `--field-color: ${field.color}; --field-ink: ${field.ink}` : undefined}
+      x-data={edit ? '{ setting: false, die: null }' : undefined}
+    >
       <div class="roll-box-head">
         <span class="roll-kind">{props.kind}</span>
         <IconChip icon={field?.icon} />
         <span class="roll-ability">{label}</span>
+        {edit && (
+          <span class="roll-edit">
+            {step(-1)}
+            {step(1)}
+            <button
+              type="button"
+              class="roll-edit-btn"
+              x-on:click="setting = !setting; die = null"
+              x-bind:class="setting && 'on'"
+              disabled={diceBusy || undefined}
+              title={diceBusy ? 'Finish what the dice are waiting on first' : 'Pick a die, then the face to set it to'}
+            >
+              <span x-text="setting ? 'Cancel' : 'Set die'">Set die</span>
+            </button>
+          </span>
+        )}
       </div>
+      {edit && side && pickable && (
+        <SetDieFaces side={side} faces={props.faces} url={`${edit}/set-die?roll=${props.roll}`} />
+      )}
       {side && outcome && (
         <div class="difficulty-result">
           {props.attemptLabel && <div class="attempt-label">Player attempt</div>}
@@ -263,6 +333,44 @@ function RollBox(props: {
           />
           {props.caption}
         </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The second half of "Set die value": once a die is tapped, a row of every face to set it to, in
+ * the configured names and colours (worst to best). One row per die, shown by the roll box's
+ * Alpine `die`, so every URL is plain server-rendered htmx. The face the die already shows is
+ * disabled; a pick keeps the die's own rank shift (see Session.setDieFace).
+ */
+function SetDieFaces(props: { side: ChallengeSide; faces: FaceName[]; url: string }) {
+  const { side, url } = props
+  const faces = props.faces.length
+    ? props.faces
+    : [1, 2, 3, 4, 5, 6].map((value) => ({ value, label: String(value), color: '', ink: '' }))
+  return (
+    <div class="set-die" x-show="setting" x-cloak>
+      <p class="set-die-prompt" x-show="die === null">
+        Tap a die to set it
+      </p>
+      {side.dice.map((_, i) =>
+        side.discarded?.[i] ? null : (
+          <div class="set-die-faces" x-show={`die === ${i}`}>
+            {faces.map((f) => (
+              <button
+                type="button"
+                class="set-die-face"
+                style={f.color ? `--face-color: ${f.color}` : undefined}
+                hx-post={`${url}&index=${i}&face=${f.value}`}
+                hx-swap="none"
+                disabled={side.faces?.[i] === f.value || undefined}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        ),
       )}
     </div>
   )
@@ -685,6 +793,15 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   // Only the player who rolled acts on it, and only once the dice are in, until the GM closes it.
   const acting = isViewerTurn && rolled && !ch.closed
   const exertion = session.availableExertion(ch)
+  // The GM and the rolling player can both hand-edit a rolled, open challenge (custom ±1, Set die).
+  const editUrl =
+    rolled && !ch.closed
+      ? role === 'gm'
+        ? '/gm/challenge'
+        : acting
+          ? `/c/${viewerCharId}/challenge`
+          : undefined
+      : undefined
   const approach = session.approachState(ch)
   // Once the player has chosen "Reroll a die" for a point of exertion, every die in play on both
   // rolls is a reroll button — added dice included — until one is picked or they cancel.
@@ -770,6 +887,9 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             skillIcon={math.skillIcon}
             exertion={ch.exertionFraming}
             dieAction={dieAction('framing')}
+            custom={ch.customFraming}
+            roll="framing"
+            editUrl={editUrl}
             attemptLabel={role !== 'player'}
             caption={<FramingCaption math={math} />}
           />
@@ -787,6 +907,9 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           exertion={ch.exertionResolution}
           framingBonus={math.rungBonus}
           dieAction={dieAction('resolution')}
+          custom={ch.customResolution}
+          roll="resolution"
+          editUrl={editUrl}
           attemptLabel={role !== 'player'}
           caption={<ResolutionCaption math={math} />}
         />
