@@ -11,6 +11,7 @@ import {
   isBaseField,
   MAX_CIRCUMSTANCE,
   type Contestant,
+  type GroupTask,
   type Opposition,
   type OppositionSide,
   type SoloRoll,
@@ -643,8 +644,15 @@ function pickPrompt(effect: ApproachEffect, picksLeft: number, acting: boolean, 
  * too) into a tap target until one is rerolled or the player cancels. Shown to the rolling player
  * while the challenge is open.
  */
-function ExertionControls(props: { session: Session; ch: Challenge; charId: string }) {
+function ExertionControls(props: {
+  session: Session
+  ch: Challenge
+  charId: string
+  /** Where its buttons post: a challenge's routes, or (group task) the group's. */
+  base?: string
+}) {
   const { session, ch, charId } = props
+  const base = props.base ?? `/c/${charId}/challenge`
   const char = session.characters.get(charId)!
   const available = session.availableExertion(ch)
   const sources = session.rules.challenges.exertionSources.flatMap((statId) => {
@@ -660,7 +668,7 @@ function ExertionControls(props: { session: Session; ch: Challenge; charId: stri
     <button
       type="button"
       class="exert-spend"
-      hx-post={`/c/${charId}/challenge/spend-exertion`}
+      hx-post={`${base}/spend-exertion`}
       hx-vals={JSON.stringify({ roll })}
       hx-swap="none"
     >
@@ -680,7 +688,7 @@ function ExertionControls(props: { session: Session; ch: Challenge; charId: stri
             <button
               type="button"
               class="exert-spend"
-              hx-post={`/c/${charId}/challenge/reroll-mode?armed=0`}
+              hx-post={`${base}/reroll-mode?armed=0`}
               hx-swap="none"
             >
               Cancel
@@ -693,7 +701,7 @@ function ExertionControls(props: { session: Session; ch: Challenge; charId: stri
             <button
               type="button"
               class="exert-spend"
-              hx-post={`/c/${charId}/challenge/reroll-mode?armed=1`}
+              hx-post={`${base}/reroll-mode?armed=1`}
               hx-swap="none"
               disabled={approachBusy || undefined}
               title={approachBusy ? 'Finish the approach effect first' : undefined}
@@ -708,7 +716,7 @@ function ExertionControls(props: { session: Session; ch: Challenge; charId: stri
             type="button"
             class="exert-btn"
             style={stat.color ? `--field-color: ${stat.color}; --field-ink: ${stat.ink}` : undefined}
-            hx-post={`/c/${charId}/challenge/exert`}
+            hx-post={`${base}/exert`}
             hx-vals={JSON.stringify({ stat: stat.id })}
             hx-swap="none"
             disabled={left <= 0 || undefined}
@@ -1073,12 +1081,254 @@ function SupportRoll(props: { session: Session; ch: Challenge; charId: string; r
   )
 }
 
+// ---- group task ---------------------------------------------------------------
+
+/**
+ * One participant's part of a group task: their name and result, then their framing and
+ * resolution boxes — the same RollBox a challenge uses. Before the dice, the participant picks a
+ * skill and rolls; after, they get the usual exertion (+1 or a reroll). No approach, no support.
+ */
+function GroupMember(props: { session: Session; g: GroupTask; ch: Challenge; role: 'gm' | 'player' | 'table'; viewerCharId?: string }) {
+  const { session, g, ch, role, viewerCharId } = props
+  const math = session.challengeMath(ch)
+  const name = (ch.charId ? session.characters.get(ch.charId)?.name : null) ?? '?'
+  const mine = role === 'player' && ch.charId === viewerCharId
+  const rolled = !!ch.resolution
+  const acting = mine && rolled && !ch.closed
+  const base = `/c/${viewerCharId}/group`
+  const field = (id: string | null) => (id ? (session.rules.fields.get(id) as NumberField | undefined) : undefined)
+  const exertion = session.availableExertion(ch)
+  const rerollAction = (roll: 'framing' | 'resolution') =>
+    acting && ch.exertionRerollArmed && exertion > 0
+      ? (index: number): DieAction => ({ kind: 'reroll', url: `${base}/reroll?roll=${roll}&index=${index}`, title: 'Reroll with exertion' })
+      : undefined
+  const skills = [...session.rules.fields.values()].filter((f): f is NumberField => f.type === 'number' && f.trained)
+  const margin = math.resolution?.difference
+  const box = (roll: 'framing' | 'resolution') => {
+    const f = field(roll === 'framing' ? g.framingAbility : g.resolutionAbility)
+    return (
+      <RollBox
+        kind={roll === 'framing' ? 'Framing' : 'Resolution'}
+        field={f}
+        label={f?.label ?? ''}
+        side={ch[roll]}
+        outcome={roll === 'framing' ? math.framing : math.resolution}
+        faces={session.rules.challenges.faces}
+        skillBonus={math.skillBonus}
+        skillLabel={math.skillLabel}
+        skillIcon={math.skillIcon}
+        exertion={roll === 'framing' ? ch.exertionFraming : ch.exertionResolution}
+        framingBonus={roll === 'resolution' ? math.rungBonus : undefined}
+        dieAction={rerollAction(roll)}
+        caption={roll === 'framing' ? <FramingCaption math={math} /> : <ResolutionCaption math={math} />}
+        custom={0}
+        roll={roll}
+      />
+    )
+  }
+  return (
+    <div class={`group-member ${math.success === null ? '' : math.success ? 'success' : 'failure'}`}>
+      <div class="group-member-head">
+        <b>{name}</b>
+        {margin !== undefined ? (
+          <span class={math.success ? 'result success' : 'result failure'}>
+            {math.success ? 'Success' : 'Failure'} {margin >= 0 ? `+${margin}` : margin}
+          </span>
+        ) : (
+          <span class="muted">{ch.closed ? 'did not roll' : 'to roll'}</span>
+        )}
+      </div>
+      <div class={g.framingAbility ? 'challenge-numbers' : 'challenge-numbers solo'}>
+        {g.framingAbility && box('framing')}
+        {box('resolution')}
+      </div>
+      {mine && !rolled && !ch.closed && (
+        <div class="challenge-setup group-setup">
+          {skills.length > 0 && (
+            <label class="skill-pick">
+              Skill
+              <select name="skill" hx-post={`${base}/setup`} hx-trigger="change" hx-swap="none">
+                <option value="">None</option>
+                {skills.map((f) => (
+                  <option value={f.id} selected={ch.skill === f.id || undefined}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button type="button" class="primary" hx-post={`${base}/roll`} hx-swap="none">
+            {g.framingAbility ? 'Roll framing and resolution' : 'Roll'}
+          </button>
+        </div>
+      )}
+      {acting && <ExertionControls session={session} ch={ch} charId={viewerCharId!} base={base} />}
+    </div>
+  )
+}
+
+/**
+ * The group-task section (user-designed): the GM's "Start group task" button, then the current
+ * task — its difficulty once, every participant's part in turn, and at the very bottom the
+ * **total**: everyone's resolution margins added up. Its own swap target on all three screens; a
+ * player sees it only when they take part (they see everyone's rolls in it).
+ */
+export function GroupTaskBoard(props: { session: Session; role: 'gm' | 'player' | 'table'; viewerCharId?: string; oob?: boolean }) {
+  const { session, role, viewerCharId } = props
+  const current = session.currentGroupTask()
+  const involved = !!current && current.members.some((m) => m.charId === viewerCharId)
+  const g = role === 'player' && !involved ? null : current
+  const tier = g ? session.rules.challenges.difficulties.find((d) => d.value === g.difficulty)?.label ?? null : null
+  const total = g ? session.groupTotal(g) : null
+  return (
+    <section id="group-board" class="group-board" hx-swap-oob={oobAttr(props.oob)}>
+      {role === 'gm' && (
+        <button type="button" class="small" onclick="document.getElementById('group-dialog').showModal()">
+          Start group task
+        </button>
+      )}
+      {g && total && (
+        <div class="challenge group-task">
+          <div class="challenge-title-row">
+            <div class="challenge-title-main">
+              <h3 class="challenge-description">Group task: {g.description || 'everyone together'}</h3>
+              <div class="challenge-head">
+                <span class={`stakes stakes-${g.stakes}`}>{stakesLabel(g.stakes)} stakes</span>
+                {g.closed && <span class="badge closed">Done</span>}
+              </div>
+            </div>
+            <DifficultyPanel math={session.challengeMath(g.members[0]!)} tier={tier} />
+          </div>
+          {g.members.map((ch) => (
+            <GroupMember session={session} g={g} ch={ch} role={role} viewerCharId={viewerCharId} />
+          ))}
+          <div class={`group-total ${total.sum > 0 ? 'help' : total.sum < 0 ? 'hinder' : 'even'}`}>
+            <span class="group-total-label">Total</span>
+            <span class="group-total-value">{total.sum > 0 ? `+${total.sum}` : total.sum}</span>
+            <span class="muted">
+              {total.rolled} of {total.total} rolled
+            </span>
+          </div>
+          {role === 'gm' && !g.closed && (
+            <button type="button" class="primary" hx-post="/gm/group/done" hx-swap="none">
+              Group task done
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** Clears the group dialog after a task starts, then closes it. */
+const AFTER_GROUP = [
+  'if (!event.detail.successful) return;',
+  'const d = Alpine.$data(this);',
+  "Object.assign(d, { description: '', stakes: 'normal', diff: '', diffValue: '', framingAbility: '', resolutionAbility: '', charIds: [] });",
+  "this.closest('dialog').close()",
+].join(' ')
+
+/**
+ * GM-only dialog for a group task: description, stakes, the difficulty — picked off the ladder,
+ * then **nudged ±1** before anyone is invited — the framing (optional) and resolution abilities,
+ * and **who joins** (any number of players; the count is shown). One POST starts it.
+ */
+export function GroupTaskDialog(props: { session: Session }) {
+  const { session } = props
+  const { rules } = session
+  const abilities = [...rules.fields.values()].filter((f): f is NumberField => isBaseField(f) && !f.trained)
+  const difficulties = rules.challenges.difficulties
+  const characters = [...session.characters.values()].filter((c) => c.status === 'active')
+  const state = {
+    description: '',
+    stakes: 'normal',
+    diff: '',
+    diffValue: '',
+    framingAbility: '',
+    resolutionAbility: '',
+    charIds: [] as string[],
+    abilities: abilities.map((f) => ({ id: f.id, label: f.label, color: f.color ?? '' })),
+    difficulties: difficulties.map((d) => ({ id: d.id, label: d.label, value: d.value })),
+  }
+  return (
+    <dialog id="group-dialog" class="challenge-dialog">
+      <form hx-post="/gm/group/start" hx-swap="none" x-data={JSON.stringify(state)} hx-on--after-request={AFTER_GROUP}>
+        <header class="dialog-head">
+          <h3>New group task</h3>
+          <button type="button" class="small" x-on:click="$el.closest('dialog').close()">
+            Close
+          </button>
+        </header>
+        <label class="challenge-description-field">
+          <span>What is the task? (optional)</span>
+          <input name="description" x-model="description" placeholder="e.g. Haul the cart up the pass" maxlength={200} autocomplete="off" />
+        </label>
+        <div class="stakes-row">
+          {(['low', 'normal', 'high'] as const).map((st) => (
+            <button type="button" class={`stakes-btn stakes-${st}`} x-bind:class={`{ on: stakes === '${st}' }`} x-on:click={`stakes = '${st}'`}>
+              {stakesLabel(st)}
+            </button>
+          ))}
+        </div>
+        <DifficultyPicker difficulties={difficulties} />
+        <div class="group-nudge" x-show="diffValue !== ''" x-cloak>
+          <span>Adjust</span>
+          <button type="button" class="circumstance-step" x-on:click="diffValue = Number(diffValue) - 1">
+            {'\u2212'}1
+          </button>
+          <button type="button" class="circumstance-step" x-on:click="diffValue = Number(diffValue) + 1">
+            +1
+          </button>
+        </div>
+        <AbilityPicker
+          title="Framing ability (optional)"
+          hint="Each player's framing sets up their own resolution, as in a challenge."
+          abilityVar="framingAbility"
+          abilities={abilities}
+          skippable
+        />
+        <AbilityPicker title="Resolution ability" hint="Every player rolls this against the same difficulty." abilityVar="resolutionAbility" abilities={abilities} />
+        <section class="side-pick player-pick">
+          <h4>
+            Who joins <span class="muted" x-text="'(' + charIds.length + ' player' + (charIds.length === 1 ? '' : 's') + ')'"></span>
+          </h4>
+          {characters.length === 0 ? (
+            <p class="muted">No finished characters yet.</p>
+          ) : (
+            <div class="pick-col">
+              {characters.map((c) => (
+                <button
+                  type="button"
+                  class="pick-btn"
+                  x-bind:class={`{ on: charIds.includes('${c.id}') }`}
+                  x-on:click={`charIds = charIds.includes('${c.id}') ? charIds.filter((x) => x !== '${c.id}') : [...charIds, '${c.id}']`}
+                >
+                  <span class="label">{c.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+        <input type="hidden" name="stakes" x-model="stakes" />
+        <input type="hidden" name="difficulty" x-model="diffValue" />
+        <input type="hidden" name="framing_ability" x-model="framingAbility" />
+        <input type="hidden" name="resolution_ability" x-model="resolutionAbility" />
+        <input type="hidden" name="char_ids" x-bind:value="charIds.join(',')" />
+        <button type="submit" class="primary" x-bind:disabled="!(diffValue !== '' && resolutionAbility && charIds.length)">
+          Start group task
+        </button>
+      </form>
+    </dialog>
+  )
+}
+
 /** Past challenges (everything except the current one), most recent first. */
 /** A past challenge, or a solo roll the GM showed the table — the history log mixes both. */
 type LogEntry =
   | { kind: 'challenge'; ch: Challenge }
   | { kind: 'solo'; solo: SoloRoll }
   | { kind: 'opposition'; opp: Opposition }
+  | { kind: 'group'; g: GroupTask }
 
 /** " and succeeds with +4" / " and fails with -2" — how every history line ends. */
 const verdict = (success: boolean, margin: number) =>
@@ -1108,6 +1358,24 @@ function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
     <ul class="challenge-log">
       {entries.map((entry) => {
         if (entry.kind === 'solo') return <SoloLogLine session={session} solo={entry.solo} />
+        if (entry.kind === 'group') {
+          // "Group task: haul the cart (challenging) 7 — Mara +3, Jorik -2 · total +1"
+          const { g } = entry
+          const tier = session.rules.challenges.difficulties.find((d) => d.value === g.difficulty)?.label
+          const total = session.groupTotal(g)
+          const results = g.members.map((m) => {
+            const who = (m.charId ? session.characters.get(m.charId)?.name : null) ?? '?'
+            const r = session.challengeMath(m).resolution
+            return r ? `${who} ${r.difference >= 0 ? `+${r.difference}` : r.difference}` : `${who} did not roll`
+          })
+          return (
+            <li class={total.sum > 0 ? 'success' : total.sum < 0 ? 'failure' : undefined}>
+              <b>Group task</b>: {g.description || 'everyone together'}
+              {tier && ` (${tier.toLowerCase()})`} {g.difficulty} — {results.join(', ')} · total{' '}
+              {total.sum >= 0 ? `+${total.sum}` : total.sum}
+            </li>
+          )
+        }
         if (entry.kind === 'opposition') {
           // "Mara vs Guard: arm wrestle — Mara wins by 1 degree", with the board's own verdict.
           const { opp } = entry
@@ -2174,6 +2442,10 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
       .slice(0, -1)
       .filter((o) => session.oppositionPhase(o) === 'done')
       .map((o) => ({ kind: 'opposition' as const, opp: o, seq: o.seq })),
+    // Group tasks once the GM has closed them (or a newer one has taken the board).
+    ...session.groupTasks
+      .filter((g, i) => g.closed || i < session.groupTasks.length - 1)
+      .map((g) => ({ kind: 'group' as const, g, seq: g.seq })),
   ].sort((a, b) => b.seq - a.seq)
   return (
     <section id="challenge-board" class="challenge-board" hx-swap-oob={oobAttr(props.oob)}>

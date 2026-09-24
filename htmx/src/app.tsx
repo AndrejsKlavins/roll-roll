@@ -6,7 +6,7 @@ import { ExprError } from './engine/expr'
 import { characterToCsv, csvToSnapshot } from './backup'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
-import { ChallengeBoard, ChallengePlayerPicker, OppositionBoard, SoloRollBoard } from './views/challenge'
+import { ChallengeBoard, ChallengePlayerPicker, GroupTaskBoard, OppositionBoard, SoloRollBoard } from './views/challenge'
 import { ConsequenceResult } from './views/consequence'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
@@ -583,6 +583,98 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const ch = session.currentChallenge()
     if (!ch) return c.notFound()
     if (session.adjustCircumstance(ch.id, Number(c.req.query('delta')), actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  // ---- group task -----------------------------------------------------------
+  // Its own board (#group-board) on every screen; starting and closing one also redraws the
+  // challenge board, whose history log lists finished group tasks.
+  const pushGroup = (withLog = false) => {
+    hub.send(
+      () => true,
+      (client) =>
+        html(<GroupTaskBoard session={session} role={client.role} viewerCharId={client.charId ?? undefined} oob />),
+    )
+    if (withLog) pushChallenge()
+  }
+
+  app.post('/gm/group/start', async (c) => {
+    const body = await form(c)
+    const stakes: ChallengeStakes = body.stakes === 'low' || body.stakes === 'high' ? body.stakes : 'normal'
+    const started = session.startGroupTask(
+      {
+        description: body.description ?? '',
+        framingAbility: body.framing_ability || null,
+        resolutionAbility: body.resolution_ability ?? '',
+        difficulty: Number(body.difficulty),
+        stakes,
+        charIds: (body.char_ids ?? '').split(',').filter(Boolean),
+      },
+      actorName(c),
+    )
+    if (started) pushGroup(true)
+    return started ? noContent(c) : c.text('Pick a difficulty, a resolution ability and at least one player', 400)
+  })
+
+  app.post('/gm/group/done', (c) => {
+    const g = session.currentGroupTask()
+    if (!g) return c.notFound()
+    if (session.closeGroupTask(g.id, actorName(c))) pushGroup(true)
+    return noContent(c)
+  })
+
+  /** The acting player's part of the current group task, or a 404. */
+  const groupPart = (c: Context) => {
+    const char = session.characters.get(c.req.param('id') ?? '')
+    const ch = char ? session.groupMemberOf(char.id) : null
+    return char && ch ? { char, ch } : null
+  }
+
+  app.post('/c/:id/group/setup', async (c) => {
+    const part = groupPart(c)
+    if (!part) return c.notFound()
+    const skill = (await form(c)).skill || null
+    if (session.setChallengePlayer(part.ch.id, part.char.id, null, skill, actorName(c))) pushGroup()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/group/roll', (c) => {
+    const part = groupPart(c)
+    if (!part) return c.notFound()
+    if (session.rollChallenge(part.ch.id, actorName(c))) pushGroup()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/group/exert', async (c) => {
+    const part = groupPart(c)
+    if (!part) return c.notFound()
+    if (session.exert(part.ch.id, part.char.id, (await form(c)).stat ?? '', actorName(c))) {
+      pushGroup()
+      pushStatChange(part.char)
+    }
+    return noContent(c)
+  })
+
+  app.post('/c/:id/group/spend-exertion', async (c) => {
+    const part = groupPart(c)
+    if (!part) return c.notFound()
+    const roll = (await form(c)).roll === 'framing' ? 'framing' : 'resolution'
+    if (session.spendExertion(part.ch.id, part.char.id, roll, actorName(c))) pushGroup()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/group/reroll-mode', (c) => {
+    const part = groupPart(c)
+    if (!part) return c.notFound()
+    if (session.setExertionReroll(part.ch.id, part.char.id, c.req.query('armed') === '1', actorName(c))) pushGroup()
+    return noContent(c)
+  })
+
+  app.post('/c/:id/group/reroll', (c) => {
+    const part = groupPart(c)
+    if (!part) return c.notFound()
+    const roll = c.req.query('roll') === 'framing' ? 'framing' : 'resolution'
+    if (session.rerollDie(part.ch.id, part.char.id, roll, Number(c.req.query('index')), actorName(c))) pushGroup()
     return noContent(c)
   })
 

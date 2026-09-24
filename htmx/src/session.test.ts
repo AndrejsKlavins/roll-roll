@@ -1046,6 +1046,78 @@ async function tweakWithDieOn(face: number) {
 }
 
 
+describe('group task', () => {
+  const three = async () => {
+    const { open } = await setup(CHALLENGE_RULES)
+    const s = open()
+    const ids = ['Mara', 'Jorik', 'Bo'].map((n) => {
+      const id = s.createCharacter(n).id
+      s.finalizeCharacter(id, n)
+      return id
+    })
+    return { s, open, ids }
+  }
+  const start = (s: Session, ids: string[], difficulty = 9) =>
+    s.startGroupTask({ description: 'Haul the cart', framingAbility: 'strength', resolutionAbility: 'agility', difficulty, stakes: 'normal', charIds: ids }, 'GM')
+
+  test('each participant rolls the same task like a challenge; the total adds up their margins', async () => {
+    const { s, ids } = await three()
+    expect(start(s, ids, 8)).not.toBeNull()
+    const g = s.currentGroupTask()!
+    expect(g.members.map((m) => m.charId)).toEqual(ids)
+    expect(s.currentChallenge()).toBeNull() // not a regular challenge
+    for (const m of g.members) expect(s.rollChallenge(m.id, 'x')).not.toBeNull()
+    const margins = g.members.map((m) => s.challengeMath(m).resolution!.difference)
+    expect(s.groupTotal(g)).toEqual({ sum: margins.reduce((a, b) => a + b, 0), rolled: 3, total: 3 })
+    for (const m of g.members) expect(s.challengeMath(m).target).toBe(8)
+  })
+
+  test('skill and exertion work per participant; approach, support, circumstance do not', async () => {
+    const { s, ids } = await three()
+    s.train(ids[0]!, 'athletics', 6, 'Mara') // rank 3
+    start(s, ids)
+    const m = s.groupMemberOf(ids[0]!)!
+    expect(s.setChallengePlayer(m.id, ids[0]!, 'bold', null, 'Mara')).toBeNull() // no approach die
+    expect(s.setChallengePlayer(m.id, ids[1]!, null, null, 'GM')).toBeNull() // participant is fixed
+    expect(s.setChallengePlayer(m.id, ids[0]!, null, 'athletics', 'Mara')).not.toBeNull()
+    s.rollChallenge(m.id, 'Mara')
+    const rolled = s.challengeById(m.id)!
+    expect(s.challengeMath(rolled).skillBonus).toBe(3)
+    expect(rolled.approachDie).toBeNull()
+    expect(s.exert(m.id, ids[0]!, 'stamina', 'Mara')).toBe(true)
+    const before = s.challengeMath(s.challengeById(m.id)!).resolution!.sum
+    expect(s.spendExertion(m.id, ids[0]!, 'resolution', 'Mara')).toBe(true)
+    expect(s.challengeMath(s.challengeById(m.id)!).resolution!.sum).toBe(before + 1)
+    expect(s.addSupporter(m.id, ids[2]!, 'GM')).toBe(false) // cannot be supported
+    expect(s.adjustCircumstance(m.id, 1, 'GM')).toBe(false) // set before inviting
+    expect(s.closeChallenge(m.id, 'GM')).toBe(false) // closes as a group
+  })
+
+  test('closing the group closes everyone, rolled or not; it survives a restart', async () => {
+    const { s, ids, open } = await three()
+    start(s, ids)
+    const g = s.currentGroupTask()!
+    s.rollChallenge(g.members[0]!.id, 'Mara')
+    expect(s.closeGroupTask(g.id, 'GM')).toBe(true)
+    expect(s.currentGroupTask()!.members.every((m) => m.closed)).toBe(true)
+    expect(s.groupMemberOf(ids[1]!)).toBeNull()
+    expect(s.rollChallenge(g.members[1]!.id, 'Jorik')).toBeNull()
+    const replayed = open().currentGroupTask()!
+    expect(replayed.closed).toBe(true)
+    expect(replayed.members[0]!.resolution).toEqual(s.currentGroupTask()!.members[0]!.resolution)
+  })
+
+  test('refused: no players, an unfinished character, a skill as the ability', async () => {
+    const { s, ids } = await three()
+    expect(start(s, [])).toBeNull()
+    const draft = s.createCharacter('Draft').id
+    expect(start(s, [ids[0]!, draft])).toBeNull()
+    expect(
+      s.startGroupTask({ resolutionAbility: 'athletics', difficulty: 7, stakes: 'normal', charIds: ids }, 'GM'),
+    ).toBeNull()
+  })
+})
+
 describe('support', () => {
   /** Mara rolls, Jorik is around to help. */
   const withHelper = async (framingAbility: string | null = 'strength') => {

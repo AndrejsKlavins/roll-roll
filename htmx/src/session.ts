@@ -136,6 +136,11 @@ export type Challenge = {
   customResolution: number
   /** Other players helping out, added by the GM; each may roll one support die (see Supporter). */
   supporters: Supporter[]
+  /**
+   * Set on one participant's part of a group task (see GroupTask): no approach, no supporters,
+   * no circumstance or separate close — the group task owns those.
+   */
+  groupId: string | null
   /** The GM has accepted the result: nothing more can be spent or rerolled. */
   closed: boolean
   /**
@@ -153,6 +158,28 @@ export type Challenge = {
   /** The id of the event that started it — orders challenges and solo rolls in one history log. */
   seq: number
 }
+/**
+ * A group task (user-designed): the GM sets one difficulty (nudged ±1 before inviting), the
+ * abilities and stakes, and who takes part. **Each participant rolls it like a regular challenge**
+ * — framing and resolution against the same number, their own skill, exertion for +1 or a reroll —
+ * but with **no approach die and no supporters**. Each participant's part is an ordinary Challenge
+ * (with `groupId`), so all the challenge maths and exertion rules are the same ones. The summary is
+ * the sum of everyone's resolution margins (groupTotal).
+ */
+export type GroupTask = {
+  id: string
+  seq: number
+  description: string
+  difficulty: number
+  stakes: ChallengeStakes
+  framingAbility: string | null
+  resolutionAbility: string
+  /** One challenge per participant, in the order the GM listed them. */
+  members: Challenge[]
+  closed: boolean
+  by: string
+}
+
 /**
  * A player helping with someone else's challenge (user-designed). The GM adds them; once the dice
  * are in they may roll **one** die of one of their own abilities — at that ability's rank, like
@@ -489,6 +516,19 @@ export type EventData =
       by: string
     }
   | { type: 'challenge_player_set'; challengeId: string; charId: string | null; approach: string | null; skill: string | null; by: string }
+  // Group task: set up in one go by the GM (one challenge id per participant), and closed in one go.
+  | {
+      type: 'group_task_started'
+      groupId: string
+      description: string
+      difficulty: number
+      stakes: ChallengeStakes
+      framingAbility: string | null
+      resolutionAbility: string
+      members: { challengeId: string; charId: string }[]
+      by: string
+    }
+  | { type: 'group_task_closed'; groupId: string; by: string }
   // Support: the GM adds (or removes) a helping player; the helper rolls their one die.
   | { type: 'challenge_supporter_added'; challengeId: string; charId: string; by: string }
   | { type: 'challenge_supporter_removed'; challengeId: string; charId: string; by: string }
@@ -769,6 +809,8 @@ export class Session {
   readonly challenges: Challenge[] = []
   readonly soloRolls: SoloRoll[] = []
   readonly oppositions: Opposition[] = []
+  /** All group tasks ever started, in order; the last one is on the board. */
+  readonly groupTasks: GroupTask[] = []
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
@@ -852,6 +894,7 @@ export class Session {
     this.challenges.length = 0
     this.soloRolls.length = 0
     this.oppositions.length = 0
+    this.groupTasks.length = 0
     // Replayed from the log like everything else (power_level_set), so start from the default.
     this.powerLevel = this.rules.powerLevel
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
@@ -1003,39 +1046,58 @@ export class Session {
         // ability; there is no sensible way to read them as one, so they are dropped (user
         // decision: no migration). Their later events then find no challenge and do nothing.
         if (!e.resolutionAbility) break
-        this.challenges.push({
-          id: e.challengeId,
+        this.challenges.push(
+          this.newChallenge({
+            id: e.challengeId,
+            seq: e.id,
+            description: e.description ?? '',
+            framingAbility: e.framingAbility ?? null,
+            resolutionAbility: e.resolutionAbility,
+            difficulty: e.difficulty,
+            stakes: e.stakes,
+            by: e.by,
+          }),
+        )
+        break
+      case 'group_task_started': {
+        const members = e.members.map((m) => ({
+          ...this.newChallenge({
+            id: m.challengeId,
+            seq: e.id,
+            description: e.description ?? '',
+            framingAbility: e.framingAbility,
+            resolutionAbility: e.resolutionAbility,
+            difficulty: e.difficulty,
+            stakes: e.stakes,
+            by: e.by,
+          }),
+          charId: m.charId,
+          groupId: e.groupId,
+        }))
+        this.groupTasks.push({
+          id: e.groupId,
           seq: e.id,
           description: e.description ?? '',
-          framingAbility: e.framingAbility ?? null,
-          resolutionAbility: e.resolutionAbility,
           difficulty: e.difficulty,
-          circumstance: 0,
           stakes: e.stakes,
-          charId: null,
-          approach: null,
-          approachDie: null,
-          approachActivated: false,
-          approachPicksLeft: 0,
-          approachPicked: [],
-          skill: null,
-          exertionGained: 0,
-          exertionFraming: 0,
-          exertionResolution: 0,
-          rerolls: 0,
-          exertionRerollArmed: false,
-          customFraming: 0,
-          customResolution: 0,
-          supporters: [],
+          framingAbility: e.framingAbility,
+          resolutionAbility: e.resolutionAbility,
+          members,
           closed: false,
-          framing: null,
-          resolution: null,
-          failingAtRoll: null,
           by: e.by,
         })
         break
+      }
+      case 'group_task_closed': {
+        const g = this.groupTasks.find((x) => x.id === e.groupId)
+        if (g) {
+          g.closed = true
+          for (const m of g.members) m.closed = true
+        }
+        break
+      }
       case 'challenge_player_set': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch) {
           Object.assign(ch, { charId: e.charId, approach: e.approach, skill: e.skill })
           // The rolling player can't also be their own supporter.
@@ -1044,24 +1106,24 @@ export class Session {
         break
       }
       case 'challenge_supporter_added': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch && !ch.supporters.some((sp) => sp.charId === e.charId)) {
           ch.supporters.push({ charId: e.charId, roll: null, ability: null, die: null })
         }
         break
       }
       case 'challenge_supporter_removed': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch) ch.supporters = ch.supporters.filter((sp) => sp.charId !== e.charId)
         break
       }
       case 'challenge_support_rolled': {
-        const sp = this.challenges.find((x) => x.id === e.challengeId)?.supporters.find((x) => x.charId === e.charId)
+        const sp = this.challengeById(e.challengeId)?.supporters.find((x) => x.charId === e.charId)
         if (sp) Object.assign(sp, { roll: e.roll, ability: e.ability, die: { face: e.face, value: e.value } })
         break
       }
       case 'challenge_rolled': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch) {
           Object.assign(ch, {
             framing: e.framing ?? null,
@@ -1076,7 +1138,7 @@ export class Session {
         break
       }
       case 'challenge_approach_activated': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (!ch) break
         ch.approachActivated = true
         // A pending effect owns the dice, so a reroll the player had chosen stands down.
@@ -1088,43 +1150,43 @@ export class Session {
         break
       }
       case 'challenge_approach_die_set': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (!ch) break
         // The new face gets a fresh Activate; effects already applied stay on the ability dice.
         Object.assign(ch, { approachDie: e.die, approachActivated: false, approachPicksLeft: 0, approachPicked: [] })
         break
       }
       case 'challenge_circumstance_set': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch) ch.circumstance = e.value
         break
       }
       case 'challenge_exerted': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         const c = this.characters.get(e.charId)
         if (ch) ch.exertionGained += 1
         if (c?.status === 'active') c.statAdj[e.stat] = e.adj
         break
       }
       case 'challenge_exertion_spent': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (!ch) break
         if (e.roll === 'framing') ch.exertionFraming += 1
         else ch.exertionResolution += 1
         break
       }
       case 'challenge_exertion_reroll_armed': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch) ch.exertionRerollArmed = e.armed
         break
       }
       case 'challenge_custom_set': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch) ch[e.roll === 'framing' ? 'customFraming' : 'customResolution'] = e.value
         break
       }
       case 'challenge_die_set': {
-        const side = this.challenges.find((x) => x.id === e.challengeId)?.[e.roll]
+        const side = this.challengeById(e.challengeId)?.[e.roll]
         if (!side) break
         side.dice[e.index] = e.value
         if (side.faces) side.faces[e.index] = e.face
@@ -1134,7 +1196,7 @@ export class Session {
         break
       }
       case 'challenge_rerolled': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         const side = ch && ch[e.roll]
         if (!ch || !side) break
         side.dice[e.index] = e.value
@@ -1148,7 +1210,7 @@ export class Session {
         break
       }
       case 'challenge_die_discarded': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         const side = ch && ch[e.roll]
         if (!ch || !side) break
         side.discarded = side.discarded ?? side.dice.map(() => false)
@@ -1158,7 +1220,7 @@ export class Session {
         break
       }
       case 'challenge_face_changed': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         const side = ch && ch[e.roll]
         if (!ch || !side) break
         side.dice[e.index] = e.value
@@ -1170,7 +1232,7 @@ export class Session {
         break
       }
       case 'challenge_dice_added': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         const side = ch && ch[e.roll]
         if (!ch || !side) break
         // A marked die (a copy) needs the `changed` array even if nothing had moved before.
@@ -1188,7 +1250,7 @@ export class Session {
         break
       }
       case 'challenge_closed': {
-        const ch = this.challenges.find((x) => x.id === e.challengeId)
+        const ch = this.challengeById(e.challengeId)
         if (ch) ch.closed = true
         break
       }
@@ -1828,12 +1890,14 @@ export class Session {
    * All of it is declared before the dice and locked once they land — see below.
    */
   setChallengePlayer(challengeId: string, charId: string | null, approach: string | null, skill: string | null, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     if (!ch || ch.closed) return null
     // Everything here is declared before the dice: the approach die is rolled with them, the
     // skill is a bonus on results that are already on the table, and the player is the one who
     // rolled. None of it moves once the roll is in.
     if (ch.resolution) return null
+    // In a group task the participant is fixed and there is no approach: only the skill is theirs.
+    if (ch.groupId && (charId !== ch.charId || approach !== null)) return null
     if (charId !== null && !this.characters.has(charId)) return null
     if (approach !== null && !this.rules.challenges.approaches.some((a) => a.id === approach)) return null
     if (skill !== null) {
@@ -1865,7 +1929,7 @@ export class Session {
    * The approach die is a plain d6, no rank shift. Once per challenge.
    */
   rollChallenge(challengeId: string, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     if (!ch || ch.closed || !ch.charId || ch.resolution) return null
     const resolutionRank = this.challengeRank(ch, 'resolution')
     if (resolutionRank === null) return null
@@ -1980,7 +2044,7 @@ export class Session {
    * stay: they are rolled results, and the log keeps both events.
    */
   setApproachDie(challengeId: string, die: number, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     if (!ch || ch.closed || !ch.resolution || !ch.approach) return false
     if (!Number.isInteger(die) || die < 1 || die > APPROACH_DIE_SIDES) return false
     this.append({ type: 'challenge_approach_die_set', challengeId, die, by })
@@ -2271,6 +2335,116 @@ export class Session {
     }
   }
 
+  // ---- challenges by id ----------------------------------------------------
+  /** A challenge by id: a regular one, or one participant's part of a group task. */
+  challengeById(id: string): Challenge | undefined {
+    return this.challenges.find((x) => x.id === id) ?? this.groupTasks.flatMap((g) => g.members).find((x) => x.id === id)
+  }
+
+  /** A fresh, unrolled challenge — for `challenge_started` and each group task participant. */
+  private newChallenge(c: {
+    id: string
+    seq: number
+    description: string
+    framingAbility: string | null
+    resolutionAbility: string
+    difficulty: number
+    stakes: ChallengeStakes
+    by: string
+  }): Challenge {
+    return {
+      ...c,
+      circumstance: 0,
+      charId: null,
+      approach: null,
+      approachDie: null,
+      approachActivated: false,
+      approachPicksLeft: 0,
+      approachPicked: [],
+      skill: null,
+      exertionGained: 0,
+      exertionFraming: 0,
+      exertionResolution: 0,
+      rerolls: 0,
+      exertionRerollArmed: false,
+      customFraming: 0,
+      customResolution: 0,
+      supporters: [],
+      groupId: null,
+      closed: false,
+      framing: null,
+      resolution: null,
+      failingAtRoll: null,
+    }
+  }
+
+  // ---- group tasks ----------------------------------------------------------
+  /** The group task on the board, if any — always the most recently started. */
+  currentGroupTask(): GroupTask | null {
+    return this.groupTasks.at(-1) ?? null
+  }
+
+  /** This character's part of the current group task, while it is still open. */
+  groupMemberOf(charId: string): Challenge | null {
+    const g = this.currentGroupTask()
+    if (!g || g.closed) return null
+    return g.members.find((m) => m.charId === charId) ?? null
+  }
+
+  /**
+   * The GM starts a group task: an optional description, the one difficulty (already nudged in
+   * the dialog), stakes, an optional framing and a resolution ability, and **who takes part** —
+   * one or more different finished characters.
+   */
+  startGroupTask(
+    opts: {
+      description?: string
+      framingAbility?: string | null
+      resolutionAbility: string
+      difficulty: number
+      stakes: ChallengeStakes
+      charIds: string[]
+    },
+    by: string,
+  ) {
+    const framingAbility = opts.framingAbility || null
+    if (framingAbility !== null && !this.isAbilityField(framingAbility)) return null
+    if (!this.isAbilityField(opts.resolutionAbility) || !Number.isFinite(opts.difficulty)) return null
+    const charIds = [...new Set(opts.charIds)]
+    if (charIds.length === 0 || charIds.some((id) => this.characters.get(id)?.status !== 'active')) return null
+    return this.append({
+      type: 'group_task_started',
+      groupId: crypto.randomUUID().slice(0, 8),
+      description: (opts.description ?? '').trim().slice(0, 200),
+      difficulty: Math.round(opts.difficulty),
+      stakes: opts.stakes,
+      framingAbility,
+      resolutionAbility: opts.resolutionAbility,
+      members: charIds.map((charId) => ({ challengeId: crypto.randomUUID().slice(0, 8), charId })),
+      by,
+    })
+  }
+
+  /** "Group task done": closes every participant's part at once, rolled or not. */
+  closeGroupTask(groupId: string, by: string) {
+    const g = this.groupTasks.find((x) => x.id === groupId)
+    if (!g || g.closed) return false
+    this.append({ type: 'group_task_closed', groupId, by })
+    return true
+  }
+
+  /**
+   * The summary under a group task: every rolled participant's resolution margin (after their
+   * framing rung, skill and exertion — challengeMath), added up. `rolled` of `total` have rolled.
+   */
+  groupTotal(g: GroupTask) {
+    const results = g.members.flatMap((m) => {
+      const r = this.challengeMath(m).resolution
+      return r ? [r.difference] : []
+    })
+    return { sum: results.reduce((a, b) => a + b, 0), rolled: results.length, total: g.members.length }
+  }
+
   // ---- support ----------------------------------------------------------------
   /** What the supporters' dice add to one of the challenge's checks. */
   supportTotal(ch: Challenge, roll: ChallengeRoll) {
@@ -2283,9 +2457,9 @@ export class Session {
    * the dice are in, but it can be lined up before).
    */
   addSupporter(challengeId: string, charId: string, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     const char = this.characters.get(charId)
-    if (!ch || ch.closed || char?.status !== 'active' || ch.charId === charId) return false
+    if (!ch || ch.groupId || ch.closed || char?.status !== 'active' || ch.charId === charId) return false
     if (ch.supporters.some((sp) => sp.charId === charId)) return false
     this.append({ type: 'challenge_supporter_added', challengeId, charId, by })
     return true
@@ -2293,7 +2467,7 @@ export class Session {
 
   /** The GM takes a supporter off again — with their die, if they had rolled it. */
   removeSupporter(challengeId: string, charId: string, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     if (!ch || ch.closed || !ch.supporters.some((sp) => sp.charId === charId)) return false
     this.append({ type: 'challenge_supporter_removed', challengeId, charId, by })
     return true
@@ -2306,7 +2480,7 @@ export class Session {
    * player's to take off their sheet.
    */
   rollSupport(challengeId: string, charId: string, roll: ChallengeRoll, ability: string, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     const sp = ch?.supporters.find((x) => x.charId === charId)
     const char = this.characters.get(charId)
     if (!ch || !sp || sp.die || ch.closed || !ch.resolution || char?.status !== 'active') return false
@@ -2324,7 +2498,7 @@ export class Session {
 
   /** The challenge's player, if the dice are in, it is open and it is theirs to act on. */
   private actingCharacter(challengeId: string, charId: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     // `resolution`, not `framing`: framing is optional, the resolution check always happens.
     if (!ch || ch.closed || !ch.resolution || ch.charId !== charId) return null
     const char = this.characters.get(charId)
@@ -2337,7 +2511,7 @@ export class Session {
    */
   private editableChallenge(challengeId: string, charId: string | null) {
     if (charId !== null) return this.actingCharacter(challengeId, charId)?.ch ?? null
-    const ch = this.challenges.find((x) => x.id === challengeId)
+    const ch = this.challengeById(challengeId)
     return ch && !ch.closed && ch.resolution ? ch : null
   }
 
@@ -2447,8 +2621,9 @@ export class Session {
    * screen follow it live.
    */
   adjustCircumstance(challengeId: string, delta: number, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch || ch.closed || !Number.isFinite(delta)) return false
+    const ch = this.challengeById(challengeId)
+    // A group task's difficulty is set before the players are invited, not nudged afterwards.
+    if (!ch || ch.groupId || ch.closed || !Number.isFinite(delta)) return false
     const value = Math.max(-MAX_CIRCUMSTANCE, Math.min(MAX_CIRCUMSTANCE, ch.circumstance + Math.round(delta)))
     if (value === ch.circumstance) return false // already at the end of the range, or a delta of 0
     this.append({ type: 'challenge_circumstance_set', challengeId, value, by })
@@ -2457,8 +2632,8 @@ export class Session {
 
   /** GM accepts the result: the challenge stops taking input. */
   closeChallenge(challengeId: string, by: string) {
-    const ch = this.challenges.find((x) => x.id === challengeId)
-    if (!ch || ch.closed || !ch.resolution) return false
+    const ch = this.challengeById(challengeId)
+    if (!ch || ch.groupId || ch.closed || !ch.resolution) return false // a group closes as one
     this.append({ type: 'challenge_closed', challengeId, by })
     return true
   }

@@ -730,6 +730,25 @@ chosen (a faint purple ring marks them, since phones have no hover). Repeatable 
 Every reroll — exertion or approach — is counted per die in `ChallengeSide.rerolled[i]` and shown
 under that die as **"Reroll N"**, so the table can see a 1 that was bought three times.
 
+**Group task** (user-designed): the GM's **"Start group task"** opens `GroupTaskDialog`: an optional
+description, stakes, a difficulty off the ladder **nudged ±1 before anyone is invited** (fixed once
+started — no circumstance afterwards), an optional framing and a resolution ability, and **who
+joins** (any number of finished characters; the count is shown). One `group_task_started` event
+creates a `GroupTask` with **one ordinary `Challenge` per participant** (`groupId` set, `charId`
+fixed), so the challenge maths, skill bonus, framing rung, exertion (+1 or a reroll) and reroll
+rules are the very same code. Per participant: pick a **skill**, **Roll**, then exertion as in a
+challenge — but **no approach die and no supporters** (`setChallengePlayer`, `addSupporter`,
+`adjustCircumstance` and `closeChallenge` refuse group members; `challengeById` finds members for
+every other challenge method). `GroupTaskBoard` (`#group-board`, all three screens; a player sees it
+only when they take part, and then sees everyone's rolls) shows the difficulty once, each
+participant's name + result and their framing/resolution boxes, and **at the very bottom the total**:
+everyone's resolution margins added up (`groupTotal`, "2 of 3 rolled"). **"Group task done"**
+(`group_task_closed`) closes every part at once. Routes: `/gm/group/start|done`,
+`/c/:id/group/setup|roll|exert|spend-exertion|reroll-mode|reroll` (the participant's own part;
+`ExertionControls` takes a `base` URL). **History log** (table): "Group task: Haul the cart
+(challenging) 7 — Mara +3, Jorik -2 · total +1", green/red by the total's sign, once closed or
+replaced by a newer one.
+
 **Support** (user-designed): the GM adds other players as **supporters** of the current challenge
 (a "Add a supporter…" list on the GM board: finished characters other than the one rolling; ✕ takes
 one off again, with their die). A supporter **sees the challenge on their own screen** (they are

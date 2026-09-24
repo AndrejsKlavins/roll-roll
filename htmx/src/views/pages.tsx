@@ -3,6 +3,8 @@ import type { Character, Session } from '../session'
 import {
   ChallengeBoard,
   ChallengeSetupDialog,
+  GroupTaskBoard,
+  GroupTaskDialog,
   OppositionBoard,
   OppositionDialog,
   SoloRollBoard,
@@ -69,6 +71,7 @@ export function PlayerPage(props: { session: Session; charId: string }) {
         <aside>
           <ChallengeBoard session={session} role="player" viewerCharId={charId} />
           <OppositionBoard session={session} role="player" viewerCharId={charId} />
+          <GroupTaskBoard session={session} role="player" viewerCharId={charId} />
           <SoloRollBoard session={session} role="player" />
           <h3>Rolls</h3>
           <Feed session={session} viewer="player" />
@@ -86,6 +89,7 @@ export function TablePage(props: { session: Session }) {
       <main class="table-screen">
         <ChallengeBoard session={session} role="table" />
         <OppositionBoard session={session} role="table" />
+        <GroupTaskBoard session={session} role="table" />
         <SoloRollBoard session={session} role="table" />
       </main>
     </Layout>
@@ -194,11 +198,13 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
           <BackupCard />
           <ChallengeBoard session={session} role="gm" />
           <OppositionBoard session={session} role="gm" />
+          <GroupTaskBoard session={session} role="gm" />
           <SoloRollBoard session={session} role="gm" />
           <ChallengeSetupDialog session={session} />
           <SoloRollDialog session={session} />
           <ConsequenceDialog session={session} />
           <OppositionDialog session={session} />
+          <GroupTaskDialog session={session} />
 
           <form
             class="card gm-roll"

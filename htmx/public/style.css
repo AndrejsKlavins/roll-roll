@@ -559,6 +559,22 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .approach-side-btn .field-icon svg, .approach-side-btn .field-icon img { width: 15px; height: 15px; }
 /* ---- opposition roll: two contestants compared, no difficulty number ---- */
 .opposition-board { display: grid; gap: 0.6rem; margin-top: 1rem; }
+/* Group task: one block per participant (their two roll boxes), and the total at the very bottom. */
+.group-board { display: grid; gap: 0.6rem; margin-top: 1rem; }
+.group-board:empty { display: none; }
+.group-task { display: grid; gap: 0.8rem; }
+.group-member { display: grid; gap: 0.5rem; padding: 0.6rem; border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.group-member.success { border-left-color: #5cc27a; }
+.group-member.failure { border-left-color: var(--danger); }
+.group-member-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.group-member-head b { font-size: 1.05rem; }
+.group-setup { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: flex-end; }
+.group-total { display: flex; align-items: baseline; justify-content: center; gap: 0.6rem; padding: 0.7rem; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); }
+.group-total-label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.8rem; color: var(--muted); font-weight: 700; }
+.group-total-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+.group-total.help .group-total-value { color: #5cc27a; }
+.group-total.hinder .group-total-value { color: var(--danger); }
+.group-nudge { display: flex; align-items: center; justify-content: center; gap: 0.5rem; color: var(--muted); font-size: 0.85rem; }
 .opposition-board:empty { display: none; }
 .opposition { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.8rem; display: grid; gap: 0.5rem; }
 .opp-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
