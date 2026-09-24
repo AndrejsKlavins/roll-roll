@@ -7,8 +7,8 @@
 //            Play changes to base fields are stored as adjustments (current = base + adj),
 //            so correcting a base value later keeps e.g. a −1 from poison.
 import { Database } from 'bun:sqlite'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { cryptoRng, evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
 import {
@@ -412,6 +412,8 @@ export type EventData =
   | { type: 'character_created'; charId: string; name: string }
   | { type: 'character_renamed'; charId: string; from: string; to: string; by: string }
   | { type: 'character_deleted'; charId: string; by: string }
+  // A character restored from a backup file: arrives finished, with its whole state.
+  | { type: 'character_imported'; charId: string; snapshot: CharacterSnapshot; by: string }
   | { type: 'character_finalized'; charId: string; base: Record<string, number>; values: Values; traits: string[]; by: string }
   // For base fields of active characters, from/to are current values (base + adjustment).
   | { type: 'field_set'; charId: string; field: string; from: number | string; to: number | string; by: string }
@@ -662,6 +664,30 @@ export type ItemModifier = { target: string; delta: number }
  */
 export type Item = { id: string; name: string; modifiers: ItemModifier[]; enabled: boolean }
 
+/**
+ * Everything that makes up a finished character, for backups (see backup.ts): exported to a CSV
+ * a person can read, and imported back as a new character in one `character_imported` event.
+ */
+export type CharacterSnapshot = {
+  name: string
+  level: number
+  pointsGranted: number
+  /** Untrained base fields (abilities). */
+  base: Record<string, number>
+  /** Play changes on top of base (not including equipment). */
+  adj: Record<string, number>
+  /** Play changes to calculated stats (a pool's spent points are negative). */
+  statAdj: Record<string, number>
+  /** Permanent (trait-driven) shifts to calculated stats. */
+  statBonus: Record<string, number>
+  /** Skill points assigned per trained field. */
+  skillPoints: Record<string, number>
+  /** Non-base fields: text (bio, gear, notes), plain numbers (money) and tracks. */
+  values: Values
+  traits: string[]
+  items: Item[]
+}
+
 /** At most this many modifiers on one item, and this big a bonus each — sanity limits only. */
 export const MAX_ITEM_MODIFIERS = 12
 export const MAX_ITEM_DELTA = 99
@@ -682,6 +708,7 @@ const CHANGE_TYPES = new Set<EventData['type']>([
   'undo',
   'character_renamed',
   'character_deleted',
+  'character_imported',
   'session_started',
 ])
 
@@ -717,8 +744,11 @@ export class Session {
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
   private readonly db: Database
+  /** Where the database lives; log imports write a safety copy of the old log here. */
+  private readonly dataDir: string
 
   constructor(readonly rules: Rules, dbPath: string) {
+    this.dataDir = dirname(dbPath)
     this.powerLevel = rules.powerLevel
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath, { create: true })
@@ -793,6 +823,8 @@ export class Session {
     this.challenges.length = 0
     this.soloRolls.length = 0
     this.oppositions.length = 0
+    // Replayed from the log like everything else (power_level_set), so start from the default.
+    this.powerLevel = this.rules.powerLevel
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
     for (const e of this.events) this.apply(e)
     // Draft edits aren't events; layer the saved draft on top.
@@ -829,6 +861,26 @@ export class Session {
         })
         this.names.set(e.charId, e.name)
         break
+      case 'character_imported': {
+        const snap = e.snapshot
+        this.characters.set(e.charId, {
+          id: e.charId,
+          name: snap.name,
+          status: 'active',
+          values: { ...defaultValues(this.rules), ...snap.values },
+          base: { ...snap.base },
+          adj: { ...snap.adj },
+          statAdj: { ...snap.statAdj },
+          statBonus: { ...snap.statBonus },
+          skillPoints: { ...snap.skillPoints },
+          pointsGranted: snap.pointsGranted,
+          level: snap.level,
+          traits: [...snap.traits],
+          items: snap.items.map((it) => ({ ...it, modifiers: it.modifiers.map((m) => ({ ...m })) })),
+        })
+        this.names.set(e.charId, snap.name)
+        break
+      }
       case 'character_finalized': {
         const c = this.characters.get(e.charId)
         if (c)
@@ -1569,6 +1621,90 @@ export class Session {
     if (!Number.isFinite(n) || n === this.powerLevel) return false
     this.append({ type: 'power_level_set', value: n, from: this.powerLevel, by })
     return true
+  }
+
+  // ---- backups ------------------------------------------------------------
+  /** A finished character's whole state, for export (see backup.ts). */
+  snapshotOf(c: Character): CharacterSnapshot {
+    const values: Values = {}
+    for (const f of this.rules.fields.values()) if (!isBaseField(f)) values[f.id] = c.values[f.id] ?? f.default
+    return {
+      name: c.name,
+      level: c.level,
+      pointsGranted: c.pointsGranted,
+      base: { ...c.base },
+      adj: { ...c.adj },
+      statAdj: { ...c.statAdj },
+      statBonus: { ...c.statBonus },
+      skillPoints: { ...c.skillPoints },
+      values,
+      traits: [...c.traits],
+      items: c.items.map((it) => ({ ...it, modifiers: it.modifiers.map((m) => ({ ...m })) })),
+    }
+  }
+
+  /**
+   * Restores a character from a backup as a **new** finished character (a fresh id, so it never
+   * clashes with one still in the game). The snapshot has already been checked against these
+   * rules (backup.ts), so this only logs it. The GM does it; it shows in the change log.
+   */
+  importCharacter(snapshot: CharacterSnapshot, by: string) {
+    const name = cleanName(snapshot.name)
+    if (!name) return null
+    const charId = crypto.randomUUID().slice(0, 8)
+    this.append({ type: 'character_imported', charId, snapshot: { ...snapshot, name }, by })
+    return this.characters.get(charId) ?? null
+  }
+
+  /**
+   * The whole event log as JSON Lines — one event per line, `id` and `ts` included — which is
+   * everything the game is: characters, rolls, challenges, the change log. importLog reads it back.
+   */
+  exportLog() {
+    return this.events.map((e) => JSON.stringify(e)).join('\n') + '\n'
+  }
+
+  /**
+   * Replaces the **whole** event log with one exported earlier, and rebuilds everything from it.
+   * Every line must be an event with a whole-number id (strictly increasing), a timestamp and a
+   * type; otherwise nothing is touched and the reason comes back. The log being replaced is first
+   * written to `data/backup-<time>.jsonl`, so an import can itself be undone by importing that.
+   * Drafts (characters in creation) are not in the log and stay as they are.
+   */
+  importLog(text: string): { ok: true; events: number; backup: string } | { ok: false; error: string } {
+    const lines = text.split(/\r?\n/).filter((l) => l.trim())
+    if (lines.length === 0) return { ok: false, error: 'The file has no events in it.' }
+    const events: LoggedEvent[] = []
+    for (const [i, line] of lines.entries()) {
+      let e: unknown
+      try {
+        e = JSON.parse(line)
+      } catch {
+        return { ok: false, error: `Line ${i + 1} is not valid JSON.` }
+      }
+      const ev = e as { id?: unknown; ts?: unknown; type?: unknown }
+      if (!ev || typeof ev !== 'object' || !Number.isInteger(ev.id) || typeof ev.ts !== 'number' || typeof ev.type !== 'string') {
+        return { ok: false, error: `Line ${i + 1} is not an event (it needs an id, ts and type).` }
+      }
+      if (events.length && (ev.id as number) <= events.at(-1)!.id) {
+        return { ok: false, error: `Line ${i + 1}: event ids must go up (got ${ev.id} after ${events.at(-1)!.id}).` }
+      }
+      events.push(e as LoggedEvent)
+    }
+    const backup = join(this.dataDir, `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`)
+    writeFileSync(backup, this.exportLog())
+    const insert = this.db.query('INSERT INTO events (id, ts, type, data) VALUES (?, ?, ?, ?)')
+    this.db.transaction(() => {
+      this.db.run('DELETE FROM events')
+      for (const e of events) {
+        const { id, ts, ...data } = e
+        insert.run(id, ts, e.type, JSON.stringify(data))
+      }
+    })()
+    this.events.length = 0
+    this.events.push(...events)
+    this.rebuild()
+    return { ok: true, events: events.length, backup }
   }
 
   /** Undoes the character's most recent value, base, stat, trait or item change still in effect. */

@@ -35,6 +35,22 @@ export const hub = {
   count() {
     return clients.size
   },
+  /**
+   * Drops every connection. Each screen reconnects and reloads (public/app.js), which is how
+   * everyone picks up a replaced event log without a special message.
+   */
+  closeAll() {
+    for (const c of clients) {
+      try {
+        // 1012 "service restart": the htmx ws extension only reconnects after an abnormal code
+        // (1006/1012/1013) — a plain close would leave the page waiting.
+        c.ws.close(1012, 'Game restored from a backup')
+      } catch {
+        // already gone
+      }
+    }
+    clients.clear()
+  },
 }
 
 // Whitespace-only message: htmx swaps nothing, but the client notes it arrived.

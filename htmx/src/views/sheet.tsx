@@ -878,6 +878,12 @@ function ManageCharacter(props: { session: Session; char: Character }) {
           </div>
         </div>
       )}
+      {char.status === 'active' && (
+        // A backup of this character as a CSV (download); the Backups card imports it again.
+        <a class="button small-link" href={`/gm/character/${char.id}/export`} download>
+          Export character (CSV)
+        </a>
+      )}
       <form class="rename" hx-post={`/c/${char.id}/rename`} hx-swap="none">
         <input name="name" value={char.name} maxlength={40} required autocomplete="off" />
         <button type="submit">Rename</button>

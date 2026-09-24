@@ -3,6 +3,7 @@ import { serveStatic, upgradeWebSocket } from 'hono/bun'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
+import { characterToCsv, csvToSnapshot } from './backup'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
 import { ChallengeBoard, ChallengePlayerPicker, OppositionBoard, SoloRollBoard } from './views/challenge'
@@ -692,6 +693,64 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       if (err instanceof ExprError) return c.text(err.message)
       throw err
     }
+  })
+
+  // ---- backups ------------------------------------------------------------
+  /** A file name made from a character or date: letters, digits and dashes only. */
+  const fileName = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'backup'
+  const download = (c: Context, name: string, type: string, body: string) =>
+    c.body(body, 200, {
+      'Content-Type': `${type}; charset=utf-8`,
+      'Content-Disposition': `attachment; filename="${name}"`,
+    })
+  const uploadedText = async (c: Context) => {
+    const file = (await c.req.parseBody())['file']
+    return file instanceof File ? await file.text() : null
+  }
+  /** What an import reports under its form: plain text, escaped. */
+  const status = (c: Context, text: string, ok: boolean) =>
+    c.html(<span class={ok ? 'ok' : 'error'}>{text}</span>)
+
+  app.get('/gm/character/:id/export', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    if (char?.status !== 'active') return c.notFound()
+    // A BOM so Excel reads the file as UTF-8 (names and notes may not be plain ASCII).
+    return download(c, `${fileName(char.name)}.csv`, 'text/csv', '\uFEFF' + characterToCsv(session, char))
+  })
+
+  app.post('/gm/character/import', async (c) => {
+    const text = await uploadedText(c)
+    if (text === null) return status(c, 'Pick a CSV file first.', false)
+    const parsed = csvToSnapshot(session, text)
+    if ('error' in parsed) return status(c, parsed.error, false)
+    const char = session.importCharacter(parsed.snapshot, actorName(c))
+    if (!char) return status(c, 'The backup has no usable name.', false)
+    hub.send(
+      (client) => client.role === 'gm',
+      () =>
+        `<div hx-swap-oob="beforeend:#sheets">${html(<Sheet session={session} char={char} gm />)}</div>` +
+        html(<ChangeLog session={session} oob />),
+    )
+    pushChallengePlayers()
+    const skipped = parsed.warnings.length
+      ? ` ${parsed.warnings.length} line(s) left out: ${parsed.warnings.slice(0, 5).join('; ')}${parsed.warnings.length > 5 ? '; …' : ''}`
+      : ''
+    return status(c, `Imported ${char.name} as a new character.${skipped}`, true)
+  })
+
+  app.get('/gm/log/export', (c) => {
+    const date = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')
+    return download(c, `${fileName(rules.name)}-log-${date}.jsonl`, 'application/x-ndjson', session.exportLog())
+  })
+
+  app.post('/gm/log/import', async (c) => {
+    const text = await uploadedText(c)
+    if (text === null) return status(c, 'Pick a log file first.', false)
+    const result = session.importLog(text)
+    if (!result.ok) return status(c, result.error, false)
+    // Every screen reconnects and reloads onto the restored game — after this answer is out.
+    setTimeout(() => hub.closeAll(), 300)
+    return status(c, `Restored ${result.events} events. Screens are reloading…`, true)
   })
 
   app.post('/gm/session', (c) => {

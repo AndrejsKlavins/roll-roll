@@ -129,6 +129,7 @@ htmx/
     session.test.ts     bun tests for drafts, finishing, base/adjustment, undo, restart replay
     rules.test.ts       bun tests for field icon/colour parsing and validation
     hub.ts              connected WebSocket clients, send helper, heartbeat
+    backup.ts           character ⇄ CSV (export, and checked import); CSV parser
     network.ts          LAN IPv4 detection (prefers Wi-Fi, skips virtual adapters)
     engine/
       expr.ts           tokenizer + recursive-descent evaluator for formulas and dice
@@ -311,6 +312,28 @@ Notes:
     and the row's "modified" / "reset" compare against `base + gear`, so a stepper press or reset
     can't swallow or cancel an item. Rows an item touches show a small "+1 gear" note.
   - Pushes: `pushItems` sends the list, the touched rows, all stats and the challenge board.
+- **Backups** (user request; GM screen, **Backups** card, and **Export character (CSV)** in each
+  finished character's Manage section):
+  - **Character → CSV** (`backup.ts` `characterToCsv`, `GET /gm/character/:id/export`): one row per
+    value, columns `kind, id, label, value` — name, level, skill points granted, each ability's
+    `base`, `skill_points` per skill, `value` for bio/money/gear/notes, `play` / `stat_play` /
+    `stat_bonus` changes, `trait`s, `item` / `item_disabled` ("Strength +1; Attack damage +3"), and
+    **`current` rows for reading only** (what the sheet shows; ignored on import). UTF-8 with a BOM
+    so Excel opens it cleanly; a `#` comment line on top.
+  - **CSV → character** (`csvToSnapshot` + `Session.importCharacter`, `POST /gm/character/import`):
+    always a **new** character (fresh id) via one `character_imported` event carrying the whole
+    `CharacterSnapshot`; in the change log ("GM imported Mara from a backup"). Checked against the
+    **current** rules: unknown fields, traits or item targets are **left out with warnings** (shown
+    under the form) rather than failing; no name or a non-backup file is refused. Hand edits in a
+    spreadsheet come through; `;`-separated files and Excel's BOM are read too.
+  - **Session log** (`Session.exportLog` / `importLog`, `GET /gm/log/export`, `POST /gm/log/import`):
+    the whole event log as **JSON Lines** (one event per line, `id` and `ts` kept) — i.e. the entire
+    game. Import **replaces** the log (confirm dialog): every line must be an event with an
+    increasing whole-number id, or nothing changes. The replaced log is first written to
+    `data/backup-<time>.jsonl`, so an import can be undone by importing that file. Afterwards
+    `hub.closeAll()` drops every socket with code **1012** (the htmx ws extension only reconnects on
+    1006/1012/1013), and each screen reloads onto the restored game. `rebuild()` now also resets the
+    power level target, since it is replayed from the log. Drafts (not in the log) are untouched.
 - **Money**: a plain number field with `input: true` — a typed-in box (saved on change, no − / +),
   held to its `min: 0`. Any number field that isn't a base field may use `input: true`.
 - **Compact sections** (user request, for Bio): a section with `compact: true` in rules.yaml shows,

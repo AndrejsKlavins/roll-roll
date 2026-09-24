@@ -100,6 +100,49 @@ export function SessionLabel(props: { session: Session; oob?: boolean }) {
   )
 }
 
+/**
+ * GM backups: the whole event log out (JSON Lines) and back in — which replaces the game — and a
+ * character CSV (exported from its sheet's Manage section) back in as a new character. Import
+ * results land in the status line under each form.
+ */
+function BackupCard() {
+  return (
+    <details class="card backup-card">
+      <summary>Backups</summary>
+      <div class="backup-block">
+        <h4>Session log</h4>
+        <p class="muted">Everything so far — characters, rolls, challenges — as one file.</p>
+        <a class="button small-link" href="/gm/log/export" download>
+          Export session log
+        </a>
+        <form
+          hx-post="/gm/log/import"
+          hx-encoding="multipart/form-data"
+          hx-target="next .backup-status"
+          hx-confirm="Replace the whole game with this log? Everything now on the screens is swapped for what the file holds. (The current log is saved to the data folder first.)"
+        >
+          <input type="file" name="file" accept=".jsonl,.json,.txt" required />
+          <button type="submit" class="small">
+            Import session log
+          </button>
+        </form>
+        <p class="backup-status" role="status"></p>
+      </div>
+      <div class="backup-block">
+        <h4>Character</h4>
+        <p class="muted">Export one from its sheet (Manage). Importing adds it as a new character.</p>
+        <form hx-post="/gm/character/import" hx-encoding="multipart/form-data" hx-target="next .backup-status">
+          <input type="file" name="file" accept=".csv,text/csv" required />
+          <button type="submit" class="small">
+            Import character
+          </button>
+        </form>
+        <p class="backup-status" role="status"></p>
+      </div>
+    </details>
+  )
+}
+
 export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: string }) {
   const { session } = props
   return (
@@ -144,6 +187,8 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
           <a class="button" href="/table" target="_blank" rel="noopener">
             Open public table screen ↗
           </a>
+
+          <BackupCard />
           <ChallengeBoard session={session} role="gm" />
           <OppositionBoard session={session} role="gm" />
           <SoloRollBoard session={session} role="gm" />

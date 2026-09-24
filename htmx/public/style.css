@@ -64,6 +64,18 @@ main { padding: 1rem; max-width: 1400px; margin: 0 auto; }
 .qr svg { width: 100%; max-width: 260px; display: block; margin: 0.8rem auto; background: #fff; border-radius: 6px; }
 .gm-roll { display: grid; gap: 0.5rem; margin-top: 1rem; }
 .gm-roll h3 { margin: 0; }
+/* GM backups: log out/in, character in; export links styled as small buttons. */
+.backup-card summary { font-weight: 600; }
+.backup-block { display: grid; gap: 0.4rem; margin-top: 0.8rem; }
+.backup-block h4 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.backup-block p { margin: 0; }
+.backup-block form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.backup-block input[type=file] { width: auto; flex: 1; min-width: 0; padding: 0.3rem; font-size: 0.8rem; }
+a.button.small-link { justify-self: start; padding: 0.35rem 0.8rem; font-size: 0.85rem; }
+.manage a.button.small-link { display: inline-block; margin: 0.3rem 0; }
+.backup-status { font-size: 0.85rem; min-height: 1.2em; }
+.backup-status .ok { color: #5cc27a; }
+.backup-status .error { color: var(--danger); }
 .visibility { display: grid; gap: 0.2rem; font-size: 0.9rem; }
 .visibility input { width: auto; }
 
