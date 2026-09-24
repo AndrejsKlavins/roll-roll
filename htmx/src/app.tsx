@@ -7,6 +7,7 @@ import { characterToCsv, csvToSnapshot } from './backup'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
 import { ChallengeBoard, ChallengePlayerPicker, OppositionBoard, SoloRollBoard } from './views/challenge'
+import { ConsequenceResult } from './views/consequence'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
 import {
@@ -693,6 +694,15 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       if (err instanceof ExprError) return c.text(err.message)
       throw err
     }
+  })
+
+  // Boons and complications: the GM's private roll on a table, answered into the dialog.
+  app.post('/gm/consequence/roll', async (c) => {
+    const body = await form(c)
+    const kind = body.kind === 'complication' ? 'complication' : 'boon'
+    const result = session.rollConsequence(kind, Number(body.rank))
+    if (!result) return c.text('No such rank', 400)
+    return c.html(<ConsequenceResult {...result} />)
   })
 
   // ---- backups ------------------------------------------------------------

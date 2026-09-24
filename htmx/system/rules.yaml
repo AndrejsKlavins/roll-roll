@@ -340,6 +340,64 @@ sections:
       - { id: gear,  label: Gear,  type: text, lines: 4 }
       - { id: notes, label: Notes, type: text, lines: 3 }
 
+# Boons and complications the GM rolls for (GM screen: "Roll boon" / "Roll complication").
+# The GM picks a rank, the app rolls a die with one side per face listed here (5 faces → d5)
+# and shows that face's entry at that rank. Every face needs the same number of ranks.
+# The text is only read out — nothing is applied to a sheet automatically.
+consequences:
+  boons:
+    - face: 1
+      ranks:
+        - { title: Benefit Inspired 1,          text: "+1 to your next roll until you rest or fail." }
+        - { title: Permanent Benefit Hidden Help 2, text: "+1 to your roll when you cash it out" }
+        - { title: Permanent Benefit Hidden Help 3, text: "+2 to your roll when you cash it out" }
+    - face: 2
+      ranks:
+        - { title: Efficient 1, text: "Do it 33% faster (if applicable)" }
+        - { title: Efficient 2, text: "Do it 50% faster (if applicable)" }
+        - { title: Efficient 3, text: "Do it 75% faster (if applicable)" }
+    - face: 3
+      ranks:
+        - { title: Lucky 1, text: "Find something useful (if applicable) in the value of up to 5" }
+        - { title: Lucky 2, text: "Find something useful (if applicable) in the value of up to 10" }
+        - { title: Lucky 3, text: "Find something useful (if applicable) in the value of up to 20" }
+    - face: 4
+      ranks:
+        - { title: Improved confidence 1, text: "Regain 1 stamina or willpower" }
+        - { title: Improved confidence 2, text: "Regain up to 2 stamina or willpower" }
+        - { title: Improved confidence 3, text: "Restore fully either stamina or willpower" }
+    - face: 5
+      ranks:
+        - { title: Benefit Inspired 1,    text: "+1 to your next roll until you rest or fail." }
+        - { title: Improved situation 2, text: "This task becomes -1 easier for future checks" }
+        - { title: Improved situation 3, text: "This task becomes -2 easier for future checks" }
+  complications:
+    - face: 1
+      ranks:
+        - { title: Potential harm 1, text: "Roll your endurance against easy injury" }
+        - { title: Potential harm 2, text: "Roll your endurance against challenging injury" }
+        - { title: Potential harm 3, text: "Roll your endurance against hard injury" }
+    - face: 2
+      ranks:
+        - { title: Clumsy 1, text: "Do it 33% slower (if applicable)" }
+        - { title: Clumsy 2, text: "Do it 50% slower (if applicable)" }
+        - { title: Clumsy 3, text: "Do it 100% slower (if applicable)" }
+    - face: 3
+      ranks:
+        - { title: Potential distress 1, text: "Roll your resolve against easy mental trauma" }
+        - { title: Potential distress 2, text: "Roll your resolve against challenging mental trauma" }
+        - { title: Potential distress 3, text: "Roll your resolve against hard mental trauma" }
+    - face: 4
+      ranks:
+        - { title: Overworked,   text: "Lose 1 stamina or willpower" }
+        - { title: Overworked 2, text: "Lose 2 stamina or willpower" }
+        - { title: Overworked 3, text: "Lose completely willpower or stamina" }
+    - face: 5
+      ranks:
+        - { title: Gain hindrance 1, text: "-1 to your next roll that GM will invoke" }
+        - { title: Gain hindrance 2, text: "-2 to your next roll that GM will invoke" }
+        - { title: Gain hindrance 3, text: "-3 to your next roll that GM will invoke" }
+
 # Stats that exist only on items (shown with the item, used by no sheet row or formula).
 equipment:
   item_stats:

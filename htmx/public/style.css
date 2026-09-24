@@ -64,6 +64,25 @@ main { padding: 1rem; max-width: 1400px; margin: 0 auto; }
 .qr svg { width: 100%; max-width: 260px; display: block; margin: 0.8rem auto; background: #fff; border-radius: 6px; }
 .gm-roll { display: grid; gap: 0.5rem; margin-top: 1rem; }
 .gm-roll h3 { margin: 0; }
+/* Boons & complications: two buttons on the GM screen, a small dialog with rank + Roll / Reroll. */
+.consequence-card { display: flex; gap: 0.5rem; }
+.consequence-card button { flex: 1; font-weight: 600; }
+.consequence-open.boon { color: #5cc27a; border-color: color-mix(in srgb, #5cc27a 50%, var(--line)); }
+.consequence-open.complication { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); }
+.consequence-dialog form { display: grid; gap: 0.8rem; min-width: min(360px, 85vw); }
+.consequence-ranks { display: flex; gap: 0.5rem; }
+.consequence-ranks .pick-btn { flex: 1; justify-content: center; }
+.consequence-result-slot:empty { display: none; }
+.consequence-result { display: grid; gap: 0.3rem; padding: 0.7rem 0.8rem; border-radius: var(--radius); background: var(--panel-2); border-left: 4px solid var(--line); animation: pop 0.25s ease-out; }
+.consequence-result.boon { border-left-color: #5cc27a; }
+.consequence-result.complication { border-left-color: var(--danger); }
+.consequence-die { color: var(--muted); font-size: 0.8rem; }
+.consequence-die b { color: var(--text); font-size: 1rem; }
+.consequence-title { font-size: 1.15rem; font-weight: 700; }
+.consequence-result.boon .consequence-title { color: #5cc27a; }
+.consequence-result.complication .consequence-title { color: var(--danger); }
+.consequence-text { margin: 0; }
+.consequence-meta { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
 /* GM backups: log out/in, character in; export links styled as small buttons. */
 .backup-card summary { font-weight: 600; }
 .backup-block { display: grid; gap: 0.4rem; margin-top: 0.8rem; }

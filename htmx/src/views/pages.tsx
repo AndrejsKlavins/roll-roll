@@ -8,6 +8,7 @@ import {
   SoloRollBoard,
   SoloRollDialog,
 } from './challenge'
+import { ConsequenceButtons, ConsequenceDialog } from './consequence'
 import { ChangeLog, Feed } from './feed'
 import { Layout } from './layout'
 import { Sheet } from './sheet'
@@ -184,6 +185,8 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             </div>
           )}
 
+          <ConsequenceButtons session={session} />
+
           <a class="button" href="/table" target="_blank" rel="noopener">
             Open public table screen ↗
           </a>
@@ -194,6 +197,7 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
           <SoloRollBoard session={session} role="gm" />
           <ChallengeSetupDialog session={session} />
           <SoloRollDialog session={session} />
+          <ConsequenceDialog session={session} />
           <OppositionDialog session={session} />
 
           <form

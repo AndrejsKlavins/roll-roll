@@ -2413,6 +2413,22 @@ export class Session {
     return outcomeFor(solo.roll.sum, solo.difficulty, 'low')
   }
 
+  // ---- boons & complications ----------------------------------------------
+  /**
+   * The GM rolls on the boon or complication table (rules `consequences`) at a rank they picked:
+   * one die with a side per face of the table (d5 for five faces), and that face's entry at that
+   * rank. A private lookup for the GM — nothing is logged or shown to anyone else, and nothing is
+   * applied to a sheet. Null for a rank the table doesn't have, or with no tables configured.
+   */
+  rollConsequence(kind: 'boon' | 'complication', rank: number, rng: (sides: number) => number = cryptoRng) {
+    const config = this.rules.consequences
+    if (!config || !Number.isInteger(rank) || rank < 1 || rank > config.ranks) return null
+    const table = config[kind]
+    const sides = table.faces.length
+    const face = rng(sides)
+    return { kind, label: table.label, rank, sides, face, entry: table.faces[face - 1]![rank - 1]! }
+  }
+
   // ---- opposition rolls --------------------------------------------------
   /** The opposition roll currently on the board, if any — always the most recently started. */
   currentOpposition(): Opposition | null {

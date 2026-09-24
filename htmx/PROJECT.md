@@ -660,6 +660,17 @@ safe because every push renders per client (`hub.send` with the client's role an
 board always renders its empty `<section>` so the next live update has somewhere to land — e.g. the
 moment the GM hands a challenge to that player.
 
+**Boons & complications** (user-designed): two GM buttons, **Roll boon** / **Roll complication**,
+open one small dialog (`views/consequence.tsx`): pick a **rank** (1–3), press **Roll**, and the
+result shows in the dialog — the die ("d5 rolled 3"), the entry's name and its text. The button then
+reads **Reroll** and rolls again at once; changing the rank sets it back to Roll. The tables live in
+rules.yaml under top-level **`consequences`** (`boons` / `complications`: one entry per face, in
+order from 1, each with `ranks: [{ title, text }, …]`); **the die has one side per face** (five
+faces → d5) and every face must list the same number of ranks, checked at startup. Rolled on the
+server (`session.rollConsequence`, `POST /gm/consequence/roll`) like every roll, but **a private
+lookup for the GM**: nothing is logged, shown to players or the table, or applied to a sheet (user
+decision so far — the text is read out at the table).
+
 **Solo roll** (user-designed): the GM's own roll, for an NPC's attempt or a hidden check — no
 character, no approach, no exertion and **nobody joins it**. Its own **"Start solo roll"** button
 opens `<dialog id="solo-dialog">` (`SoloRollDialog`, rendered by `GmPage` outside the boards so live

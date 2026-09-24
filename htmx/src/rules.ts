@@ -286,6 +286,16 @@ export function framingRung(ladder: FramingLadder, margin: number): FramingRung 
 /** What a rolled die face is called, and the colour it reads in (red → green). */
 export type FaceName = { value: number; label: string; color: string; ink: string }
 
+/** One cell of a boon or complication table: a short name and what it means at the table. */
+export type ConsequenceEntry = { title: string; text: string }
+/**
+ * A boon or complication table (top-level `consequences`): one row per die face, one entry per
+ * rank in each. The GM rolls a die with as many sides as the table has faces (d5 for five rows)
+ * and reads the entry at the rank they picked. The text is only read out — the app applies nothing.
+ */
+export type ConsequenceTable = { label: string; faces: ConsequenceEntry[][] }
+export type ConsequencesConfig = { boon: ConsequenceTable; complication: ConsequenceTable; ranks: number }
+
 export type ChallengesConfig = {
   difficulties: Difficulty[]
   approaches: Approach[]
@@ -315,6 +325,8 @@ export type Rules = {
   /** GM's default budget target for trait costs (usually 0); adjustable at runtime. */
   powerLevel: number
   challenges: ChallengesConfig
+  /** The GM's boon / complication tables, when the rules file has them. */
+  consequences?: ConsequencesConfig
 }
 
 /**
@@ -717,6 +729,36 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   )
   if (itemStats.length && !equipmentItem) fail('equipment.item_stats: no section has a "type: equipment" row to show items in')
 
+  // consequences: { boons: [{ face: 1, ranks: [{ title, text }, ...] }, ...], complications: [...] }
+  let consequences: ConsequencesConfig | undefined
+  if (raw?.consequences) {
+    const table = (key: 'boons' | 'complications', label: string): ConsequenceTable => {
+      const rows = (raw.consequences[key] ?? []) as any[]
+      if (!rows.length) fail(`consequences.${key}: list at least one face`)
+      const faces = rows.map((row, i) => {
+        const where = `consequences.${key}[${i}]`
+        if (Number(row?.face) !== i + 1) fail(`${where}: faces must be listed in order from 1 (got ${JSON.stringify(row?.face)})`)
+        const ranks = (row?.ranks ?? []) as any[]
+        return ranks.map((e, r) => {
+          if (!e?.title) fail(`${where}.ranks[${r}]: needs a title`)
+          return { title: String(e?.title ?? ''), text: String(e?.text ?? '').trim() }
+        })
+      })
+      return { label, faces }
+    }
+    const boon = table('boons', 'Boon')
+    const complication = table('complications', 'Complication')
+    // Every face of both tables must offer every rank, so any rank can be rolled on any face.
+    const ranks = boon.faces[0]?.length ?? 0
+    for (const [key, t] of [['boons', boon], ['complications', complication]] as const) {
+      t.faces.forEach((f, i) => {
+        if (f.length !== ranks) fail(`consequences.${key}[${i}]: has ${f.length} ranks, expected ${ranks} like the first boon face`)
+      })
+    }
+    if (ranks === 0) fail('consequences: each face needs at least one rank')
+    consequences = { boon, complication, ranks }
+  }
+
   if (errors.length) {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)
   }
@@ -740,6 +782,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       exertionSources,
       rankStep,
     },
+    consequences,
   }
 }
 
