@@ -859,6 +859,8 @@ export type EventData =
     }
   | { type: 'undo'; target: number; by: string }
   | { type: 'session_started'; by: string }
+  // A line of the GM's own text in the table's history log (user decision).
+  | { type: 'log_note_added'; noteId: string; text: string; by: string }
   // The GM's bestiary and the current encounter (see enemies.ts).
   | EnemyEventData
 
@@ -987,6 +989,8 @@ export class Session {
   readonly bestiary: Bestiary
   /** Every enemy attack on a player, in order (the table's history log shows them). */
   readonly enemyAttacks: EnemyAttack[] = []
+  /** The GM's own lines in the table's history log, in order; `seq` places them in time. */
+  readonly logNotes: { id: string; seq: number; text: string }[] = []
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
@@ -1074,6 +1078,7 @@ export class Session {
     this.groupTasks.length = 0
     this.bestiary.reset()
     this.enemyAttacks.length = 0
+    this.logNotes.length = 0
     // Replayed from the log like everything else (power_level_set), so start from the default.
     this.powerLevel = this.rules.powerLevel
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
@@ -1461,6 +1466,9 @@ export class Session {
         }
         break
       }
+      case 'log_note_added':
+        this.logNotes.push({ id: e.noteId, seq: e.id, text: e.text })
+        break
       case 'enemy_attacked': {
         const { type: _type, attackId, adj, by: _by, id, ts: _ts, ...rest } = e
         this.enemyAttacks.push({ ...rest, id: attackId, seq: id })
@@ -2924,6 +2932,13 @@ export class Session {
       adj: to - poolStat.normal,
       by,
     })
+  }
+
+  /** The GM adds a line of their own to the table's history log. Blank text adds nothing. */
+  addLogNote(text: string, by: string) {
+    const clean = text.replace(/\s+/g, ' ').trim().slice(0, 300)
+    if (!clean) return null
+    return this.append({ type: 'log_note_added', noteId: crypto.randomUUID().slice(0, 8), text: clean, by })
   }
 
   nextCombatRound(by: string) {

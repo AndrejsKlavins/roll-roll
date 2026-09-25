@@ -806,7 +806,6 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .attack-miss-note { margin: 0.4rem 0 0; color: var(--muted); font-style: italic; }
 
 /* ---- magic roll ---- */
-.challenge-start-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .magic-activate { display: grid; gap: 0.4rem; }
 .magic-activate-prompt { margin: 0; font-weight: 600; }
 .magic-activate-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
@@ -814,3 +813,16 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .magic-activate-row .magic-vs { font-size: 0.75rem; font-weight: 400; opacity: 0.8; }
 .magic-npc { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.5rem; margin-top: 0.5rem; }
 .magic-npc label { display: grid; gap: 0.2rem; font-size: 0.85rem; }
+
+/* ---- GM column: screen links (outlined) and the roll starters (one style for all) ---- */
+.gm-links { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+a.button.gm-link { background: none; color: var(--accent); border: 1px solid var(--accent); font-weight: 600; padding: 0.55rem 0.6rem; font-size: 0.9rem; }
+a.button.gm-link:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.gm-actions { display: grid; gap: 0.4rem; }
+button.gm-action { background: var(--panel-2); border: 1px solid var(--line); font-weight: 600; text-align: center; }
+button.gm-action:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- the GM's own lines in the table log ---- */
+.log-note-form { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: center; }
+.log-note-form h3 { grid-column: 1 / -1; margin: 0; }
+.challenge-log li.log-note { border-left-color: var(--accent); font-style: italic; }

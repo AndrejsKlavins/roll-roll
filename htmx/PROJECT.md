@@ -435,7 +435,14 @@ redesign are dropped on replay** (user decision: no migration); their `challenge
 
 #### The GM setup dialog
 
-- The GM board shows **only** a "Start new challenge" button; it opens `<dialog id="challenge-dialog">`
+- **GM column order** (user decision): Players join · Session · Backups · Power level · the two
+  screen links (outlined: Public table screen, Bestiary & encounter) · **the roll starters, one
+  style** (`GmActions` in pages.tsx: Start new challenge / opposition roll / group task / solo
+  roll / magic roll — each opens its dialog; the boards no longer carry their own start buttons) ·
+  GM roll · Roll boon / complication · **Add to the table log** (a line of the GM's own text:
+  `addLogNote` → `log_note_added`, `session.logNotes`, shown italic in the table's history log
+  in time order; not removable yet) · then the current boards, the feed and the change log.
+- "Start new challenge" opens `<dialog id="challenge-dialog">`
   (`ChallengeSetupDialog`), rendered by `GmPage` **outside** `ChallengeBoard` so board pushes
   (a player rolling) can't close it mid-edit.
 - Everything is Alpine state on the form (`description`, `stakes`, `diff`/`diffValue`,
@@ -885,7 +892,7 @@ the normal swap restores it by the input's id (`en-<enemy>-<field>`).
 
 ### 6.6g Magic roll (`Magic` in session.ts)
 
-User-designed. The GM's **"Start magic roll"** (beside "Start new challenge"; `MagicDialog`,
+User-designed. The GM's **"Start magic roll"** (with the other roll starters; `MagicDialog`,
 `/gm/magic/start` → `startMagic`) picks a magnitude and a control ability (Intuition / Resolve by
 default), an optional description, and the caster: a finished character, or **an NPC** with a name
 and the two ranks the GM gives it. It is a challenge with `magic` set, and **sequential** like an

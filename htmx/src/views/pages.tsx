@@ -151,6 +151,27 @@ function BackupCard() {
   )
 }
 
+/**
+ * The GM's roll starters, all in one style (user decision): each opens its dialog. The boards
+ * themselves (below) only show what is going on.
+ */
+function GmActions() {
+  const open = (id: string, label: string) => (
+    <button type="button" class="gm-action" onclick={`document.getElementById('${id}').showModal()`}>
+      {label}
+    </button>
+  )
+  return (
+    <div class="gm-actions">
+      {open('challenge-dialog', 'Start new challenge')}
+      {open('opposition-dialog', 'Start opposition roll')}
+      {open('group-dialog', 'Start group task')}
+      {open('solo-dialog', 'Start solo roll')}
+      {open('magic-dialog', 'Start magic roll')}
+    </div>
+  )
+}
+
 export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: string }) {
   const { session } = props
   return (
@@ -178,6 +199,8 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             </button>
           </div>
 
+          <BackupCard />
+
           {session.rules.traits.length > 0 && (
             <div class="card power-level-card">
               <span>
@@ -192,26 +215,16 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             </div>
           )}
 
-          <ConsequenceButtons session={session} />
+          <nav class="gm-links">
+            <a class="button gm-link" href="/table" target="_blank" rel="noopener">
+              Public table screen ↗
+            </a>
+            <a class="button gm-link" href="/gm/bestiary" target="_blank" rel="noopener">
+              Bestiary &amp; encounter ↗
+            </a>
+          </nav>
 
-          <a class="button" href="/table" target="_blank" rel="noopener">
-            Open public table screen ↗
-          </a>
-          <a class="button" href="/gm/bestiary" target="_blank" rel="noopener">
-            Bestiary &amp; encounter ↗
-          </a>
-
-          <BackupCard />
-          <ChallengeBoard session={session} role="gm" />
-          <OppositionBoard session={session} role="gm" />
-          <GroupTaskBoard session={session} role="gm" />
-          <SoloRollBoard session={session} role="gm" />
-          <ChallengeSetupDialog session={session} />
-          <SoloRollDialog session={session} />
-          <ConsequenceDialog session={session} />
-          <OppositionDialog session={session} />
-          <GroupTaskDialog session={session} />
-          <MagicDialog session={session} />
+          <GmActions />
 
           <form
             class="card gm-roll"
@@ -236,6 +249,33 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             <button type="submit">Roll</button>
           </form>
           <p class="error"></p>
+
+          <ConsequenceButtons session={session} />
+
+          {/* The GM's own line in the table's history log (last of the tools, user decision). */}
+          <form
+            class="card log-note-form"
+            hx-post="/gm/log/note"
+            hx-swap="none"
+            hx-on--after-request="if (event.detail.successful) this.reset()"
+          >
+            <h3>Add to the table log</h3>
+            <input name="text" placeholder="e.g. The bridge collapses behind you" maxlength={300} autocomplete="off" required />
+            <button type="submit" class="small">
+              Add line
+            </button>
+          </form>
+
+          <ChallengeBoard session={session} role="gm" />
+          <OppositionBoard session={session} role="gm" />
+          <GroupTaskBoard session={session} role="gm" />
+          <SoloRollBoard session={session} role="gm" />
+          <ChallengeSetupDialog session={session} />
+          <SoloRollDialog session={session} />
+          <ConsequenceDialog session={session} />
+          <OppositionDialog session={session} />
+          <GroupTaskDialog session={session} />
+          <MagicDialog session={session} />
 
           <h3>Rolls</h3>
           <Feed session={session} viewer="gm" />

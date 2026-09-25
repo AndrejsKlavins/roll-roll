@@ -91,3 +91,15 @@ describe('magic roll', () => {
     expect(s.challengeMath(ch).success).toBe(true) // at least 14 vs 3
   })
 })
+
+describe('GM log notes', () => {
+  test('a line of the GM text lands in the log in time order, trimmed; blank adds nothing; survives a reopen', async () => {
+    const { s, reopen } = await setup()
+    expect(s.addLogNote('   ', 'GM')).toBeNull()
+    expect(s.addLogNote('  The bridge   collapses  ', 'GM')).not.toBeNull()
+    s.addLogNote('Night falls', 'GM')
+    expect(s.logNotes.map((n) => n.text)).toEqual(['The bridge collapses', 'Night falls'])
+    expect(s.logNotes[0]!.seq).toBeLessThan(s.logNotes[1]!.seq)
+    expect(reopen().logNotes.map((n) => n.text)).toEqual(['The bridge collapses', 'Night falls'])
+  })
+})

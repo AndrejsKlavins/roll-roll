@@ -510,6 +510,12 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // A line of the GM's own text in the table's history log.
+  app.post('/gm/log/note', async (c) => {
+    if (session.addLogNote((await form(c)).text ?? '', actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
   // Magic roll (user-designed): the GM starts it — for a player, or an NPC with ranks given here.
   app.post('/gm/magic/start', async (c) => {
     const body = await form(c)

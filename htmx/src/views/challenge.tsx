@@ -1478,11 +1478,6 @@ export function GroupTaskBoard(props: { session: Session; role: 'gm' | 'player' 
   const total = g ? session.groupTotal(g) : null
   return (
     <section id="group-board" class="group-board" hx-swap-oob={oobAttr(props.oob)}>
-      {role === 'gm' && (
-        <button type="button" class="small" onclick="document.getElementById('group-dialog').showModal()">
-          Start group task
-        </button>
-      )}
       {g && total && (
         <div class="challenge group-task">
           <div class="challenge-title-row">
@@ -1626,6 +1621,7 @@ type LogEntry =
   | { kind: 'opposition'; opp: Opposition }
   | { kind: 'group'; g: GroupTask }
   | { kind: 'enemyAttack'; attack: EnemyAttack }
+  | { kind: 'note'; text: string }
 
 /** " and succeeds with +4" / " and fails with -2" — how every history line ends. */
 const verdict = (success: boolean, margin: number) =>
@@ -1656,6 +1652,7 @@ function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
       {entries.map((entry) => {
         if (entry.kind === 'solo') return <SoloLogLine session={session} solo={entry.solo} />
         if (entry.kind === 'enemyAttack') return <EnemyAttackLogLine attack={entry.attack} />
+        if (entry.kind === 'note') return <li class="log-note">{entry.text}</li>
         if (entry.kind === 'challenge' && entry.ch.attack) return <AttackLogLine session={session} ch={entry.ch} />
         if (entry.kind === 'challenge' && entry.ch.magic) return <MagicLogLine session={session} ch={entry.ch} />
         if (entry.kind === 'group') {
@@ -2127,11 +2124,6 @@ export function SoloRollBoard(props: { session: Session; role: 'gm' | 'player' |
   const visible = solo && (role === 'gm' || (role === 'table' && solo.visibility === 'public'))
   return (
     <section id="solo-board" class="solo-board" hx-swap-oob={oobAttr(props.oob)}>
-      {role === 'gm' && (
-        <button type="button" class="small" onclick="document.getElementById('solo-dialog').showModal()">
-          Start solo roll
-        </button>
-      )}
       {visible && <SoloRollCard session={session} solo={solo} role={role} />}
     </section>
   )
@@ -2578,11 +2570,6 @@ export function OppositionBoard(props: {
   const outcome = opp && session.oppositionOutcome(opp)
   return (
     <section id="opposition-board" class="opposition-board" hx-swap-oob={oobAttr(props.oob)}>
-      {role === 'gm' && (
-        <button type="button" class="small" onclick="document.getElementById('opposition-dialog').showModal()">
-          Start opposition roll
-        </button>
-      )}
       {opp && (
         <div class={`opposition ${outcome ? 'resolved' : ''}`}>
           <div class="opp-head">
@@ -2862,6 +2849,8 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
       .map((o) => ({ kind: 'opposition' as const, opp: o, seq: o.seq })),
     // Enemies' attacks on players (a player's own attack is a challenge, above).
     ...session.enemyAttacks.map((a) => ({ kind: 'enemyAttack' as const, attack: a, seq: a.seq })),
+    // The GM's own lines.
+    ...session.logNotes.map((n) => ({ kind: 'note' as const, text: n.text, seq: n.seq })),
     // Group tasks once the GM has closed them (or a newer one has taken the board).
     ...session.groupTasks
       .filter((g, i) => g.closed || i < session.groupTasks.length - 1)
@@ -2869,16 +2858,6 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
   ].sort((a, b) => b.seq - a.seq)
   return (
     <section id="challenge-board" class="challenge-board" hx-swap-oob={oobAttr(props.oob)}>
-      {role === 'gm' && (
-        <div class="challenge-start-row">
-          <button type="button" class="primary" onclick="document.getElementById('challenge-dialog').showModal()">
-            Start new challenge
-          </button>
-          <button type="button" onclick="document.getElementById('magic-dialog').showModal()">
-            Start magic roll
-          </button>
-        </div>
-      )}
       {ch ? (
         <CurrentChallenge session={session} ch={ch} role={role} viewerCharId={viewerCharId} />
       ) : (
