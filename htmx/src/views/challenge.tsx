@@ -22,6 +22,7 @@ import {
   type ChallengeSide,
   type DieMarker,
   type EnemyAttack,
+  MAGIC_STEP,
   type Session,
   type SideOutcome,
 } from '../session'
@@ -486,7 +487,7 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
         hx-swap="none"
         disabled={!ch.approach || undefined}
       >
-        {ch.attack ? 'Roll to hit' : ch.framingAbility ? 'Roll framing and resolution' : 'Roll'}
+        {ch.attack ? 'Roll to hit' : ch.magic ? 'Roll magnitude' : ch.framingAbility ? 'Roll framing and resolution' : 'Roll'}
       </button>
     </div>
   )
@@ -714,9 +715,9 @@ function ExertionControls(props: {
         ) : (
           <div class="exert-options">
             {session.rollsInPlay(ch).includes('framing') &&
-              plusOne('framing', `${ch.attack ? 'hit' : 'framing'} (${ability(ch.framingAbility)})`)}
+              plusOne('framing', `${ch.attack ? 'hit' : ch.magic ? 'magnitude' : 'framing'} (${ability(ch.framingAbility)})`)}
             {session.rollsInPlay(ch).includes('resolution') &&
-              plusOne('resolution', `${ch.attack ? 'damage' : 'resolution'} (${ability(ch.resolutionAbility)})`)}
+              plusOne('resolution', `${ch.attack ? 'damage' : ch.magic ? 'control' : 'resolution'} (${ability(ch.resolutionAbility)})`)}
             <button
               type="button"
               class="exert-spend"
@@ -878,6 +879,94 @@ function AttackTargets(props: { ch: Challenge; math: ChallengeMath; controls?: C
   )
 }
 
+/** A magic roll's magnitude footer: its successes, and how close the next one is. */
+function MagnitudeCaption(props: { math: ChallengeMath }) {
+  const m = props.math.magic
+  if (!props.math.framing || !m || m.successes === null) return null
+  return (
+    <div class={`roll-caption ${m.successes > 0 ? 'roll-caption-help' : 'roll-caption-hinder'}`}>
+      <p class="roll-caption-needs">{m.pointsToNextSuccess} needed for one more success</p>
+      <span class="roll-caption-title">
+        {m.successes === 0 ? 'No success' : `${m.successes} success${m.successes === 1 ? '' : 'es'}`}
+      </span>
+      {m.activated !== null && <span class="roll-caption-sub">({m.activated} activated)</span>}
+    </div>
+  )
+}
+
+/** A magic roll's control footer: held or not, by how much. */
+function ControlCaption(props: { math: ChallengeMath }) {
+  const r = props.math.resolution
+  if (!r) return null
+  return (
+    <div class={`roll-caption ${r.success ? 'roll-caption-help' : 'roll-caption-hinder'}`}>
+      {!r.success && <p class="roll-caption-needs">{-r.difference} needed to control it</p>}
+      <span class="roll-caption-title">{r.success ? 'Controlled' : 'Out of control'}</span>
+      <span class="roll-caption-sub">({signed(r.difference)})</span>
+    </div>
+  )
+}
+
+/** A magic roll's two numbers to beat: the magnitude's 0, and control's 3 per activated success. */
+function MagicTargets(props: { math: ChallengeMath; controls?: Child }) {
+  const m = props.math.magic!
+  const circ = props.math.circumstance
+  return (
+    <div class="difficulty-panel attack-targets">
+      <div class="attack-target">
+        <span class="difficulty-label">Magnitude vs</span>
+        <span class="difficulty-target">{props.math.target}</span>
+      </div>
+      <div class="attack-target">
+        <span class="difficulty-label">
+          Control vs{m.activated !== null ? ` (${m.activated} × ${MAGIC_STEP})` : ''}
+        </span>
+        <span class="difficulty-target">{m.controlTarget ?? '—'}</span>
+      </div>
+      {circ !== 0 && (
+        <p class="difficulty-calc">
+          <span class={circ > 0 ? 'calc-part hinder' : 'calc-part help'}>
+            {circ > 0 ? '+' : '−'} {Math.abs(circ)} circumstance on both
+          </span>
+        </p>
+      )}
+      {props.controls}
+    </div>
+  )
+}
+
+/**
+ * The step between a magic roll's two checks: pick how many of the magnitude's successes to
+ * activate (each one is +3 to control's difficulty) — pressing a number rolls control and locks
+ * the magnitude. `url` is the player's route or, for an NPC, the GM's.
+ */
+function MagicActivate(props: { ch: Challenge; math: ChallengeMath; url: string }) {
+  const successes = props.math.magic?.successes ?? 0
+  if (successes === 0) return <p class="attack-next muted">No success on the magnitude — the magic fizzles.</p>
+  const busy = props.ch.approachPicksLeft > 0
+  return (
+    <div class="attack-next magic-activate">
+      <p class="magic-activate-prompt">Activate successes and roll control:</p>
+      <div class="magic-activate-row">
+        {Array.from({ length: successes }, (_, i) => i + 1).map((n) => (
+          <button
+            type="button"
+            class="primary"
+            hx-post={props.url}
+            hx-vals={JSON.stringify({ activated: n })}
+            hx-swap="none"
+            disabled={busy || undefined}
+            title={busy ? 'Finish the approach effect first' : `Control against ${n * MAGIC_STEP}`}
+          >
+            {n} <span class="magic-vs">vs {n * MAGIC_STEP}</span>
+          </button>
+        ))}
+      </div>
+      <p class="muted">The magnitude is locked once control is rolled.</p>
+    </div>
+  )
+}
+
 /** Full board for the current (last-started) challenge. Interactive parts only for role "player". */
 function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' | 'player' | 'table'; viewerCharId?: string }) {
   const { session, ch, role, viewerCharId } = props
@@ -886,6 +975,10 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   const resolutionField = ability(ch.resolutionAbility)
   const math = session.challengeMath(ch)
   const rolled = session.challengePhase(ch) !== 'setup'
+  // A magic roll: framing is the magnitude, resolution the control (see Magic).
+  const magic = ch.magic
+  const mm = math.magic
+  const magicStep = session.magicStep(ch)
   // A player's attack on an enemy: framing is the hit, resolution the damage (see Attack).
   const attack = ch.attack
   const am = math.attack
@@ -906,7 +999,8 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   // Challenges store the number; name the tier the GM's own difficulty came from when one matches.
   const tier = session.rules.challenges.difficulties.find((d) => d.value === ch.difficulty)?.label ?? null
   // "Someone" before a player is assigned — the same fallback the rest of the app uses (app.tsx).
-  const rollerName = (ch.charId ? session.characters.get(ch.charId)?.name : null) ?? 'Someone'
+  // An NPC caster goes by the name the GM gave.
+  const rollerName = ch.magic?.npc?.name ?? (ch.charId ? session.characters.get(ch.charId)?.name : null) ?? 'Someone'
   const isViewerTurn = role === 'player' && !!viewerCharId && ch.charId === viewerCharId
   // Only the player who rolled acts on it, and only once the dice are in, until the GM closes it.
   const acting = isViewerTurn && rolled && !ch.closed
@@ -991,7 +1085,11 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
       <div class="challenge-title-row">
         <div class="challenge-title-main">
           <h3 class="challenge-description">
-            {attack ? (
+            {magic ? (
+              <>
+                <b>{rollerName}</b> casts {ch.description || 'magic'}
+              </>
+            ) : attack ? (
               <>
                 <b>{rollerName}</b> attacks <b>{attack.enemyName}</b>
                 {ch.description && ` — ${ch.description}`}
@@ -1003,7 +1101,14 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             )}
           </h3>
           <div class="challenge-head">
-            {attack ? (
+            {magic ? (
+              mm?.successes != null && (
+                <span class={math.success === null ? 'result' : math.success ? 'result success' : 'result failure'}>
+                  {mm.successes} success{mm.successes === 1 ? '' : 'es'}
+                  {math.resolution && ` · ${math.resolution.success ? 'controlled' : 'out of control'} ${signed(math.resolution.difference)}`}
+                </span>
+              )
+            ) : attack ? (
               am?.tier && (
                 <span class={!ch.resolution && !am.tier.miss ? 'result' : am.wounds > 0 ? 'result success' : 'result failure'}>
                   {am.tier.miss ? 'Miss' : ch.resolution ? `${am.tier.label} · ${woundLabel(am.wounds)}` : am.tier.label}
@@ -1023,7 +1128,12 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             {ch.closed && <span class="badge closed">Done</span>}
           </div>
         </div>
-        {attack ? (
+        {magic ? (
+          <MagicTargets
+            math={math}
+            controls={role === 'gm' && !ch.closed ? <CircumstanceControls value={ch.circumstance} /> : undefined}
+          />
+        ) : attack ? (
           <AttackTargets
             ch={ch}
             math={math}
@@ -1041,7 +1151,7 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
       <div class={framingField ? 'challenge-numbers' : 'challenge-numbers solo'}>
         {framingField && (
           <RollBox
-            kind={attack ? 'Hit' : 'Framing'}
+            kind={attack ? 'Hit' : magic ? 'Magnitude' : 'Framing'}
             field={framingField}
             label={framingField.label}
             side={ch.framing}
@@ -1056,13 +1166,13 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             supports={supportsOn('framing')}
             roll="framing"
             editUrl={editFor('framing')}
-            attemptLabel={role !== 'player'}
-            caption={attack ? <HitCaption math={math} /> : <FramingCaption math={math} />}
+            attemptLabel={role !== 'player' && !magic?.npc}
+            caption={attack ? <HitCaption math={math} /> : magic ? <MagnitudeCaption math={math} /> : <FramingCaption math={math} />}
             extras={hitExtras}
           />
         )}
         <RollBox
-          kind={attack ? 'Damage' : 'Resolution'}
+          kind={attack ? 'Damage' : magic ? 'Control' : 'Resolution'}
           field={resolutionField}
           label={resolutionField?.label ?? ch.resolutionAbility}
           side={damageSide}
@@ -1079,6 +1189,10 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
               <p class="attack-miss-note">Missed — no damage</p>
             ) : attack && !ch.resolution ? (
               <p class="attack-miss-note">{ch.framing ? 'Rolled once the hit is settled' : 'Rolled after the hit'}</p>
+            ) : magic && !ch.resolution ? (
+              <p class="attack-miss-note">
+                {mm?.successes === 0 ? 'No success to control' : ch.framing ? 'Rolled once successes are activated' : 'Rolled after the magnitude'}
+              </p>
             ) : undefined
           }
           dieAction={dieAction('resolution')}
@@ -1086,8 +1200,16 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           supports={supportsOn('resolution')}
           roll="resolution"
           editUrl={editFor('resolution')}
-          attemptLabel={role !== 'player'}
-          caption={attack ? <WoundCaption math={math} pool={attack.pool} /> : <ResolutionCaption math={math} />}
+          attemptLabel={role !== 'player' && !magic?.npc}
+          caption={
+            attack ? (
+              <WoundCaption math={math} pool={attack.pool} />
+            ) : magic ? (
+              <ControlCaption math={math} />
+            ) : (
+              <ResolutionCaption math={math} />
+            )
+          }
         />
       </div>
       <ApproachDie
@@ -1116,9 +1238,25 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
         </div>
       )}
       <SupportPanel session={session} ch={ch} role={role} viewerCharId={viewerCharId} />
-      {role === 'gm' && rolled && !ch.closed && (!attack || step === 'damage' || am?.tier?.miss) && (
+      {acting && magicStep === 'magnitude' && (
+        <MagicActivate ch={ch} math={math} url={`/c/${viewerCharId}/challenge/magic-control`} />
+      )}
+      {/* An NPC caster has no player: the GM rolls both checks. */}
+      {role === 'gm' && magic?.npc && !ch.closed && !rolled && (
+        <button type="button" class="primary" hx-post="/gm/magic/roll" hx-swap="none">
+          Roll magnitude for {magic.npc.name}
+        </button>
+      )}
+      {role === 'gm' && magic?.npc && !ch.closed && magicStep === 'magnitude' && (
+        <MagicActivate ch={ch} math={math} url="/gm/magic/control" />
+      )}
+      {role === 'gm' && rolled && !ch.closed && (!attack || step === 'damage' || am?.tier?.miss) && (!magic || magicStep === 'control' || mm?.successes === 0) && (
         <button type="button" class="primary" hx-post="/gm/challenge/done" hx-swap="none">
-          {attack ? `Attack done${am && am.wounds > 0 ? ` — take ${am.wounds} ${poolLabel(attack.pool)} off ${attack.enemyName}` : ''}` : 'Challenge done'}
+          {attack
+            ? `Attack done${am && am.wounds > 0 ? ` — take ${am.wounds} ${poolLabel(attack.pool)} off ${attack.enemyName}` : ''}`
+            : magic
+              ? 'Magic roll done'
+              : 'Challenge done'}
         </button>
       )}
     </div>
@@ -1225,12 +1363,12 @@ function SupportRoll(props: { session: Session; ch: Challenge; charId: string; r
       <div class="support-buttons">
         {session.rollsInPlay(ch).includes('framing') && (
           <button type="submit" name="roll" value="framing" class="small">
-            Roll support for {ch.attack ? 'the hit' : 'framing'}
+            Roll support for {ch.attack ? 'the hit' : ch.magic ? 'the magnitude' : 'framing'}
           </button>
         )}
         {session.rollsInPlay(ch).includes('resolution') && (
           <button type="submit" name="roll" value="resolution" class="primary">
-            Roll support for {ch.attack ? 'the damage' : 'resolution'}
+            Roll support for {ch.attack ? 'the damage' : ch.magic ? 'the control' : 'resolution'}
           </button>
         )}
       </div>
@@ -1519,6 +1657,7 @@ function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
         if (entry.kind === 'solo') return <SoloLogLine session={session} solo={entry.solo} />
         if (entry.kind === 'enemyAttack') return <EnemyAttackLogLine attack={entry.attack} />
         if (entry.kind === 'challenge' && entry.ch.attack) return <AttackLogLine session={session} ch={entry.ch} />
+        if (entry.kind === 'challenge' && entry.ch.magic) return <MagicLogLine session={session} ch={entry.ch} />
         if (entry.kind === 'group') {
           // "Group task: haul the cart (challenging) 7 — Mara +3, Jorik -2 · total +1"
           const { g } = entry
@@ -1563,6 +1702,29 @@ function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
         )
       })}
     </ul>
+  )
+}
+
+/**
+ * A magic roll in the history log: "Mara casts a fireball — 2 successes, 2 activated, control 7
+ * vs 6 (+1)". Green when controlled, red when not (or when it fizzled).
+ */
+function MagicLogLine(props: { session: Session; ch: Challenge }) {
+  const { session, ch } = props
+  const math = session.challengeMath(ch)
+  const m = math.magic!
+  const name = ch.magic!.npc?.name ?? (ch.charId ? session.characters.get(ch.charId)?.name : null) ?? 'Someone'
+  const r = math.resolution
+  const cls = r ? (r.success ? 'success' : 'failure') : m.successes === 0 ? 'failure' : undefined
+  return (
+    <li class={cls}>
+      <b>{name}</b> casts {ch.description || 'magic'}
+      {m.successes === null
+        ? ' — not rolled'
+        : ` — ${m.successes} success${m.successes === 1 ? '' : 'es'}${
+            r && m.activated !== null ? `, ${m.activated} activated, control ${r.sum} vs ${r.target} (${signed(r.difference)})` : m.successes === 0 ? ', fizzled' : ''
+          }`}
+    </li>
   )
 }
 
@@ -1805,6 +1967,90 @@ export function ChallengeSetupDialog(props: { session: Session }) {
     </dialog>
   )
 }
+const AFTER_MAGIC = [
+  'if (!event.detail.successful) return;',
+  'const d = Alpine.$data(this);',
+  "Object.assign(d, { description: '', charId: '', npcName: '' });",
+  "this.closest('dialog').close()",
+].join(' ')
+
+/**
+ * The GM's "Start magic roll" (user-designed): what is cast (optional), the magnitude and control
+ * abilities, and the caster — a finished character (who then rolls it themselves) or an NPC with
+ * a name and the two ranks the GM gives it. The character list is as of page load.
+ */
+export function MagicDialog(props: { session: Session }) {
+  const { session } = props
+  const { rules } = session
+  const abilities = [...rules.fields.values()].filter((f): f is NumberField => isBaseField(f) && !f.trained)
+  const pick = (id: string) => (abilities.some((a) => a.id === id) ? id : (abilities[0]?.id ?? ''))
+  const { def } = abilityRankRange(rules)
+  const players = [...session.characters.values()].filter((c) => c.status === 'active')
+  const state = {
+    description: '',
+    framingAbility: pick('intuition'),
+    resolutionAbility: pick('resolve'),
+    charId: '',
+    npcName: '',
+    abilities: abilities.map((f) => ({ id: f.id, label: f.label, color: f.color ?? '' })),
+  }
+  return (
+    <dialog id="magic-dialog" class="challenge-dialog">
+      <form hx-post="/gm/magic/start" hx-swap="none" x-data={JSON.stringify(state)} hx-on--after-request={AFTER_MAGIC}>
+        <header class="dialog-head">
+          <h3>New magic roll</h3>
+          <button type="button" class="small" x-on:click="$el.closest('dialog').close()">
+            Close
+          </button>
+        </header>
+        <label class="challenge-description-field">
+          <span>What is cast? (optional)</span>
+          <input name="description" x-model="description" placeholder="e.g. a wall of fire" maxlength={200} autocomplete="off" />
+        </label>
+        <p class="muted">
+          Magnitude is rolled against 0 — every 3 is a success. The caster activates some of them, and control is rolled
+          against 3 per activated success.
+        </p>
+        <AbilityPicker title="Magnitude ability" hint="How much power is raised." abilityVar="framingAbility" abilities={abilities} />
+        <AbilityPicker title="Control ability" hint="Keeping hold of what was raised." abilityVar="resolutionAbility" abilities={abilities} />
+        <section class="side-pick player-pick">
+          <h4>Who casts</h4>
+          <div class="pick-col">
+            {players.map((c) => (
+              <button type="button" class="pick-btn" x-bind:class={`{ on: charId === '${c.id}' }`} x-on:click={`charId = '${c.id}'`}>
+                <span class="label">{c.name}</span>
+              </button>
+            ))}
+            <button type="button" class="pick-btn" x-bind:class="{ on: charId === 'npc' }" x-on:click="charId = 'npc'">
+              <span class="label">An NPC…</span>
+            </button>
+          </div>
+          <div class="magic-npc" x-show="charId === 'npc'" x-cloak>
+            <label>
+              <span>NPC name</span>
+              <input name="npc_name" x-model="npcName" maxlength={40} autocomplete="off" placeholder="e.g. Hedge witch" />
+            </label>
+            <label>
+              <span>Magnitude rank</span>
+              <input name="npc_magnitude" type="number" step="1" value={def} />
+            </label>
+            <label>
+              <span>Control rank</span>
+              <input name="npc_control" type="number" step="1" value={def} />
+            </label>
+          </div>
+        </section>
+        <input type="hidden" name="magnitude_ability" x-model="framingAbility" />
+        <input type="hidden" name="control_ability" x-model="resolutionAbility" />
+        <input type="hidden" name="char_id" x-model="charId" />
+        <button type="submit" class="primary" x-bind:disabled="!(framingAbility && resolutionAbility && charId)">
+          Start magic roll
+        </button>
+      </form>
+    </dialog>
+  )
+}
+
 /**
  * The GM's solo roll: the opposition number it went against, the two dice, the total and whether
  * it beat the number. Shown on the GM board always, and on the player/table screens only once the
@@ -2624,9 +2870,14 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
   return (
     <section id="challenge-board" class="challenge-board" hx-swap-oob={oobAttr(props.oob)}>
       {role === 'gm' && (
-        <button type="button" class="primary" onclick="document.getElementById('challenge-dialog').showModal()">
-          Start new challenge
-        </button>
+        <div class="challenge-start-row">
+          <button type="button" class="primary" onclick="document.getElementById('challenge-dialog').showModal()">
+            Start new challenge
+          </button>
+          <button type="button" onclick="document.getElementById('magic-dialog').showModal()">
+            Start magic roll
+          </button>
+        </div>
       )}
       {ch ? (
         <CurrentChallenge session={session} ch={ch} role={role} viewerCharId={viewerCharId} />

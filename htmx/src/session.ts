@@ -160,6 +160,8 @@ export type Challenge = {
   groupId: string | null
   /** Set when this challenge is a player's attack on an enemy (see Attack); null otherwise. */
   attack: Attack | null
+  /** Set when this challenge is a magic roll (see Magic); null otherwise. */
+  magic: Magic | null
   /** The GM has accepted the result: nothing more can be spent or rerolled. */
   closed: boolean
   /**
@@ -203,6 +205,28 @@ export type Attack = {
   /** Wounds taken off the enemy when the GM finished the attack; null until then. */
   applied: number | null
 }
+
+/**
+ * A magic roll (user-designed), by a player or an NPC — two steps, like an attack:
+ * 1. **Magnitude** (the framing roll) against 0: every full 3 of the result is a **success**
+ *    (+3 = 1, +7 = 2; floor(result / 3), never below 0).
+ * 2. The caster **activates** some of those successes (1 … all of them), which sets the
+ *    **control** roll's difficulty to 3 per activated success; control (the resolution roll) is
+ *    then rolled and shown with its margin.
+ * Both rolls can be exerted and hand-edited, and the approach die (rolled with the magnitude) can
+ * be cashed in during either step — on whichever roll is open (the magnitude is locked once control
+ * is rolled). An **NPC** caster has no sheet: the GM gives the two ranks outright and runs the
+ * rolls (no exertion or approach — the GM's custom ± and Set die cover that).
+ */
+export type Magic = {
+  /** Successes the caster activated for control; null until the control roll. */
+  activated: number | null
+  /** An NPC caster: name and the ranks the GM gave; null for a player. */
+  npc: { name: string; magnitudeRank: number; controlRank: number } | null
+}
+
+/** Control difficulty per activated success. */
+export const MAGIC_STEP = 3
 
 /**
  * An enemy attacking a player (user-designed). No active defence yet, so it simply happens: the
@@ -447,6 +471,18 @@ export type ChallengeMath = {
   success: boolean | null
   /** Only on an attack (see Attack): the hit tier and what it did to the damage, and the wounds. */
   attack?: AttackMath
+  /** Only on a magic roll (see Magic). */
+  magic?: MagicMath
+}
+
+export type MagicMath = {
+  /** Successes on the magnitude so far (live: exertion on it can add one); null before it's rolled. */
+  successes: number | null
+  /** Points the magnitude still needs for one more success. */
+  pointsToNextSuccess: number | null
+  activated: number | null
+  /** The control roll's difficulty: 3 per activated success (plus circumstance); null until chosen. */
+  controlTarget: number | null
 }
 
 export type AttackMath = {
@@ -634,6 +670,8 @@ export type EventData =
       stakes: ChallengeStakes
       /** A player's attack on an enemy (see Attack), without what the roll and the finish add. */
       attack?: Omit<Attack, 'critDie' | 'applied'>
+      /** A magic roll (see Magic): the NPC caster, if it isn't a player. */
+      magic?: { npc: Magic['npc'] }
       by: string
     }
   | { type: 'challenge_player_set'; challengeId: string; charId: string | null; approach: string | null; skill: string | null; by: string }
@@ -676,6 +714,8 @@ export type EventData =
     }
   // An attack's second roll, once the player has settled the hit (see Attack): the damage dice
   // and the critical die (which only counts on a critical). The hit can't be changed after it.
+  // A magic roll's second step: the successes the caster activated, and the control roll.
+  | { type: 'magic_control_rolled'; challengeId: string; activated: number; resolution: ChallengeSide; by: string }
   | { type: 'attack_damage_rolled'; challengeId: string; resolution: ChallengeSide; critDie: { face: number; value: number }; by: string }
   | { type: 'challenge_approach_activated'; challengeId: string; by: string }
   // GM circumstance modifier. `value` is the whole new modifier, not a step, so a replay lands
@@ -1197,6 +1237,7 @@ export class Session {
             by: e.by,
           }),
           attack: e.attack ? { ...e.attack, critDie: null, applied: null } : null,
+          magic: e.magic ? { activated: null, npc: e.magic.npc ?? null } : null,
         })
         break
       case 'group_task_started': {
@@ -1277,6 +1318,16 @@ export class Session {
           const math = this.challengeMath(ch)
           ch.failingAtRoll = math.resolution?.success === false || math.framing?.success === false
         }
+        break
+      }
+      case 'magic_control_rolled': {
+        const ch = this.challengeById(e.challengeId)
+        if (!ch?.magic) break
+        ch.magic.activated = e.activated
+        ch.resolution = e.resolution
+        // Unbreakable's gate: a failure at the moment of either roll (the magnitude was judged as
+        // it landed — no success — and the control is judged now).
+        ch.failingAtRoll = ch.failingAtRoll || this.challengeMath(ch).resolution?.success === false
         break
       }
       case 'attack_damage_rolled': {
@@ -2119,8 +2170,22 @@ export class Session {
     return ch.resolution ? 'damage' : 'hit'
   }
 
+  /** Two-step challenges (attacks, magic): the first roll alone, the second once it is settled. */
+  isSequential(ch: Challenge) {
+    return !!(ch.attack || ch.magic)
+  }
+
+  /** A magic roll's step: `magnitude` once rolled (still open), `control` once control is rolled. */
+  magicStep(ch: Challenge): 'magnitude' | 'control' | null {
+    if (!ch.magic || !ch.framing) return null
+    return ch.resolution ? 'control' : 'magnitude'
+  }
+
   /** The rolling player's current rank in one of the challenge's abilities. */
   private challengeRank(ch: Challenge, roll: ChallengeRoll) {
+    // An NPC caster's ranks are the GM's numbers.
+    const npc = ch.magic?.npc
+    if (npc) return roll === 'framing' ? npc.magnitudeRank : npc.controlRank
     const char = ch.charId ? this.characters.get(ch.charId) : null
     const abilityId = roll === 'framing' ? ch.framingAbility : ch.resolutionAbility
     const field = abilityId ? this.rules.fields.get(abilityId) : undefined
@@ -2136,17 +2201,18 @@ export class Session {
    */
   rollChallenge(challengeId: string, by: string) {
     const ch = this.challengeById(challengeId)
-    if (!ch || ch.closed || !ch.charId || this.hasRolled(ch)) return null
-    if (ch.attack) {
-      // An attack rolls the hit first, alone — with the approach die, whose effect the player may
-      // cash in during either step (user decision). The damage is rollDamage().
+    if (!ch || ch.closed || (!ch.charId && !ch.magic?.npc) || this.hasRolled(ch)) return null
+    if (this.isSequential(ch)) {
+      // An attack rolls the hit first, alone — a magic roll its magnitude — with the approach die,
+      // whose effect the player may cash in during either step (user decision). The second roll
+      // is rollDamage() / rollMagicControl().
       const hitRank = this.challengeRank(ch, 'framing')
       if (hitRank === null) return null
       return this.append({
         type: 'challenge_rolled',
         challengeId,
         framing: rollChallengeSide(hitRank),
-        approachDie: ch.approach ? cryptoRng(APPROACH_DIE_SIDES) : undefined,
+        approachDie: ch.approach && ch.charId ? cryptoRng(APPROACH_DIE_SIDES) : undefined,
         by,
       })
     }
@@ -2162,6 +2228,23 @@ export class Session {
       approachDie: ch.approach ? cryptoRng(APPROACH_DIE_SIDES) : undefined,
       by,
     })
+  }
+
+  /**
+   * A magic roll's second step: the caster activates `activated` of the magnitude's successes
+   * (1 … all of them) and rolls control against 3 per success — which locks the magnitude. The
+   * player casting (their charId), or the GM (null) for an NPC. Not while an approach effect waits
+   * for its taps, and not with no success to activate.
+   */
+  rollMagicControl(challengeId: string, charId: string | null, activated: number, by: string) {
+    const ch = charId === null ? this.challengeById(challengeId) : this.actingCharacter(challengeId, charId)?.ch
+    if (!ch?.magic || ch.closed || this.magicStep(ch) !== 'magnitude' || ch.approachPicksLeft > 0) return null
+    if (charId === null && !ch.magic.npc) return null // a player's cast is theirs to roll
+    const successes = this.challengeMath(ch).magic?.successes ?? 0
+    if (!Number.isInteger(activated) || activated < 1 || activated > successes) return null
+    const rank = this.challengeRank(ch, 'resolution')
+    if (rank === null) return null
+    return this.append({ type: 'magic_control_rolled', challengeId, activated, resolution: rollChallengeSide(rank), by })
   }
 
   /**
@@ -2316,7 +2399,7 @@ export class Session {
    * damage is rolled, then only the damage (user decision: the hit is locked by then).
    */
   rollsInPlay(ch: Challenge): ChallengeRoll[] {
-    if (ch.attack) return ch.resolution ? ['resolution'] : ch.framing ? ['framing'] : []
+    if (this.isSequential(ch)) return ch.resolution ? ['resolution'] : ch.framing ? ['framing'] : []
     return ch.framing ? ['framing', 'resolution'] : ['resolution']
   }
 
@@ -2543,6 +2626,7 @@ export class Session {
    */
   challengeMath(ch: Challenge): ChallengeMath {
     if (ch.attack) return this.attackMath(ch, ch.attack)
+    if (ch.magic) return this.magicMath(ch, ch.magic)
     const { bonus, label, icon } = this.challengeSkillBonus(ch)
     // The skill is a bonus on the roll (user decision), so it never moves the difficulty.
     const target = ch.difficulty + ch.circumstance
@@ -2639,6 +2723,92 @@ export class Session {
       success: framing && ch.resolution ? wounds > 0 : null,
       attack: { hitTarget, damageTarget, accuracy, weapon, tier, dropped, critValue, wounds },
     }
+  }
+
+  /**
+   * A magic roll's numbers (see Magic): the magnitude against 0 and its successes, and — once some
+   * are activated — the control roll against 3 each. Circumstance moves both targets. `success`
+   * is the control roll's (null until it's rolled).
+   */
+  private magicMath(ch: Challenge, m: Magic): ChallengeMath {
+    const { bonus, label, icon } = this.challengeSkillBonus(ch)
+    const magnitudeTarget = ch.circumstance
+    const framing = ch.framing
+      ? outcomeFor(ch.framing.sum + bonus + ch.exertionFraming + ch.customFraming + this.supportTotal(ch, 'framing'), magnitudeTarget, 'low')
+      : null
+    const successes = framing ? Math.max(0, Math.floor(framing.difference / MAGIC_STEP)) : null
+    // The magnitude "succeeds" when it gives at least one success (what Unbreakable reads).
+    if (framing) framing.success = (successes ?? 0) > 0
+    const controlTarget = m.activated !== null ? m.activated * MAGIC_STEP + ch.circumstance : null
+    const resolution =
+      ch.resolution && controlTarget !== null
+        ? outcomeFor(
+            ch.resolution.sum + bonus + ch.exertionResolution + ch.customResolution + this.supportTotal(ch, 'resolution'),
+            controlTarget,
+            'low',
+          )
+        : null
+    const pointsToNextSuccess = framing ? MAGIC_STEP - (Math.max(0, framing.difference) % MAGIC_STEP) + (framing.difference < 0 ? -framing.difference : 0) : null
+    return {
+      difficulty: 0,
+      circumstance: ch.circumstance,
+      skillBonus: bonus,
+      skillLabel: label,
+      skillIcon: icon,
+      target: magnitudeTarget,
+      framing,
+      rung: null,
+      rungBonus: 0,
+      framingPointsToNext: pointsToNextSuccess,
+      resolution,
+      degrees: 0,
+      resolutionPointsToNext: resolution && !resolution.success ? -resolution.difference : null,
+      success: resolution ? resolution.success : null,
+      magic: { successes, pointsToNextSuccess, activated: m.activated, controlTarget },
+    }
+  }
+
+  /**
+   * The GM starts a magic roll: the caster is a finished character (who then picks a skill and an
+   * approach and rolls, as in any challenge) or an NPC with the GM's two ranks; the magnitude and
+   * control abilities are the GM's pick. It becomes the current challenge.
+   */
+  startMagic(
+    opts: {
+      charId?: string | null
+      npc?: { name: string; magnitudeRank: number; controlRank: number } | null
+      magnitudeAbility: string
+      controlAbility: string
+      description?: string
+    },
+    by: string,
+  ) {
+    if (!this.isAbilityField(opts.magnitudeAbility) || !this.isAbilityField(opts.controlAbility)) return null
+    const char = opts.charId ? this.characters.get(opts.charId) : undefined
+    let npc: Magic['npc'] = null
+    if (!char) {
+      const n = opts.npc
+      if (!n || !Number.isFinite(n.magnitudeRank) || !Number.isFinite(n.controlRank)) return null
+      npc = {
+        name: cleanName(n.name) || 'NPC',
+        magnitudeRank: Math.max(-9, Math.min(15, Math.round(n.magnitudeRank))),
+        controlRank: Math.max(-9, Math.min(15, Math.round(n.controlRank))),
+      }
+    } else if (char.status !== 'active') return null
+    const challengeId = crypto.randomUUID().slice(0, 8)
+    const started = this.append({
+      type: 'challenge_started',
+      challengeId,
+      description: (opts.description ?? '').trim().slice(0, 200),
+      framingAbility: opts.magnitudeAbility,
+      resolutionAbility: opts.controlAbility,
+      difficulty: 0,
+      stakes: 'low',
+      magic: { npc },
+      by,
+    })
+    if (!char) return started
+    return this.append({ type: 'challenge_player_set', challengeId, charId: char.id, approach: null, skill: null, by })
   }
 
   // ---- combat ----------------------------------------------------------------
@@ -2797,6 +2967,7 @@ export class Session {
       supporters: [],
       groupId: null,
       attack: null,
+      magic: null,
       closed: false,
       framing: null,
       resolution: null,
@@ -3060,8 +3231,14 @@ export class Session {
   closeChallenge(challengeId: string, by: string) {
     const ch = this.challengeById(challengeId)
     if (!ch || ch.groupId || ch.closed) return false // a group closes as one
-    // A challenge once its dice are in; an attack once the damage is — or straight after a miss.
-    if (ch.attack ? !ch.resolution && !this.challengeMath(ch).attack?.tier?.miss : !ch.resolution) return false
+    // A challenge once its dice are in; an attack once the damage is — or straight after a miss;
+    // a magic roll once control is — or at a magnitude with no success (it fizzled).
+    const firstAlone = ch.attack
+      ? !!this.challengeMath(ch).attack?.tier?.miss
+      : ch.magic
+        ? !!ch.framing && this.challengeMath(ch).magic?.successes === 0
+        : false
+    if (!ch.resolution && !firstAlone) return false
     // An attack's wounds land on the enemy now, as the GM accepts the result.
     const wounds = ch.attack ? (this.challengeMath(ch).attack?.wounds ?? 0) : undefined
     this.append({ type: 'challenge_closed', challengeId, wounds, by })

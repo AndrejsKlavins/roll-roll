@@ -5,6 +5,7 @@ import {
   ChallengeSetupDialog,
   GroupTaskBoard,
   GroupTaskDialog,
+  MagicDialog,
   OppositionBoard,
   OppositionDialog,
   SoloRollBoard,
@@ -210,6 +211,7 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
           <ConsequenceDialog session={session} />
           <OppositionDialog session={session} />
           <GroupTaskDialog session={session} />
+          <MagicDialog session={session} />
 
           <form
             class="card gm-roll"

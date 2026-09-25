@@ -804,3 +804,13 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .attack-target { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; }
 .attack-target .difficulty-target { font-size: 1.4rem; }
 .attack-miss-note { margin: 0.4rem 0 0; color: var(--muted); font-style: italic; }
+
+/* ---- magic roll ---- */
+.challenge-start-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.magic-activate { display: grid; gap: 0.4rem; }
+.magic-activate-prompt { margin: 0; font-weight: 600; }
+.magic-activate-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.magic-activate-row button { min-width: 64px; }
+.magic-activate-row .magic-vs { font-size: 0.75rem; font-weight: 400; opacity: 0.8; }
+.magic-npc { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.5rem; margin-top: 0.5rem; }
+.magic-npc label { display: grid; gap: 0.2rem; font-size: 0.85rem; }

@@ -510,6 +510,48 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     return noContent(c)
   })
 
+  // Magic roll (user-designed): the GM starts it — for a player, or an NPC with ranks given here.
+  app.post('/gm/magic/start', async (c) => {
+    const body = await form(c)
+    const npc = body.char_id === 'npc'
+    const started = session.startMagic(
+      {
+        charId: npc ? null : body.char_id,
+        npc: npc ? { name: body.npc_name ?? '', magnitudeRank: Number(body.npc_magnitude), controlRank: Number(body.npc_control) } : null,
+        magnitudeAbility: body.magnitude_ability ?? '',
+        controlAbility: body.control_ability ?? '',
+        description: body.description,
+      },
+      actorName(c),
+    )
+    if (started) pushChallenge()
+    return noContent(c)
+  })
+
+  // An NPC's magic roll is the GM's to roll: the magnitude, then control with the successes picked.
+  app.post('/gm/magic/roll', (c) => {
+    const ch = session.currentChallenge()
+    if (!ch?.magic?.npc) return c.notFound()
+    if (session.rollChallenge(ch.id, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  app.post('/gm/magic/control', async (c) => {
+    const ch = session.currentChallenge()
+    if (!ch) return c.notFound()
+    if (session.rollMagicControl(ch.id, null, Number((await form(c)).activated), actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  // A player's magic roll, second step: activate some successes and roll control.
+  app.post('/c/:id/challenge/magic-control', async (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch || ch.charId !== char.id) return c.notFound()
+    if (session.rollMagicControl(ch.id, char.id, Number((await form(c)).activated), actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
   // An attack's second step: the player is done with the hit and rolls the damage.
   app.post('/c/:id/challenge/roll-damage', (c) => {
     const char = session.characters.get(c.req.param('id'))

@@ -883,6 +883,26 @@ the boards' `hub.send`); the tab id also goes out as the `X-Client` header, so t
 isn't swapped twice — an out-of-band swap would drop the focus from the box being typed in, while
 the normal swap restores it by the input's id (`en-<enemy>-<field>`).
 
+### 6.6g Magic roll (`Magic` in session.ts)
+
+User-designed. The GM's **"Start magic roll"** (beside "Start new challenge"; `MagicDialog`,
+`/gm/magic/start` → `startMagic`) picks a magnitude and a control ability (Intuition / Resolve by
+default), an optional description, and the caster: a finished character, or **an NPC** with a name
+and the two ranks the GM gives it. It is a challenge with `magic` set, and **sequential** like an
+attack (`isSequential`; `rollsInPlay` gives one open roll at a time):
+1. **Magnitude** (framing) against **0**: successes = `floor(result / 3)`, never below 0 (+3 = 1,
+   +7 = 2), live (`magicMath`), so exertion on it can add one.
+2. The caster presses **1 … N** (`MagicActivate`) to activate that many successes, which rolls
+   **control** (resolution, `magic_control_rolled` → `rollMagicControl`) against **3 × activated**
+   and locks the magnitude. Control shows its margin ("Controlled (+2)" / "Out of control (−1)").
+Exertion, custom ±, Set die, support and the approach die work as in any challenge; the approach
+die lands with the magnitude and can be cashed in during either step on the open roll. No success
+= it fizzles and the GM can finish it straight away. An **NPC** caster (`magic.npc`,
+`challengeRank` returns its ranks) is rolled by the GM (`/gm/magic/roll`, `/gm/magic/control`);
+it has no exertion or approach — the GM's custom ± and Set die cover that. Unbreakable's gate: a
+magnitude with no success, or a failed control, at the moment it was rolled. History log: "Mara
+casts a wall of fire — 2 successes, 2 activated, control 7 vs 6 (+1)".
+
 ### 6.6f Trait-gated sections (Mystical / Supernatural → Magical Skills)
 
 A section may carry **`requires_traits: [...]`** (rules.ts `Section.requiresTraits`, checked
