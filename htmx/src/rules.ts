@@ -66,7 +66,12 @@ export type ItemStat = { id: string; label: string }
  * order) with an ✎ button that opens the usual editable fields. The GM's sheets always show it
  * in full.
  */
-export type Section = { label: string; fields: SectionItem[]; compact: boolean }
+/**
+ * `requiresTraits` (rules.yaml `requires_traits`): a section only a character with at least one of
+ * these traits has — hidden from their sheet and every skill picker, and not trainable, until
+ * they pick one (e.g. the magical skills behind Mystical / Supernatural). Empty = everyone.
+ */
+export type Section = { label: string; fields: SectionItem[]; compact: boolean; requiresTraits: string[] }
 export type RollDef = { id: string; label: string; dice: string }
 
 /** base: value is fixed when the character is finished (untrained) or set by trained points. */
@@ -431,6 +436,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   const sections: Section[] = (raw?.sections ?? []).map((s: any, si: number) => ({
     label: String(s?.label ?? `Section ${si + 1}`),
     compact: s?.compact === true,
+    requiresTraits: Array.isArray(s?.requires_traits) ? s.requires_traits.map((t: unknown) => String(t)) : [],
     fields: (s?.fields ?? []).flatMap((f: any, fi: number): SectionItem[] => {
       const where = `sections[${si}].fields[${fi}]`
       if (!checkId(f?.id, where)) return []
@@ -606,7 +612,9 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       }
       return [{ kind: 'ability', field: field!.id, delta } satisfies TraitModifier]
     })
-    if (!modifiers.length) {
+    // A trait may be description-only (its effect handled at the table, e.g. Mystical) — but one
+    // that lists modifiers must keep at least one valid one (the bad ones are reported above).
+    if (!modifiers.length && ((t?.modifiers ?? []) as unknown[]).length) {
       fail(`${where} "${t.id}": needs at least one modifier`)
       return []
     }
@@ -763,6 +771,12 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
   }
 
   const enemies = parseEnemyTemplates(raw?.enemies, fail)
+
+  sections.forEach((s, i) => {
+    for (const t of s.requiresTraits) {
+      if (!traits.some((x) => x.id === t)) fail(`sections[${i}] "${s.label}": requires_traits names an unknown trait "${t}"`)
+    }
+  })
 
   if (errors.length) {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)

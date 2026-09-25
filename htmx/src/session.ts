@@ -1741,6 +1741,9 @@ export class Session {
     const f = this.rules.fields.get(fieldId)
     const t = this.rules.training
     if (c?.status !== 'active' || !t || !f || f.type !== 'number' || !f.trained || !Number.isFinite(delta)) return false
+    // A hidden skill (its section needs a trait they don't have) can't be trained — but points
+    // already on it can always be taken back (say the trait was dropped since).
+    if (delta > 0 && !this.fieldVisible(c, f.id)) return false
     const from = c.skillPoints[f.id] ?? 0
     // Can only spend what is available; taking points back is always allowed.
     const want = Math.round(delta)
@@ -1812,6 +1815,20 @@ export class Session {
   /** The character's picked traits belonging to one category. */
   traitsInCategory(c: Character, categoryId: string): Trait[] {
     return c.traits.flatMap((id) => this.rules.traits.filter((t) => t.id === id && t.category === categoryId))
+  }
+
+  /**
+   * Whether this character has a section at all: one with `requires_traits` (e.g. Magical Skills
+   * behind Mystical / Supernatural) only once they have picked one of those traits.
+   */
+  sectionVisible(c: Character, section: { requiresTraits: string[] }) {
+    return section.requiresTraits.length === 0 || section.requiresTraits.some((t) => c.traits.includes(t))
+  }
+
+  /** Whether a field is on this character's sheet (and in their skill pickers) — see sectionVisible. */
+  fieldVisible(c: Character, fieldId: string) {
+    const section = this.rules.sections.find((s) => s.fields.some((f) => f.id === fieldId))
+    return !section || this.sectionVisible(c, section)
   }
 
   /** Union of tags across the character's currently picked traits. */
@@ -2075,6 +2092,8 @@ export class Session {
     if (skill !== null) {
       const f = this.rules.fields.get(skill)
       if (!f || f.type !== 'number' || !f.trained) return null
+      const roller = charId ? this.characters.get(charId) : undefined
+      if (roller && !this.fieldVisible(roller, f.id)) return null // a hidden (e.g. magical) skill
     }
     return this.append({ type: 'challenge_player_set', challengeId, charId, approach, skill, by })
   }
@@ -3346,6 +3365,8 @@ export class Session {
     if (skill !== null) {
       const f = this.rules.fields.get(skill)
       if (!f || f.type !== 'number' || !f.trained) return false
+      const char = this.characters.get(charId)
+      if (char && !this.fieldVisible(char, f.id)) return false // a hidden (e.g. magical) skill
     }
     this.append({ type: 'opposition_skill_set', oppositionId, side: acting.side, skill, by })
     return true

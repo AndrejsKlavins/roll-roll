@@ -16,6 +16,7 @@ import {
   DerivedUpdates,
   EquipmentList,
   FieldView,
+  gatedSections,
   LevelRow,
   ManagePoints,
   Sheet,
@@ -193,7 +194,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
    * available), the points bar, the level row, stats (skills may feed formulas) and GM info.
    */
   const pushTraining = (char: Character) => {
-    const trained = [...rules.fields.values()].filter((f) => f.type === 'number' && f.trained)
+    // Rows the character has on their sheet: a hidden (trait-gated) skill isn't there to update.
+    const trained = [...rules.fields.values()].filter((f) => f.type === 'number' && f.trained && session.fieldVisible(char, f.id))
     const parts =
       trained.map((f) => html(<FieldView session={session} char={char} field={f} oob />)).join('') +
       html(<TrainBar session={session} char={char} oob />) +
@@ -237,7 +239,10 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       html(<DerivedUpdates session={session} char={char} />)
     hub.send(toOwnerAndGm(char.id), (client) =>
       // Compact sections' summary rows are on the player's own sheet only, so only they get them.
-      client.role === 'gm' ? parts + html(<ChangeLog session={session} oob />) : parts + compactSummaries(session, char),
+      // A trait may reveal or hide a section (Magical Skills), so those come along too.
+      client.role === 'gm'
+        ? parts + gatedSections(session, char, true) + html(<ChangeLog session={session} oob />)
+        : parts + gatedSections(session, char, false) + compactSummaries(session, char),
     )
   }
 

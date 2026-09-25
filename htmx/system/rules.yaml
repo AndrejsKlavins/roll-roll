@@ -167,6 +167,7 @@ traits:
     - { id: background, label: Background }
     - { id: origin,     label: Origin, max: 1, sort: alpha }
     - { id: physique,   label: Physique }
+    - { id: special,    label: Special }
   list:
     - { id: raised_in_wilds,     label: Raised in Wilds,     category: origin, cost: 0,
         description: "+1 Perception, +1 Agility, -2 Knowledge, -1 Manipulation, +4 skill points to Outdoorsman.",
@@ -209,6 +210,13 @@ traits:
     - { id: delicate,  label: Delicate,  category: physique, cost: 1,  description: "-1 Endurance, -1 Physical resistance.",                        modifiers: [{ field: endurance, delta: -1 }, { field: physical_resistance, delta: -1 }] }
     - { id: beautiful, label: Beautiful, category: physique, cost: 0,  description: "+2 to relevant performance and manipulation rolls, -1 Resolve.", modifiers: [{ field: resolve, delta: -1 }] }
     - { id: ugly,      label: Ugly,      category: physique, cost: 0,  description: "-2 to relevant performance and manipulation rolls, +1 Resolve.", modifiers: [{ field: resolve, delta: 1 }] }
+    # Special: the supernatural gift. Its effect is handled at the table, not by the app — picking
+    # either one only reveals the Magical Skills section (see its requires_traits). The shared tag
+    # makes them either/or. Buffs cost negative, like Strong / Very strong.
+    - { id: mystical,     label: Mystical,     category: special, tags: [supernatural_gift], cost: -1,
+        description: "You can use supernatural abilities." }
+    - { id: supernatural, label: Supernatural, category: special, tags: [supernatural_gift], cost: -2,
+        description: "You can use supernatural abilities and get +2 to their roll." }
     - { id: strong,               label: Strong,               category: basic, tags: [base_strength],   cost: -1, description: "+1 Strength",   modifiers: [{ field: strength, delta: 1 }] }
     - { id: very_strong,          label: Very strong,          category: basic, tags: [base_strength],   cost: -2, description: "+2 Strength",   modifiers: [{ field: strength, delta: 2 }] }
     - { id: weak,                 label: Weak,                 category: basic, tags: [base_strength],   cost: 1,  description: "-1 Strength",   modifiers: [{ field: strength, delta: -1 }] }
@@ -327,6 +335,18 @@ sections:
       - { id: thieving,      label: Thieving,      type: number, min: 0, max: 5, default: 0, icon: thieving.svg,      color: "#f2d08d" }
       - { id: crafting,      label: Crafting,      type: number, min: 0, max: 5, default: 0, icon: crafting.svg,      color: "#f2d08d" }
       - { id: outdoorsman,   label: Outdoorsman,   type: number, min: 0, max: 5, default: 0, icon: outdoorsman.svg,   color: "#f2d08d" }
+
+  # Hidden unless the character has Mystical or Supernatural (requires_traits): until then these
+  # skills are not on their sheet, not in any skill picker, and cannot be trained.
+  - label: Magical Skills
+    trained: true
+    scale: skill
+    requires_traits: [mystical, supernatural]
+    fields:
+      - { id: shapeshifting, label: Shapeshifting, type: number, min: 0, max: 5, default: 0, color: "#8e6fc9" }
+      - { id: fireweaving,   label: Fireweaving,   type: number, min: 0, max: 5, default: 0, color: "#8e6fc9" }
+      - { id: witchcraft,    label: Witchcraft,    type: number, min: 0, max: 5, default: 0, color: "#8e6fc9" }
+      - { id: benediction,   label: Benediction,   type: number, min: 0, max: 5, default: 0, color: "#8e6fc9" }
 
   - label: Gear & Notes
     fields:

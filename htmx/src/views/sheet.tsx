@@ -391,7 +391,8 @@ function GearBonus(props: { value: number }) {
 export function EquipmentList(props: { session: Session; char: Character; item: EquipmentItem; oob?: boolean }) {
   const { session, char } = props
   const post = `/c/${char.id}/items`
-  const targets = session.itemTargets()
+  // Not a skill this character doesn't have (a magical one without Mystical / Supernatural).
+  const targets = session.itemTargets().filter((t) => session.fieldVisible(char, t.id))
   const groups = [...new Set(targets.map((t) => t.group))]
   const blank = "{ target: '', delta: 1 }"
   // After a successful save the form closes and empties, ready for the next item.
@@ -901,6 +902,98 @@ function ManageCharacter(props: { session: Session; char: Character }) {
   )
 }
 
+/**
+ * One section of the sheet, as rules.yaml lays it out (a compact one folds to a summary row on the
+ * player's own sheet).
+ */
+function SectionBlock(props: { session: Session; char: Character; section: Section; index: number; gm?: boolean }) {
+  const { session, char, section: s, index: i } = props
+  const draft = char.status === 'draft'
+  // One skill-points bar per sheet (its Train toggle is sheet-wide): on the first trained section,
+  // so a later one — Magical Skills — trains from the same bar.
+  const hasTrained = (x: Section) => x.fields.some((f) => f.type === 'number' && f.trained)
+  const firstTrained = session.rules.sections.find(hasTrained) === s
+  const body = (
+    <>
+      {session.rules.training &&
+        firstTrained &&
+        (draft ? (
+          <p class="stage-note">Skills are trained with skill points once the character is finished.</p>
+        ) : (
+          <TrainBar session={session} char={char} />
+        ))}
+      {s.fields.map((f) =>
+        f.type === 'derived' ? (
+          <DerivedRow session={session} char={char} derived={f} />
+        ) : f.type === 'level' ? (
+          <LevelRow session={session} char={char} item={f} />
+        ) : f.type === 'equipment' ? (
+          <EquipmentList session={session} char={char} item={f} />
+        ) : (
+          <FieldView session={session} char={char} field={f} />
+        ),
+      )}
+    </>
+  )
+  // A compact section on the player's own sheet (user decision): one summary row, and ✎
+  // opens the usual fields. Open from the start while the character is still in creation,
+  // since that is when those fields get filled in. The GM always sees it in full.
+  if (s.compact && !props.gm) {
+    return (
+      <fieldset class="compact-section" x-data={`{ editing: ${draft} }`}>
+        <legend>{s.label}</legend>
+        <div class="compact-row">
+          <CompactSummary session={session} char={char} section={s} index={i} />
+          <button
+            type="button"
+            class="small compact-edit"
+            x-on:click="editing = !editing"
+            x-text="editing ? 'Done' : '✎ Edit'"
+            title={`Edit ${s.label.toLowerCase()}`}
+          >
+            {draft ? 'Done' : '✎ Edit'}
+          </button>
+        </div>
+        <div class="compact-fields" x-show="editing" x-cloak={!draft || undefined}>
+          {body}
+        </div>
+      </fieldset>
+    )
+  }
+  return (
+    <fieldset>
+      <legend>{s.label}</legend>
+      {body}
+    </fieldset>
+  )
+}
+
+/**
+ * A section behind `requires_traits` (e.g. Magical Skills): always this wrapper, so picking or
+ * dropping the trait can swap it in and out live — empty while the character hasn't got one of
+ * the traits.
+ */
+export function GatedSection(props: { session: Session; char: Character; index: number; gm?: boolean; oob?: boolean }) {
+  const { session, char, index } = props
+  const section = session.rules.sections[index]!
+  return (
+    <div id={`gated-${char.id}-${index}`} class="gated-section" hx-swap-oob={oobAttr(props.oob)}>
+      {session.sectionVisible(char, section) && (
+        <SectionBlock session={session} char={char} section={section} index={index} gm={props.gm} />
+      )}
+    </div>
+  )
+}
+
+/** Every trait-gated section, out of band — for when the character's traits change. */
+export function gatedSections(session: Session, char: Character, gm: boolean) {
+  return session.rules.sections
+    .map((section, index) =>
+      section.requiresTraits.length ? String(<GatedSection session={session} char={char} index={index} gm={gm} oob />) : '',
+    )
+    .join('')
+}
+
 export function Sheet(props: { session: Session; char: Character; gm?: boolean; oob?: boolean }) {
   const { session, char } = props
   const { rules } = session
@@ -929,61 +1022,13 @@ export function Sheet(props: { session: Session; char: Character; gm?: boolean; 
 
       <TraitsSection session={session} char={char} />
 
-      {rules.sections.map((s, i) => {
-        const body = (
-          <>
-            {session.rules.training &&
-              s.fields.some((f) => f.type === 'number' && f.trained) &&
-              (draft ? (
-                <p class="stage-note">Skills are trained with skill points once the character is finished.</p>
-              ) : (
-                <TrainBar session={session} char={char} />
-              ))}
-            {s.fields.map((f) =>
-              f.type === 'derived' ? (
-                <DerivedRow session={session} char={char} derived={f} />
-              ) : f.type === 'level' ? (
-                <LevelRow session={session} char={char} item={f} />
-              ) : f.type === 'equipment' ? (
-                <EquipmentList session={session} char={char} item={f} />
-              ) : (
-                <FieldView session={session} char={char} field={f} />
-              ),
-            )}
-          </>
-        )
-        // A compact section on the player's own sheet (user decision): one summary row, and ✎
-        // opens the usual fields. Open from the start while the character is still in creation,
-        // since that is when those fields get filled in. The GM always sees it in full.
-        if (s.compact && !props.gm) {
-          return (
-            <fieldset class="compact-section" x-data={`{ editing: ${draft} }`}>
-              <legend>{s.label}</legend>
-              <div class="compact-row">
-                <CompactSummary session={session} char={char} section={s} index={i} />
-                <button
-                  type="button"
-                  class="small compact-edit"
-                  x-on:click="editing = !editing"
-                  x-text="editing ? 'Done' : '✎ Edit'"
-                  title={`Edit ${s.label.toLowerCase()}`}
-                >
-                  {draft ? 'Done' : '✎ Edit'}
-                </button>
-              </div>
-              <div class="compact-fields" x-show="editing" x-cloak={!draft || undefined}>
-                {body}
-              </div>
-            </fieldset>
-          )
-        }
-        return (
-          <fieldset>
-            <legend>{s.label}</legend>
-            {body}
-          </fieldset>
-        )
-      })}
+      {rules.sections.map((s, i) =>
+        s.requiresTraits.length ? (
+          <GatedSection session={session} char={char} index={i} gm={props.gm} />
+        ) : (
+          <SectionBlock session={session} char={char} section={s} index={i} gm={props.gm} />
+        ),
+      )}
 
       <DerivedView session={session} char={char} />
 

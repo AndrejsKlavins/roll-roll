@@ -883,6 +883,25 @@ the boards' `hub.send`); the tab id also goes out as the `X-Client` header, so t
 isn't swapped twice — an out-of-band swap would drop the focus from the box being typed in, while
 the normal swap restores it by the input's id (`en-<enemy>-<field>`).
 
+### 6.6f Trait-gated sections (Mystical / Supernatural → Magical Skills)
+
+A section may carry **`requires_traits: [...]`** (rules.ts `Section.requiresTraits`, checked
+against the trait list at load). A character who has **none** of those traits doesn't have the
+section: it is left off their sheet (`GatedSection` renders an empty `#gated-<char>-<index>`
+placeholder), its skills are left out of every skill picker (`skillsFor` in challenge.tsx —
+challenge setup, group task, opposition) and the item modifier picker, and `train` refuses to
+add points (taking points back is always allowed, e.g. after the trait is dropped). Session
+helpers: `sectionVisible(char, section)`, `fieldVisible(char, fieldId)`; `setChallengePlayer` and
+`setOppositionSkill` refuse a hidden skill. Picking or dropping a trait pushes every gated section
+out of band (`gatedSections` in `pushTraits`), so it appears/disappears live. Only the first
+trained section shows the skill-points bar (one Train toggle per sheet).
+
+In rules.yaml (user-designed): trait category **Special** with **Mystical** (−1) and
+**Supernatural** (−2), sharing the tag `supernatural_gift` (either/or) and with **no modifiers** —
+their effect ("can use supernatural abilities", "+2 to their roll") is handled at the table (user
+decision); description-only traits are now allowed. They unlock **Magical Skills**:
+Shapeshifting, Fireweaving, Witchcraft, Benediction.
+
 ### 6.6e Combat: attacks both ways (`combat.ts`, `session.ts`, `views/combat.tsx`)
 
 The GM decides **what attacks what** from each enemy's card on the Bestiary (user decision).

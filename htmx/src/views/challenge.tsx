@@ -436,10 +436,18 @@ const whenHint = (when: ApproachWhen) =>
  * Everything here is declared **before** the dice and nothing after: the approach die is rolled
  * with them, and the skill is a bonus on results that would otherwise already be on the table.
  */
+/** The trained skills this character may declare — not ones hidden behind a trait they lack (magic). */
+function skillsFor(session: Session, charId: string | null | undefined) {
+  const char = charId ? session.characters.get(charId) : undefined
+  return [...session.rules.fields.values()].filter(
+    (f): f is NumberField => f.type === 'number' && f.trained && (!char || session.fieldVisible(char, f.id)),
+  )
+}
+
 function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId: string }) {
   const { session, ch, charId } = props
   const { rules } = session
-  const skills = [...rules.fields.values()].filter((f): f is NumberField => f.type === 'number' && f.trained)
+  const skills = skillsFor(session, charId)
   return (
     <div class="challenge-player-setup">
       <div class="approach-pick">
@@ -1251,7 +1259,7 @@ function GroupMember(props: { session: Session; g: GroupTask; ch: Challenge; rol
     acting && ch.exertionRerollArmed && exertion > 0
       ? (index: number): DieAction => ({ kind: 'reroll', url: `${base}/reroll?roll=${roll}&index=${index}`, title: 'Reroll with exertion' })
       : undefined
-  const skills = [...session.rules.fields.values()].filter((f): f is NumberField => f.type === 'number' && f.trained)
+  const skills = skillsFor(session, ch.charId)
   const margin = math.resolution?.difference
   const box = (roll: 'framing' | 'resolution') => {
     const f = field(roll === 'framing' ? g.framingAbility : g.resolutionAbility)
@@ -2260,9 +2268,7 @@ function CommitControls(props: {
 /** Declares which trained skill this side is committing (its rank then counts on both checks). */
 function SkillPick(props: { session: Session; opp: Opposition; one: Contestant }) {
   const { session, one } = props
-  const skills = [...session.rules.fields.values()].filter(
-    (f): f is NumberField => f.type === 'number' && f.trained,
-  )
+  const skills = skillsFor(session, one.charId)
   if (!skills.length) return null
   return (
     <label class="skill-pick">
