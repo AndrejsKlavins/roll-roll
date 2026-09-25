@@ -716,3 +716,91 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .challenge-log li.failure { border-left-color: var(--danger); }
 .challenge-log li.opposition-line { border-left-color: var(--accent); }
 .trait-choice-desc { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+
+/* ---- bestiary (/gm/bestiary): encounter cards on top, template table below ---- */
+.bestiary { display: grid; gap: 1.5rem; }
+.bestiary-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 0.8rem; margin-bottom: 0.7rem; }
+.bestiary-head h2 { margin: 0; font-size: 1.2rem; }
+.bestiary-head .spacer { flex: 1; }
+.enemy-grid { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); align-items: start; }
+.enemy-card { display: grid; gap: 0.6rem; }
+.enemy-card.down { border-color: var(--danger); opacity: 0.7; }
+.enemy-head { display: flex; align-items: center; gap: 0.4rem; }
+.enemy-head .enemy-name { font-weight: 600; flex: 1; min-width: 0; padding: 0.35rem 0.5rem; }
+.enemy-head .remove { color: var(--muted); }
+.badge.down-badge { background: var(--danger); }
+.badge.broken-badge { background: #5c81a3; }
+.enemy-card input[type='number'] { width: 3.6rem; padding: 0.3rem 0.35rem; text-align: center; }
+.enemy-pools { display: grid; gap: 0.35rem; }
+.enemy-pool { display: flex; align-items: center; gap: 0.3rem; }
+.enemy-pool .pool-label { width: 3.6rem; font-size: 0.85rem; color: var(--muted); }
+.enemy-pool button.small { min-width: 34px; padding: 0.2rem 0.5rem; }
+.enemy-pool .of { color: var(--muted); }
+.enemy-pool.health.hurt input[name='health'] { border-color: #d6a648; }
+.enemy-pool.out input[name='health'], .enemy-pool.out input[name='mind'] { border-color: var(--danger); color: var(--danger); }
+.enemy-stats { display: grid; gap: 0.4rem; }
+.enemy-roll { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.enemy-roll .stat-label { width: 3.6rem; }
+.roll-inputs { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); }
+.enemy-defs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; }
+.enemy-defs label { display: grid; gap: 0.15rem; justify-items: center; }
+.enemy-defs input[type='number'] { width: 100%; }
+.stat-label { font-size: 0.8rem; color: var(--muted); }
+.enemy-card textarea { font-size: 0.85rem; padding: 0.4rem 0.5rem; }
+.enemy-origin { font-size: 0.75rem; }
+
+.table-scroll { overflow-x: auto; }
+.template-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+.template-table th, .template-table td { padding: 0.35rem 0.5rem; text-align: center; border-bottom: 1px solid var(--line); }
+.template-table thead th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+.template-table .tpl-name { text-align: left; white-space: nowrap; }
+.template-table .tpl-name .badge { margin-left: 0.4rem; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.template-table tbody.template-rows:has(.tpl-desc) > tr:first-child > * { border-bottom: none; }
+.template-table .tpl-desc td { text-align: left; color: var(--muted); font-size: 0.8rem; padding-top: 0; }
+.template-table .nowrap { white-space: nowrap; }
+.spawn-form { display: inline-flex; gap: 0.3rem; align-items: center; }
+.spawn-form input { width: 3.4rem; padding: 0.3rem 0.35rem; text-align: center; }
+.tpl-actions { display: flex; gap: 0.3rem; justify-content: center; }
+.template-dialog { text-align: left; white-space: normal; }
+.template-dialog label { display: grid; gap: 0.2rem; }
+.tpl-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.6rem; }
+.tpl-roll { border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; padding: 0.5rem 0.7rem 0.7rem; }
+.tpl-roll legend { font-size: 0.8rem; color: var(--muted); padding: 0 0.3rem; }
+.template-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+/* ---- combat: attack forms (Bestiary), the table's encounter board, attack targets ---- */
+.round-chip { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+.badge.spent-badge { background: #8a7a3a; }
+.enemy-attack-forms { display: grid; gap: 0.3rem; }
+.enemy-attack-form summary { cursor: pointer; font-size: 0.85rem; color: var(--accent); }
+.enemy-attack-form form { display: grid; gap: 0.45rem; padding: 0.5rem 0 0.2rem; }
+.enemy-attack-form label { display: grid; gap: 0.15rem; }
+.enemy-attack-form select { font: inherit; color: inherit; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 0.35rem 0.4rem; width: 100%; }
+.enemy-attack-form .attack-vs { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 0.4rem; }
+.enemy-attack-form label.check { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.enemy-attack-form label.check input { width: auto; }
+.enemy-attack-form input[name='description'] { padding: 0.35rem 0.5rem; font-size: 0.85rem; }
+.recent-attacks { display: grid; gap: 0.4rem; margin-bottom: 0.8rem; font-size: 0.85rem; }
+.recent-attacks summary { font-weight: 600; }
+.enemy-attack-detail { border-left: 3px solid var(--line); padding: 0.2rem 0 0.2rem 0.6rem; display: grid; gap: 0.1rem; }
+.enemy-attack-detail.hurt { border-left-color: var(--danger); }
+.enemy-attack-detail.miss { border-left-color: #5cc27a; }
+.challenge-log.compact { margin: 0; }
+
+.encounter-public { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.encounter-public-head { display: flex; align-items: baseline; gap: 0.8rem; }
+.encounter-public-head h3 { margin: 0; }
+.encounter-round { font-weight: 600; color: var(--accent); }
+.encounter-enemies { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.encounter-enemy { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.35rem 0.7rem; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+.encounter-enemy-name { font-weight: 600; }
+.encounter-enemy-state { font-size: 0.85rem; color: var(--muted); }
+.encounter-enemy.hurt .encounter-enemy-state { color: #d6a648; }
+.encounter-enemy.bad .encounter-enemy-state { color: #d1683a; }
+.encounter-enemy.down { opacity: 0.55; text-decoration: line-through; }
+.encounter-spent { font-size: 0.7rem; padding: 0 0.35rem; border-radius: 4px; background: #8a7a3a; color: #fff; }
+
+.attack-targets { display: grid; gap: 0.3rem; }
+.attack-target { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; }
+.attack-target .difficulty-target { font-size: 1.4rem; }
+.attack-miss-note { margin: 0.4rem 0 0; color: var(--muted); font-style: italic; }

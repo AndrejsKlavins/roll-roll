@@ -10,6 +10,7 @@ import {
   SoloRollBoard,
   SoloRollDialog,
 } from './challenge'
+import { EncounterBoard } from './combat'
 import { ConsequenceButtons, ConsequenceDialog } from './consequence'
 import { ChangeLog, Feed } from './feed'
 import { Layout } from './layout'
@@ -87,6 +88,7 @@ export function TablePage(props: { session: Session }) {
   return (
     <Layout title="Table" system={session.rules.name} wsUrl="/ws?table=1">
       <main class="table-screen">
+        <EncounterBoard session={session} />
         <ChallengeBoard session={session} role="table" />
         <OppositionBoard session={session} role="table" />
         <GroupTaskBoard session={session} role="table" />
@@ -193,6 +195,9 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
 
           <a class="button" href="/table" target="_blank" rel="noopener">
             Open public table screen ↗
+          </a>
+          <a class="button" href="/gm/bestiary" target="_blank" rel="noopener">
+            Bestiary &amp; encounter ↗
           </a>
 
           <BackupCard />

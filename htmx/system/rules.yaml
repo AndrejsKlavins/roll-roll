@@ -411,3 +411,56 @@ derived: []
 # Rolls intentionally left empty: the real rolling system (special dice, exertion,
 # skill distribution, difficulty) hasn't been ported from the Godot project yet.
 rolls: []
+
+# Starter enemy templates for the GM's Bestiary screen (/gm/bestiary). The GM can edit, add and
+# delete templates there; those edits are kept in the game log, on top of this list.
+#   health, mind: the enemy's pools (it is down once Health drops below 0)
+#   hit, damage: dice count, d6, and the rank in brackets — 2d6(3) is two plain d6; every rank
+#                above or below 3 shifts each die by 1, like a character's ability dice
+#   hit_bonus, damage_bonus: flat bonuses on those rolls
+#   description: special abilities and notes — read by the GM, not applied by the app
+# For comparison, an average human (all abilities 3, a little combat training, a basic weapon):
+# Health 4, Mind 4, hit 2d6(3)+2, damage 2d6(3)+2, Evasion 7, Physical res 5, Mental res 5, Speed 3.
+enemies:
+  - { id: rat, name: Rat, health: 0, mind: 1, hit: 2d6(1), hit_bonus: -1, damage: 2d6(1), damage_bonus: -1,
+      evasion: 10, physical_resistance: 0, mental_resistance: 1, speed: 4,
+      description: "Small and quick: hard to hit, but any wound kills it. Only dangerous in numbers." }
+  - { id: combat_midge, name: Combat midge, health: 1, mind: 0, hit: 2d6(2), hit_bonus: 1, damage: 2d6(1), damage_bonus: 1,
+      evasion: 5, physical_resistance: 3, mental_resistance: 0, speed: 3,
+      description: "Cat-sized biting insect. Swarm: midges always go for the same target, so after the first one they strike at spent Evasion." }
+  - { id: wolf, name: Wolf, health: 3, mind: 2, hit: 2d6(3), hit_bonus: 3, damage: 2d6(3), damage_bonus: 1,
+      evasion: 8, physical_resistance: 3, mental_resistance: 3, speed: 3,
+      description: "Pack hunter: wolves gang up on one target. Flees when it drops to 0 Health or the pack leader falls." }
+  - { id: guard_dog, name: Guard dog, health: 2, mind: 1, hit: 2d6(3), hit_bonus: 2, damage: 2d6(2), damage_bonus: 1,
+      evasion: 8, physical_resistance: 3, mental_resistance: 2, speed: 4,
+      description: "Latch on: on a good hit or better the target is held — -2 to hit anyone but the dog until it breaks free (Strength or Agility, challenging)." }
+  - { id: giant_spider, name: Giant spider, health: 3, mind: 1, hit: 2d6(3), hit_bonus: 2, damage: 2d6(2), damage_bonus: 0,
+      evasion: 8, physical_resistance: 4, mental_resistance: 3, speed: 4,
+      description: "Venom: every wound it deals also costs 1 Stamina. Web (once per fight, instead of attacking): one target can't move or attack next turn unless it breaks free (Strength, challenging)." }
+  - { id: bandit, name: Bandit, health: 4, mind: 3, hit: 2d6(3), hit_bonus: 2, damage: 2d6(3), damage_bonus: 2,
+      evasion: 7, physical_resistance: 5, mental_resistance: 4, speed: 3,
+      description: "An average armed thug with a club or short blade. Cowardly: the gang flees once half of it is down." }
+  - { id: bandit_archer, name: Bandit archer, health: 3, mind: 3, hit: 2d6(3), hit_bonus: 3, damage: 2d6(3), damage_bonus: 1,
+      evasion: 7, physical_resistance: 4, mental_resistance: 4, speed: 3,
+      description: "Ranged: shoots from a distance. In melee it fights with a knife at -2 to hit and -1 damage." }
+  - { id: skeleton, name: Skeleton, health: 3, mind: 0, hit: 2d6(3), hit_bonus: 1, damage: 2d6(3), damage_bonus: 1,
+      evasion: 6, physical_resistance: 6, mental_resistance: 12, speed: 3,
+      description: "Undead: immune to fear, poison and mental attacks. Brittle: blunt weapons deal +2 damage against it, arrows and thrusts -2." }
+  - { id: zombie, name: Zombie, health: 6, mind: 0, hit: 2d6(2), hit_bonus: 0, damage: 2d6(3), damage_bonus: 1,
+      evasion: 3, physical_resistance: 5, mental_resistance: 12, speed: 2,
+      description: "Relentless: a light wound doesn't slow it (ignore light wounds). Grab: on a good hit or better the target is held, and the next zombie attacking it gets +2 to hit. Undead: immune to fear and poison." }
+  - { id: bear, name: Bear, health: 8, mind: 2, hit: 2d6(4), hit_bonus: 2, damage: 2d6(5), damage_bonus: 2,
+      evasion: 5, physical_resistance: 7, mental_resistance: 4, speed: 3,
+      description: "Maul: on a great hit or better the target is also knocked prone (-2 to hit until it spends its turn getting up). Retreats when hurt below half Health, unless cornered or defending cubs." }
+  - { id: ogre, name: Ogre, health: 10, mind: 2, hit: 2d6(3), hit_bonus: 1, damage: 2d6(6), damage_bonus: 2,
+      evasion: 4, physical_resistance: 8, mental_resistance: 3, speed: 2,
+      description: "Sweep: one attack roll against up to two targets standing next to each other (compare it with each). Dim: easily tricked or distracted (-2 to its Mental resistance against lies and taunts)." }
+  - { id: veteran_fighter, name: Veteran fighter, health: 6, mind: 5, hit: 2d6(4), hit_bonus: 4, damage: 2d6(4), damage_bonus: 3,
+      evasion: 9, physical_resistance: 7, mental_resistance: 6, speed: 4,
+      description: "Experienced soldier in mail. Parry: the first attack against it each turn that would be a glancing blow is a miss instead. Steady: once per fight, reroll one of its dice." }
+  - { id: cult_adept, name: Cult adept, health: 3, mind: 5, hit: 2d6(4), hit_bonus: 2, damage: 2d6(4), damage_bonus: 2,
+      evasion: 6, physical_resistance: 4, mental_resistance: 7, speed: 3,
+      description: "Hex (its attack): both rolls go against the target's Mental resistance instead of Evasion and Physical resistance, and the wounds come off Mind. In melee it only has a dagger: 2d6(3), no bonuses." }
+  - { id: ghost, name: Ghost, health: 4, mind: 6, hit: 2d6(4), hit_bonus: 2, damage: 2d6(3), damage_bonus: 2,
+      evasion: 10, physical_resistance: 12, mental_resistance: 6, speed: 3,
+      description: "Incorporeal: ordinary weapons barely touch it (Physical res 12); blessed, silver or magic weapons treat it as Physical res 3. Chilling touch: its damage goes against Mental resistance and wounds come off Mind." }

@@ -6,6 +6,8 @@ export function Layout(props: {
   who?: Child
   wsUrl?: string
   gm?: boolean
+  /** Extra request headers for every htmx request on the page. */
+  headers?: Record<string, string>
   children: Child
 }) {
   return (
@@ -26,7 +28,11 @@ export function Layout(props: {
         class={props.gm ? 'gm' : 'player'}
         hx-ext={props.wsUrl ? 'ws' : undefined}
         ws-connect={props.wsUrl}
-        hx-headers={props.gm ? JSON.stringify({ 'X-Actor': 'gm' }) : undefined}
+        hx-headers={
+          props.gm || props.headers
+            ? JSON.stringify({ ...(props.gm ? { 'X-Actor': 'gm' } : {}), ...props.headers })
+            : undefined
+        }
       >
         <header class="topbar">
           <strong>{props.system}</strong>

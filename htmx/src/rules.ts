@@ -1,6 +1,7 @@
 // Loads and validates system/rules.yaml once at startup.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, extname, join } from 'node:path'
+import { parseEnemyTemplates, type EnemyTemplate } from './enemies'
 import { evaluate, ExprError } from './engine/expr'
 
 /**
@@ -327,6 +328,8 @@ export type Rules = {
   challenges: ChallengesConfig
   /** The GM's boon / complication tables, when the rules file has them. */
   consequences?: ConsequencesConfig
+  /** Starter enemy templates for the GM's bestiary (top-level `enemies`); may be empty. */
+  enemies: EnemyTemplate[]
 }
 
 /**
@@ -759,6 +762,8 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     consequences = { boon, complication, ranks }
   }
 
+  const enemies = parseEnemyTemplates(raw?.enemies, fail)
+
   if (errors.length) {
     throw new Error(`Problems in ${path}:\n  - ${errors.join('\n  - ')}`)
   }
@@ -783,6 +788,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       rankStep,
     },
     consequences,
+    enemies,
   }
 }
 

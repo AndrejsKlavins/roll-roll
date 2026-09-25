@@ -1572,6 +1572,19 @@ describe('opposition roll', () => {
     expect(reopened.oppositionOutcome(replayed)).toEqual(s.oppositionOutcome(done))
   })
 
+  test('the GM completes a contest: frozen from then on, and it survives a reopen', async () => {
+    const { s, open, mara, jorik } = await twoPlayers()
+    start(s, { charId: mara, ...ABILITIES }, { charId: jorik, ...ABILITIES })
+    const id = s.currentOpposition()!.id
+    expect(s.closeOpposition(id, 'GM')).toBe(true)
+    expect(s.closeOpposition(id, 'GM')).toBe(false) // once only
+    // Completed before anyone was ready: nothing can move any more.
+    expect(s.setOppositionReady(id, 'a', true, 'GM')).toBe(false)
+    expect(s.setOppositionSkill(id, mara, 'athletics', 'Mara')).toBe(false)
+    expect(s.rollOpposition(id, 'a', 'GM')).toBe(false)
+    expect(open().currentOpposition()!.closed).toBe(true)
+  })
+
   test('contests logged before the rename (core / support) still load: core = resolution, support = framing', async () => {
     const { s, open, mara } = await twoPlayers()
     s.train(mara, 'athletics', 6, 'Mara') // rank 3

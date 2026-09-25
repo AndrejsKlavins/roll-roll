@@ -9,6 +9,23 @@
 import { Database } from 'bun:sqlite'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import {
+  ACCURACY_STAT,
+  DAMAGE_STAT,
+  defence,
+  glancingDrop,
+  hitTargetOf,
+  hitTier,
+  isDefence,
+  isWoundPool,
+  pointsToNextTier,
+  pointsToNextWound,
+  woundsFor,
+  type Defence,
+  type HitTier,
+  type WoundPool,
+} from './combat'
+import { Bestiary, isEnemyEvent, type EnemyEventData } from './enemies'
 import { cryptoRng, evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
 import {
@@ -141,6 +158,8 @@ export type Challenge = {
    * no circumstance or separate close — the group task owns those.
    */
   groupId: string | null
+  /** Set when this challenge is a player's attack on an enemy (see Attack); null otherwise. */
+  attack: Attack | null
   /** The GM has accepted the result: nothing more can be spent or rerolled. */
   closed: boolean
   /**
@@ -158,6 +177,78 @@ export type Challenge = {
   /** The id of the event that started it — orders challenges and solo rolls in one history log. */
   seq: number
 }
+/**
+ * A player attacking an enemy (user-designed): a challenge whose **framing is the hit roll**
+ * (against the enemy's Evasion — or 0 once it is spent this round) and whose **resolution is the
+ * damage roll** (against its Physical resistance). The GM may point either roll at a different
+ * defence, and the wounds at Mind instead of Health. The hit tier (combat.ts) does to the damage
+ * roll what a framing rung does to a resolution, worked out live in challengeMath: +1/+2, the
+ * highest damage die discarded (glancing), an extra damage die (critical — `critDie`, rolled with
+ * the damage dice and only counted on a critical), or no damage at all (miss). Item Attack
+ * accuracy / Attack damage add to the hit / damage. The wounds come off the enemy when the GM
+ * finishes the attack (`applied`).
+ */
+export type Attack = {
+  enemyId: string
+  enemyName: string
+  hitVs: Defence
+  damageVs: Defence
+  pool: WoundPool
+  /** The enemy's defence numbers when the attack began — a later tweak of the enemy doesn't move them. */
+  hitValue: number
+  damageValue: number
+  /** The enemy had already been attacked this round: an Evasion hit roll goes against 0. */
+  evasionSpent: boolean
+  critDie: { face: number; value: number } | null
+  /** Wounds taken off the enemy when the GM finished the attack; null until then. */
+  applied: number | null
+}
+
+/**
+ * An enemy attacking a player (user-designed). No active defence yet, so it simply happens: the
+ * enemy's to-hit dice + bonus against the player's Evasion (0 once spent this round), the hit
+ * tier, the damage dice + bonus against their Physical resistance, and the wounds straight off
+ * their Health (or Mind). Everything is rolled and settled when the GM presses the button, and
+ * the event keeps every number, so the log reads the same forever after.
+ */
+export type EnemyAttack = {
+  id: string
+  seq: number
+  enemyId: string
+  enemyName: string
+  charId: string
+  charName: string
+  hitVs: Defence
+  damageVs: Defence
+  pool: WoundPool
+  hit: ChallengeSide
+  hitBonus: number
+  /** The number the hit roll went against (0 when the player's Evasion was spent). */
+  hitTarget: number
+  evasionSpent: boolean
+  /** null on a miss (no damage roll). A glancing blow's dropped die is marked discarded. */
+  damage: ChallengeSide | null
+  critDie: { face: number; value: number } | null
+  damageBonus: number
+  damageTarget: number
+  wounds: number
+  /** The pool before and after — a sheet pool stops at 0, so `to` may be less than wounds say. */
+  from: number
+  to: number
+}
+
+/** What an enemy attack's numbers come to — the one place that arithmetic lives. */
+export function enemyAttackMath(
+  a: Pick<EnemyAttack, 'hit' | 'hitBonus' | 'hitTarget' | 'damage' | 'critDie' | 'damageBonus' | 'damageTarget'>,
+) {
+  const hitTotal = a.hit.sum + a.hitBonus
+  const hitMargin = hitTotal - a.hitTarget
+  const tier = hitTier(hitMargin)
+  const damageTotal = a.damage ? sideSum(a.damage) + (a.critDie?.value ?? 0) + a.damageBonus + tier.damageBonus : null
+  const damageMargin = damageTotal === null ? null : damageTotal - a.damageTarget
+  return { hitTotal, hitMargin, tier, damageTotal, damageMargin, wounds: damageMargin === null ? 0 : woundsFor(damageMargin) }
+}
+
 /**
  * A group task (user-designed): the GM sets one difficulty (nudged ±1 before inviting), the
  * abilities and stakes, and who takes part. **Each participant rolls it like a regular challenge**
@@ -277,6 +368,8 @@ export type Opposition = {
   by: string
   /** The id of the event that started it — orders it in the history log. */
   seq: number
+  /** The GM pressed "Complete opposition challenge": frozen, and gone from the players' screens. */
+  closed: boolean
 }
 
 /** Where an opposition roll has got to. */
@@ -352,6 +445,24 @@ export type ChallengeMath = {
   resolutionPointsToNext: number | null
   /** null until the dice are rolled. */
   success: boolean | null
+  /** Only on an attack (see Attack): the hit tier and what it did to the damage, and the wounds. */
+  attack?: AttackMath
+}
+
+export type AttackMath = {
+  /** Each roll's number to beat (the enemy's defence, spent Evasion as 0, plus circumstance). */
+  hitTarget: number
+  damageTarget: number
+  /** What the attacker's enabled items add: Attack accuracy on the hit, Attack damage on the damage. */
+  accuracy: number
+  weapon: number
+  /** null until rolled. */
+  tier: HitTier | null
+  /** Glancing: the damage die index that is discarded. */
+  dropped: number | null
+  /** Critical: the extra damage die's value. */
+  critValue: number | null
+  wounds: number
 }
 
 /** What the GM picks for one side of a new opposition roll (see Session.startOpposition). */
@@ -397,6 +508,14 @@ export function rollChallengeSide(rank: number, rng: () => number = () => crypto
   const faces: [number, number] = [rng(), rng()]
   const dice: [number, number] = [faces[0] + shift, faces[1] + shift]
   return { faces, dice, sum: dice[0] + dice[1] }
+}
+
+/** `count` d6 at `rank` — an enemy's roll (a character's is always two: rollChallengeSide). */
+export function rollDiceSide(count: number, rank: number, rng: () => number = () => cryptoRng(6)): ChallengeSide {
+  const shift = Math.round(rank) - 3
+  const faces = Array.from({ length: Math.max(1, Math.round(count)) }, () => rng())
+  const dice = faces.map((f) => f + shift)
+  return { faces, dice, sum: dice.reduce((a, b) => a + b, 0) }
 }
 
 /** One extra or replacement die (exertion reroll, approach effect): raw face id + shifted value. */
@@ -513,6 +632,8 @@ export type EventData =
       resolutionAbility: string
       difficulty: number
       stakes: ChallengeStakes
+      /** A player's attack on an enemy (see Attack), without what the roll and the finish add. */
+      attack?: Omit<Attack, 'critDie' | 'applied'>
       by: string
     }
   | { type: 'challenge_player_set'; challengeId: string; charId: string | null; approach: string | null; skill: string | null; by: string }
@@ -548,10 +669,14 @@ export type EventData =
       type: 'challenge_rolled'
       challengeId: string
       framing?: ChallengeSide
-      resolution: ChallengeSide
+      /** Absent on an attack: its first roll is the hit alone (the damage comes later). */
+      resolution?: ChallengeSide
       approachDie?: number
       by: string
     }
+  // An attack's second roll, once the player has settled the hit (see Attack): the damage dice
+  // and the critical die (which only counts on a critical). The hit can't be changed after it.
+  | { type: 'attack_damage_rolled'; challengeId: string; resolution: ChallengeSide; critDie: { face: number; value: number }; by: string }
   | { type: 'challenge_approach_activated'; challengeId: string; by: string }
   // GM circumstance modifier. `value` is the whole new modifier, not a step, so a replay lands
   // on the same number however many times it was nudged.
@@ -624,7 +749,11 @@ export type EventData =
       from?: number
       by: string
     }
-  | { type: 'challenge_closed'; challengeId: string; by: string }
+  // `wounds`: on an attack, what came off the enemy as the GM finished it.
+  | { type: 'challenge_closed'; challengeId: string; wounds?: number; by: string }
+  // An enemy attacks a player: rolled and settled in one go (see EnemyAttack). `adj` is the new
+  // play change on the character's pool, like exertion's.
+  | (Omit<EnemyAttack, 'id' | 'seq'> & { type: 'enemy_attacked'; attackId: string; adj: number; by: string })
   // Solo roll: the GM's own roll against a picked opposition number. One event carries the whole
   // thing (it is set up in a dialog and rolled in one go); visibility can be changed afterwards.
   | {
@@ -676,6 +805,7 @@ export type EventData =
       by: string
     }
   | { type: 'opposition_ready_set'; oppositionId: string; side: OppositionSide; ready: boolean; by: string }
+  | { type: 'opposition_closed'; oppositionId: string; by: string }
   | {
       type: 'opposition_rolled'
       oppositionId: string
@@ -689,6 +819,8 @@ export type EventData =
     }
   | { type: 'undo'; target: number; by: string }
   | { type: 'session_started'; by: string }
+  // The GM's bestiary and the current encounter (see enemies.ts).
+  | EnemyEventData
 
 export type LoggedEvent = EventData & { id: number; ts: number }
 export type RollEvent = Extract<LoggedEvent, { type: 'roll' }>
@@ -811,6 +943,10 @@ export class Session {
   readonly oppositions: Opposition[] = []
   /** All group tasks ever started, in order; the last one is on the board. */
   readonly groupTasks: GroupTask[] = []
+  /** Enemy templates and the current encounter (GM's Bestiary screen). */
+  readonly bestiary: Bestiary
+  /** Every enemy attack on a player, in order (the table's history log shows them). */
+  readonly enemyAttacks: EnemyAttack[] = []
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
@@ -819,6 +955,7 @@ export class Session {
   private readonly dataDir: string
 
   constructor(readonly rules: Rules, dbPath: string) {
+    this.bestiary = new Bestiary(rules.enemies)
     this.dataDir = dirname(dbPath)
     this.powerLevel = rules.powerLevel
     mkdirSync(dirname(dbPath), { recursive: true })
@@ -895,6 +1032,8 @@ export class Session {
     this.soloRolls.length = 0
     this.oppositions.length = 0
     this.groupTasks.length = 0
+    this.bestiary.reset()
+    this.enemyAttacks.length = 0
     // Replayed from the log like everything else (power_level_set), so start from the default.
     this.powerLevel = this.rules.powerLevel
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
@@ -1046,8 +1185,8 @@ export class Session {
         // ability; there is no sensible way to read them as one, so they are dropped (user
         // decision: no migration). Their later events then find no challenge and do nothing.
         if (!e.resolutionAbility) break
-        this.challenges.push(
-          this.newChallenge({
+        this.challenges.push({
+          ...this.newChallenge({
             id: e.challengeId,
             seq: e.id,
             description: e.description ?? '',
@@ -1057,7 +1196,8 @@ export class Session {
             stakes: e.stakes,
             by: e.by,
           }),
-        )
+          attack: e.attack ? { ...e.attack, critDie: null, applied: null } : null,
+        })
         break
       case 'group_task_started': {
         const members = e.members.map((m) => ({
@@ -1127,14 +1267,26 @@ export class Session {
         if (ch) {
           Object.assign(ch, {
             framing: e.framing ?? null,
-            resolution: e.resolution,
+            resolution: e.resolution ?? null,
             approachDie: e.approachDie ?? null,
           })
+          // The enemy has been attacked: its Evasion is spent for the rest of the round.
+          if (ch.attack) this.bestiary.markAttacked('enemy', ch.attack.enemyId)
           // Exertion is still 0 at this instant (the roll is what unlocks spending it), so this
           // reads the same as the plain dice — no snapshot subtraction needed.
           const math = this.challengeMath(ch)
           ch.failingAtRoll = math.resolution?.success === false || math.framing?.success === false
         }
+        break
+      }
+      case 'attack_damage_rolled': {
+        const ch = this.challengeById(e.challengeId)
+        if (!ch?.attack) break
+        ch.resolution = e.resolution
+        ch.attack.critDie = e.critDie
+        // Unbreakable's gate: a failure at the moment of **either** roll (user decision) — the hit
+        // was judged when it landed, the damage is judged now.
+        ch.failingAtRoll = ch.failingAtRoll || this.challengeMath(ch).attack?.wounds === 0
         break
       }
       case 'challenge_approach_activated': {
@@ -1146,7 +1298,7 @@ export class Session {
         // Effects that need targets wait for that many picks; the rest are done on activation.
         // Extra dice ask which roll they join — unless framing was skipped and there is no choice.
         const effect = this.approachEffectOf(ch)
-        ch.approachPicksLeft = effect?.kind === 'extra_dice' && !ch.framing ? 0 : effectPicks(effect)
+        ch.approachPicksLeft = effect?.kind === 'extra_dice' && this.rollsInPlay(ch).length < 2 ? 0 : effectPicks(effect)
         break
       }
       case 'challenge_approach_die_set': {
@@ -1252,6 +1404,18 @@ export class Session {
       case 'challenge_closed': {
         const ch = this.challengeById(e.challengeId)
         if (ch) ch.closed = true
+        if (ch?.attack) {
+          ch.attack.applied = e.wounds ?? 0
+          this.bestiary.wound(ch.attack.enemyId, ch.attack.pool, e.wounds ?? 0)
+        }
+        break
+      }
+      case 'enemy_attacked': {
+        const { type: _type, attackId, adj, by: _by, id, ts: _ts, ...rest } = e
+        this.enemyAttacks.push({ ...rest, id: attackId, seq: id })
+        const c = this.characters.get(e.charId)
+        if (c?.status === 'active') c.statAdj[e.pool] = adj
+        this.bestiary.markAttacked('char', e.charId)
         break
       }
       case 'solo_rolled':
@@ -1280,8 +1444,14 @@ export class Session {
           b: contestantFromLog(e.b),
           by: e.by,
           seq: e.id,
+          closed: false,
         })
         break
+      case 'opposition_closed': {
+        const opp = this.oppositions.find((x) => x.id === e.oppositionId)
+        if (opp) opp.closed = true
+        break
+      }
       case 'opposition_exerted': {
         const one = this.contestantOf(e.oppositionId, e.side)
         const c = this.characters.get(e.charId)
@@ -1314,6 +1484,8 @@ export class Session {
         }
         break
       }
+      default:
+        if (isEnemyEvent(e)) this.bestiary.apply(e)
     }
   }
 
@@ -1895,7 +2067,7 @@ export class Session {
     // Everything here is declared before the dice: the approach die is rolled with them, the
     // skill is a bonus on results that are already on the table, and the player is the one who
     // rolled. None of it moves once the roll is in.
-    if (ch.resolution) return null
+    if (this.hasRolled(ch)) return null
     // In a group task the participant is fixed and there is no approach: only the skill is theirs.
     if (ch.groupId && (charId !== ch.charId || approach !== null)) return null
     if (charId !== null && !this.characters.has(charId)) return null
@@ -1910,7 +2082,22 @@ export class Session {
   /** Where a challenge has got to: picking, rolled, closed. */
   challengePhase(ch: Challenge): 'setup' | 'rolled' | 'done' {
     if (ch.closed) return 'done'
-    return ch.resolution ? 'rolled' : 'setup'
+    return this.hasRolled(ch) ? 'rolled' : 'setup'
+  }
+
+  /** Any dice in: both rolls of a challenge land together, but an attack's hit comes first alone. */
+  hasRolled(ch: Challenge) {
+    return !!(ch.framing || ch.resolution)
+  }
+
+  /**
+   * An attack's step (user decision: sequential): `hit` once the hit is rolled and can still be
+   * altered, `damage` once the damage is rolled (the hit is then locked). Null before the roll
+   * and for anything but an attack.
+   */
+  attackStep(ch: Challenge): 'hit' | 'damage' | null {
+    if (!ch.attack || !ch.framing) return null
+    return ch.resolution ? 'damage' : 'hit'
   }
 
   /** The rolling player's current rank in one of the challenge's abilities. */
@@ -1930,7 +2117,20 @@ export class Session {
    */
   rollChallenge(challengeId: string, by: string) {
     const ch = this.challengeById(challengeId)
-    if (!ch || ch.closed || !ch.charId || ch.resolution) return null
+    if (!ch || ch.closed || !ch.charId || this.hasRolled(ch)) return null
+    if (ch.attack) {
+      // An attack rolls the hit first, alone — with the approach die, whose effect the player may
+      // cash in during either step (user decision). The damage is rollDamage().
+      const hitRank = this.challengeRank(ch, 'framing')
+      if (hitRank === null) return null
+      return this.append({
+        type: 'challenge_rolled',
+        challengeId,
+        framing: rollChallengeSide(hitRank),
+        approachDie: ch.approach ? cryptoRng(APPROACH_DIE_SIDES) : undefined,
+        by,
+      })
+    }
     const resolutionRank = this.challengeRank(ch, 'resolution')
     if (resolutionRank === null) return null
     const framingRank = ch.framingAbility ? this.challengeRank(ch, 'framing') : null
@@ -1941,6 +2141,27 @@ export class Session {
       framing: framingRank === null ? undefined : rollChallengeSide(framingRank),
       resolution: rollChallengeSide(resolutionRank),
       approachDie: ch.approach ? cryptoRng(APPROACH_DIE_SIDES) : undefined,
+      by,
+    })
+  }
+
+  /**
+   * An attack's second step: the player is done with the hit and rolls the damage — which locks
+   * the hit (no more exertion, rerolls, hand edits or approach taps on it). Not on a miss (there
+   * is no damage to roll), and not while an approach effect is still waiting for its taps.
+   */
+  rollDamage(challengeId: string, charId: string, by: string) {
+    const acting = this.actingCharacter(challengeId, charId)
+    const ch = acting?.ch
+    if (!ch?.attack || this.attackStep(ch) !== 'hit' || ch.approachPicksLeft > 0) return null
+    if (this.challengeMath(ch).attack?.tier?.miss) return null
+    const rank = this.challengeRank(ch, 'resolution')
+    if (rank === null) return null
+    return this.append({
+      type: 'attack_damage_rolled',
+      challengeId,
+      resolution: rollChallengeSide(rank),
+      critDie: rollOneFace(rank),
       by,
     })
   }
@@ -2027,9 +2248,8 @@ export class Session {
     const state = this.approachState(acting.ch)
     if (!state?.canActivate) return false
     this.append({ type: 'challenge_approach_activated', challengeId, by })
-    if (state.effect?.kind === 'extra_dice' && !acting.ch.framing) {
-      this.applyExtraDice(acting.ch, 'resolution', state.effect, by)
-    }
+    const open = this.rollsInPlay(acting.ch)
+    if (state.effect?.kind === 'extra_dice' && open.length === 1) this.applyExtraDice(acting.ch, open[0]!, state.effect, by)
     if (state.effect?.kind === 'match_highest') {
       for (const roll of this.rollsInPlay(acting.ch)) this.applyMatchHighest(acting.ch, roll, by)
     }
@@ -2045,7 +2265,7 @@ export class Session {
    */
   setApproachDie(challengeId: string, die: number, by: string) {
     const ch = this.challengeById(challengeId)
-    if (!ch || ch.closed || !ch.resolution || !ch.approach) return false
+    if (!ch || ch.closed || !this.hasRolled(ch) || !ch.approach) return false
     if (!Number.isInteger(die) || die < 1 || die > APPROACH_DIE_SIDES) return false
     this.append({ type: 'challenge_approach_die_set', challengeId, die, by })
     return true
@@ -2065,13 +2285,19 @@ export class Session {
    * roll actually holds now.
    */
   private dieInPlay(ch: Challenge, roll: ChallengeRoll, index: number) {
+    if (!this.rollsInPlay(ch).includes(roll)) return null // an attack's locked (or unrolled) roll
     const rolled = ch[roll]
     if (!rolled || !Number.isInteger(index) || index < 0 || index >= rolled.dice.length) return null
     return rolled.discarded?.[index] ? null : rolled // discarded dice are out of play
   }
 
-  /** The rolls an approach effect acts on: framing (when there is one) and resolution. */
-  private rollsInPlay(ch: Challenge): ChallengeRoll[] {
+  /**
+   * The rolls that can still be acted on — exertion, rerolls, hand edits, approach taps, support:
+   * framing (when there is one) and resolution. An attack has one at a time: the hit until the
+   * damage is rolled, then only the damage (user decision: the hit is locked by then).
+   */
+  rollsInPlay(ch: Challenge): ChallengeRoll[] {
+    if (ch.attack) return ch.resolution ? ['resolution'] : ch.framing ? ['framing'] : []
     return ch.framing ? ['framing', 'resolution'] : ['resolution']
   }
 
@@ -2250,7 +2476,7 @@ export class Session {
   /** Approach effect `extra_dice`, once activated: the player picks the roll its dice join. */
   addApproachDice(challengeId: string, charId: string, roll: ChallengeRoll, by: string) {
     const pending = this.pendingEffect(challengeId, charId, ['extra_dice'])
-    if (!pending || !pending.ch[roll]) return false
+    if (!pending || !pending.ch[roll] || !this.rollsInPlay(pending.ch).includes(roll)) return false
     this.applyExtraDice(pending.ch, roll, pending.effect, by)
     return true
   }
@@ -2297,6 +2523,7 @@ export class Session {
    * which moves the resolution's target and its degrees — all on the next render.
    */
   challengeMath(ch: Challenge): ChallengeMath {
+    if (ch.attack) return this.attackMath(ch, ch.attack)
     const { bonus, label, icon } = this.challengeSkillBonus(ch)
     // The skill is a bonus on the roll (user decision), so it never moves the difficulty.
     const target = ch.difficulty + ch.circumstance
@@ -2335,6 +2562,185 @@ export class Session {
     }
   }
 
+  /**
+   * An attack's numbers (see Attack): the hit against the enemy's defence, the hit tier it lands
+   * on, and the damage roll — with the tier's effect on it — against the other defence. Live, like
+   * any challenge: exertion on the hit can lift a glancing blow to a normal hit and the discarded
+   * die counts again. `success` is "it wounded".
+   */
+  private attackMath(ch: Challenge, a: Attack): ChallengeMath {
+    const { bonus, label, icon } = this.challengeSkillBonus(ch)
+    const char = ch.charId ? this.characters.get(ch.charId) : undefined
+    const accuracy = char ? this.itemBonus(char, ACCURACY_STAT) : 0
+    const weapon = char ? this.itemBonus(char, DAMAGE_STAT) : 0
+    const hitTarget = hitTargetOf(a.hitVs, a.hitValue, a.evasionSpent) + ch.circumstance
+    const damageTarget = a.damageValue + ch.circumstance
+    const framing = ch.framing
+      ? outcomeFor(
+          ch.framing.sum + bonus + accuracy + ch.exertionFraming + ch.customFraming + this.supportTotal(ch, 'framing'),
+          hitTarget,
+          'low',
+        )
+      : null
+    const tier = framing ? hitTier(framing.difference) : null
+    const dropped = tier?.drop && ch.resolution ? glancingDrop(ch.resolution) : null
+    const droppedValue = dropped === null ? 0 : ch.resolution!.dice[dropped]!
+    const critValue = tier?.extraDie ? (a.critDie?.value ?? 0) : null
+    const resolution =
+      ch.resolution && tier && !tier.miss
+        ? outcomeFor(
+            ch.resolution.sum -
+              droppedValue +
+              (critValue ?? 0) +
+              bonus +
+              weapon +
+              tier.damageBonus +
+              ch.exertionResolution +
+              ch.customResolution +
+              this.supportTotal(ch, 'resolution'),
+            damageTarget,
+            'low',
+          )
+        : null
+    const wounds = resolution ? woundsFor(resolution.difference) : 0
+    return {
+      difficulty: hitTarget - ch.circumstance,
+      circumstance: ch.circumstance,
+      skillBonus: bonus,
+      skillLabel: label,
+      skillIcon: icon,
+      target: hitTarget,
+      framing,
+      rung: null,
+      rungBonus: tier?.damageBonus ?? 0,
+      framingPointsToNext: framing ? pointsToNextTier(framing.difference) : null,
+      resolution,
+      degrees: 0,
+      resolutionPointsToNext: resolution ? pointsToNextWound(resolution.difference) : null,
+      success: framing && ch.resolution ? wounds > 0 : null,
+      attack: { hitTarget, damageTarget, accuracy, weapon, tier, dropped, critValue, wounds },
+    }
+  }
+
+  // ---- combat ----------------------------------------------------------------
+  /**
+   * The GM sets up a player's attack on an enemy: it becomes the current challenge, already
+   * handed to that player (who then picks a skill/approach and rolls, as in any challenge). The
+   * hit roll uses `hitAbility` against the enemy's `hitVs` defence (Evasion by default — 0 if it
+   * has been attacked this round, unless the GM says otherwise), the damage roll `damageAbility`
+   * against `damageVs` (Physical resistance), and the wounds come off `pool` (Health).
+   */
+  startAttack(
+    opts: {
+      enemyId: string
+      charId: string
+      hitAbility: string
+      damageAbility: string
+      hitVs?: string
+      damageVs?: string
+      pool?: string
+      evasionSpent?: boolean
+      description?: string
+    },
+    by: string,
+  ) {
+    const en = this.bestiary.enemy(opts.enemyId)
+    const char = this.characters.get(opts.charId)
+    if (!en || char?.status !== 'active') return null
+    if (!this.isAbilityField(opts.hitAbility) || !this.isAbilityField(opts.damageAbility)) return null
+    const hitVs: Defence = isDefence(opts.hitVs) ? opts.hitVs : 'evasion'
+    const damageVs: Defence = isDefence(opts.damageVs) ? opts.damageVs : 'physical'
+    const pool: WoundPool = isWoundPool(opts.pool) ? opts.pool : 'health'
+    const evasionSpent = opts.evasionSpent ?? this.bestiary.evasionSpent('enemy', en.id)
+    const hitValue = en.stats[defence(hitVs).enemyKey]
+    const challengeId = crypto.randomUUID().slice(0, 8)
+    this.append({
+      type: 'challenge_started',
+      challengeId,
+      description: (opts.description ?? '').trim().slice(0, 200),
+      framingAbility: opts.hitAbility,
+      resolutionAbility: opts.damageAbility,
+      difficulty: hitTargetOf(hitVs, hitValue, evasionSpent),
+      stakes: 'low',
+      attack: {
+        enemyId: en.id,
+        enemyName: en.name,
+        hitVs,
+        damageVs,
+        pool,
+        hitValue,
+        damageValue: en.stats[defence(damageVs).enemyKey],
+        evasionSpent,
+      },
+      by,
+    })
+    return this.append({ type: 'challenge_player_set', challengeId, charId: char.id, approach: null, skill: null, by })
+  }
+
+  /**
+   * An enemy attacks a player — rolled and settled at once (no active defence yet): see
+   * EnemyAttack. The player's defences are their sheet's current values (items included); their
+   * Evasion is 0 if something already attacked them this round. The wounds come off the pool
+   * straight away (a sheet pool stops at 0).
+   */
+  enemyAttack(enemyId: string, charId: string, opts: { hitVs?: string; damageVs?: string; pool?: string }, by: string) {
+    const en = this.bestiary.enemy(enemyId)
+    const char = this.characters.get(charId)
+    if (!en || char?.status !== 'active') return null
+    const hitVs: Defence = isDefence(opts.hitVs) ? opts.hitVs : 'evasion'
+    const damageVs: Defence = isDefence(opts.damageVs) ? opts.damageVs : 'physical'
+    const pool: WoundPool = isWoundPool(opts.pool) ? opts.pool : 'health'
+    const hitStat = this.statOf(char, defence(hitVs).charStat)
+    const damageStat = this.statOf(char, defence(damageVs).charStat)
+    const poolStat = this.statOf(char, pool)
+    if (!hitStat || !damageStat || !poolStat) return null
+    const evasionSpent = this.bestiary.evasionSpent('char', char.id)
+    const s = en.stats
+    const hit = rollDiceSide(s.hitDice, s.hitRank)
+    const hitTarget = hitTargetOf(hitVs, hitStat.current, evasionSpent)
+    const tier = hitTier(hit.sum + s.hitBonus - hitTarget)
+    let damage: ChallengeSide | null = null
+    if (!tier.miss) {
+      damage = rollDiceSide(s.damageDice, s.damageRank)
+      const drop = tier.drop ? glancingDrop(damage, s.damageDice) : null
+      if (drop !== null) damage.discarded = damage.dice.map((_, i) => i === drop)
+    }
+    const critDie = tier.extraDie ? rollOneFace(s.damageRank) : null
+    const numbers = {
+      hit,
+      hitBonus: s.hitBonus,
+      hitTarget,
+      damage,
+      critDie,
+      damageBonus: s.damageBonus,
+      damageTarget: damageStat.current,
+    }
+    const { wounds } = enemyAttackMath(numbers)
+    const to = Math.max(0, poolStat.current - wounds)
+    return this.append({
+      type: 'enemy_attacked',
+      attackId: crypto.randomUUID().slice(0, 8),
+      enemyId: en.id,
+      enemyName: en.name,
+      charId: char.id,
+      charName: char.name,
+      hitVs,
+      damageVs,
+      pool,
+      evasionSpent,
+      ...numbers,
+      wounds,
+      from: poolStat.current,
+      to,
+      adj: to - poolStat.normal,
+      by,
+    })
+  }
+
+  nextCombatRound(by: string) {
+    return this.logEnemy(this.bestiary.planNextRound(by))
+  }
+
   // ---- challenges by id ----------------------------------------------------
   /** A challenge by id: a regular one, or one participant's part of a group task. */
   challengeById(id: string): Challenge | undefined {
@@ -2371,6 +2777,7 @@ export class Session {
       customResolution: 0,
       supporters: [],
       groupId: null,
+      attack: null,
       closed: false,
       framing: null,
       resolution: null,
@@ -2425,7 +2832,7 @@ export class Session {
     })
   }
 
-  /** "Group task done": closes every participant's part at once, rolled or not. */
+  /** "Complete group challenge": closes every participant's part at once, rolled or not. */
   closeGroupTask(groupId: string, by: string) {
     const g = this.groupTasks.find((x) => x.id === groupId)
     if (!g || g.closed) return false
@@ -2483,8 +2890,8 @@ export class Session {
     const ch = this.challengeById(challengeId)
     const sp = ch?.supporters.find((x) => x.charId === charId)
     const char = this.characters.get(charId)
-    if (!ch || !sp || sp.die || ch.closed || !ch.resolution || char?.status !== 'active') return false
-    if (roll === 'framing' && !ch.framing) return false
+    if (!ch || !sp || sp.die || ch.closed || !this.hasRolled(ch) || char?.status !== 'active') return false
+    if (!this.rollsInPlay(ch).includes(roll)) return false
     if (!this.isAbilityField(ability)) return false
     const { face, value } = rollOneFace(Number(this.valueOf(char, this.rules.fields.get(ability)!)))
     this.append({ type: 'challenge_support_rolled', challengeId, charId, roll, ability, face, value, by })
@@ -2499,8 +2906,8 @@ export class Session {
   /** The challenge's player, if the dice are in, it is open and it is theirs to act on. */
   private actingCharacter(challengeId: string, charId: string) {
     const ch = this.challengeById(challengeId)
-    // `resolution`, not `framing`: framing is optional, the resolution check always happens.
-    if (!ch || ch.closed || !ch.resolution || ch.charId !== charId) return null
+    // Any roll in: a challenge's land together, an attack's hit comes first on its own.
+    if (!ch || ch.closed || !this.hasRolled(ch) || ch.charId !== charId) return null
     const char = this.characters.get(charId)
     return char?.status === 'active' ? { ch, char } : null
   }
@@ -2512,7 +2919,7 @@ export class Session {
   private editableChallenge(challengeId: string, charId: string | null) {
     if (charId !== null) return this.actingCharacter(challengeId, charId)?.ch ?? null
     const ch = this.challengeById(challengeId)
-    return ch && !ch.closed && ch.resolution ? ch : null
+    return ch && !ch.closed && this.hasRolled(ch) ? ch : null
   }
 
   /**
@@ -2522,7 +2929,7 @@ export class Session {
    */
   adjustCustom(challengeId: string, charId: string | null, roll: ChallengeRoll, delta: number, by: string) {
     const ch = this.editableChallenge(challengeId, charId)
-    if (!ch || (delta !== 1 && delta !== -1) || !ch[roll]) return false
+    if (!ch || (delta !== 1 && delta !== -1) || !ch[roll] || !this.rollsInPlay(ch).includes(roll)) return false
     const value = (roll === 'framing' ? ch.customFraming : ch.customResolution) + delta
     this.append({ type: 'challenge_custom_set', challengeId, roll, value, by })
     return true
@@ -2575,7 +2982,7 @@ export class Session {
     const acting = this.actingCharacter(challengeId, charId)
     if (!acting || this.availableExertion(acting.ch) <= 0) return false
     if (acting.ch.exertionRerollArmed) return false // this point is already going on a reroll
-    if (roll === 'framing' && !acting.ch.framing) return false // nothing framed to spend it on
+    if (!this.rollsInPlay(acting.ch).includes(roll)) return false // nothing framed, or an attack's locked hit
     this.append({ type: 'challenge_exertion_spent', challengeId, roll, by })
     return true
   }
@@ -2633,8 +3040,12 @@ export class Session {
   /** GM accepts the result: the challenge stops taking input. */
   closeChallenge(challengeId: string, by: string) {
     const ch = this.challengeById(challengeId)
-    if (!ch || ch.groupId || ch.closed || !ch.resolution) return false // a group closes as one
-    this.append({ type: 'challenge_closed', challengeId, by })
+    if (!ch || ch.groupId || ch.closed) return false // a group closes as one
+    // A challenge once its dice are in; an attack once the damage is — or straight after a miss.
+    if (ch.attack ? !ch.resolution && !this.challengeMath(ch).attack?.tier?.miss : !ch.resolution) return false
+    // An attack's wounds land on the enemy now, as the GM accepts the result.
+    const wounds = ch.attack ? (this.challengeMath(ch).attack?.wounds ?? 0) : undefined
+    this.append({ type: 'challenge_closed', challengeId, wounds, by })
     return true
   }
 
@@ -2687,6 +3098,43 @@ export class Session {
    */
   soloOutcome(solo: SoloRoll): SideOutcome {
     return outcomeFor(solo.roll.sum, solo.difficulty, 'low')
+  }
+
+  // ---- bestiary & encounter ------------------------------------------------
+  // The Bestiary plans (validates) each GM action; the session logs it. Each returns whether
+  // anything changed. Not undoable, like the rest of the GM's tools.
+  private logEnemy(data: EnemyEventData | null) {
+    if (!data) return false
+    this.append(data)
+    return true
+  }
+
+  saveEnemyTemplate(input: { id?: string; name: string; description?: string; stats: Record<string, unknown> }, by: string) {
+    return this.logEnemy(this.bestiary.planSaveTemplate(input, by))
+  }
+
+  deleteEnemyTemplate(templateId: string, by: string) {
+    return this.logEnemy(this.bestiary.planDeleteTemplate(templateId, by))
+  }
+
+  resetEnemyTemplate(templateId: string, by: string) {
+    return this.logEnemy(this.bestiary.planResetTemplate(templateId, by))
+  }
+
+  spawnEnemies(templateId: string, count: number, by: string) {
+    return this.logEnemy(this.bestiary.planSpawn(templateId, count, by))
+  }
+
+  updateEnemy(enemyId: string, field: string, value: string, by: string) {
+    return this.logEnemy(this.bestiary.planUpdate(enemyId, field, value, by))
+  }
+
+  adjustEnemyPool(enemyId: string, pool: 'health' | 'mind', delta: number, by: string) {
+    return this.logEnemy(this.bestiary.planAdjustPool(enemyId, pool, delta, by))
+  }
+
+  removeEnemies(which: 'defeated' | 'all' | string[], by: string) {
+    return this.logEnemy(this.bestiary.planRemove(which, by))
   }
 
   // ---- boons & complications ----------------------------------------------
@@ -2861,7 +3309,7 @@ export class Session {
   /** A side that may still change its commitment: in the contest, still committing, not ready. */
   private committing(oppositionId: string, charId: string) {
     const found = this.oppositionSideOf(oppositionId, charId)
-    if (!found || this.oppositionPhase(found.opp) !== 'committing' || found.one.ready) return null
+    if (!found || found.opp.closed || this.oppositionPhase(found.opp) !== 'committing' || found.one.ready) return null
     const char = this.characters.get(charId)
     return char?.status === 'active' ? { ...found, char } : null
   }
@@ -2911,16 +3359,27 @@ export class Session {
    */
   setOppositionReady(oppositionId: string, side: OppositionSide, ready: boolean, by: string) {
     const opp = this.oppositions.find((x) => x.id === oppositionId)
-    if (!opp || this.oppositionPhase(opp) !== 'committing') return false
+    if (!opp || opp.closed || this.oppositionPhase(opp) !== 'committing') return false
     if (opp[side].ready === ready) return false
     this.append({ type: 'opposition_ready_set', oppositionId, side, ready, by })
+    return true
+  }
+
+  /**
+   * "Complete opposition challenge": the GM ends the contest, rolled or not. Nothing can be
+   * changed after that, and the players in it no longer see it.
+   */
+  closeOpposition(oppositionId: string, by: string) {
+    const opp = this.oppositions.find((x) => x.id === oppositionId)
+    if (!opp || opp.closed) return false
+    this.append({ type: 'opposition_closed', oppositionId, by })
     return true
   }
 
   /** Rolls one side's two checks, once both sides are ready. Once per side. */
   rollOpposition(oppositionId: string, side: OppositionSide, by: string) {
     const opp = this.oppositions.find((x) => x.id === oppositionId)
-    if (!opp || !opp.a.ready || !opp.b.ready) return false
+    if (!opp || opp.closed || !opp.a.ready || !opp.b.ready) return false
     const one = opp[side]
     if (one.resolution) return false // already rolled
     const framingRank = this.contestantRank(one, 'framing')

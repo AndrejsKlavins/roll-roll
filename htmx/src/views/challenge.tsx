@@ -6,6 +6,8 @@ import { raw } from 'hono/html'
 import { abilityRankRange } from '../rules'
 import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '../rules'
 import type { Child } from 'hono/jsx'
+import { defence, poolLabel, tierEffect, woundLabel } from '../combat'
+import { AttackLogLine, EnemyAttackLogLine } from './combat'
 import {
   APPROACH_DIE_SIDES,
   isBaseField,
@@ -19,6 +21,7 @@ import {
   type ChallengeMath,
   type ChallengeSide,
   type DieMarker,
+  type EnemyAttack,
   type Session,
   type SideOutcome,
 } from '../session'
@@ -243,6 +246,10 @@ function RollBox(props: {
   custom: number
   /** Supporters' dice on this roll: each is a chip named after the helper. */
   supports?: { name: string; value: number }[]
+  /** More bonus chips (an attack's item bonuses, hit tier and critical die). */
+  extras?: { value: number; label: string; tone: string }[]
+  /** Shown instead of the result when the dice are in but don't count (a missed attack's damage). */
+  note?: Child
   /** Which roll this is, for the hand-edit routes. */
   roll: 'framing' | 'resolution'
   /**
@@ -282,6 +289,7 @@ function RollBox(props: {
     }
     if (props.custom) bonusTerms.push(bonusChip(props.custom, 'Custom', undefined, 'custom'))
     for (const sp of props.supports ?? []) bonusTerms.push(bonusChip(sp.value, sp.name, undefined, 'support'))
+    for (const x of props.extras ?? []) if (x.value) bonusTerms.push(bonusChip(x.value, x.label, undefined, x.tone))
   }
   const edit = props.editUrl && side ? props.editUrl : null
   const step = (delta: number) => (
@@ -340,6 +348,7 @@ function RollBox(props: {
           {props.caption}
         </div>
       )}
+      {!outcome && props.note}
     </div>
   )
 }
@@ -469,7 +478,7 @@ function ChallengeSetupControls(props: { session: Session; ch: Challenge; charId
         hx-swap="none"
         disabled={!ch.approach || undefined}
       >
-        {ch.framingAbility ? 'Roll framing and resolution' : 'Roll'}
+        {ch.attack ? 'Roll to hit' : ch.framingAbility ? 'Roll framing and resolution' : 'Roll'}
       </button>
     </div>
   )
@@ -558,7 +567,7 @@ function ApproachDie(props: {
       {/* Extra dice have no die to tap — the player picks which roll they join instead. */}
       {acting && pending && effect!.kind === 'extra_dice' && (
         <div class="approach-sides">
-          {(['framing', 'resolution'] as const).map((roll) => {
+          {session.rollsInPlay(ch).map((roll) => {
             const id = roll === 'framing' ? ch.framingAbility : ch.resolutionAbility
             const field = id ? (session.rules.fields.get(id) as NumberField | undefined) : undefined
             return (
@@ -696,8 +705,10 @@ function ExertionControls(props: {
           </div>
         ) : (
           <div class="exert-options">
-            {ch.framing && plusOne('framing', `framing (${ability(ch.framingAbility)})`)}
-            {plusOne('resolution', `resolution (${ability(ch.resolutionAbility)})`)}
+            {session.rollsInPlay(ch).includes('framing') &&
+              plusOne('framing', `${ch.attack ? 'hit' : 'framing'} (${ability(ch.framingAbility)})`)}
+            {session.rollsInPlay(ch).includes('resolution') &&
+              plusOne('resolution', `${ch.attack ? 'damage' : 'resolution'} (${ability(ch.resolutionAbility)})`)}
             <button
               type="button"
               class="exert-spend"
@@ -796,6 +807,69 @@ function ResolutionCaption(props: { math: ChallengeMath }) {
   )
 }
 
+/** An attack's hit box footer: the tier it landed on, what that does to the damage, how close the next tier is. */
+function HitCaption(props: { math: ChallengeMath }) {
+  const t = props.math.attack?.tier
+  if (!props.math.framing || !t) return null
+  const tone = t.miss || t.drop ? 'hinder' : t.id === 'normal' ? 'even' : 'help'
+  return (
+    <div class={`roll-caption roll-caption-${tone}`}>
+      <NeedsLine pointsToNext={props.math.framingPointsToNext} />
+      <span class="roll-caption-title">{t.label}</span>
+      <span class="roll-caption-sub">({tierEffect(t)})</span>
+    </div>
+  )
+}
+
+/** An attack's damage box footer: the wound, and how close one more wound is. */
+function WoundCaption(props: { math: ChallengeMath; pool: 'health' | 'mind' }) {
+  const a = props.math.attack
+  if (!props.math.resolution || !a) return null
+  return (
+    <div class={`roll-caption ${a.wounds > 0 ? 'roll-caption-help' : 'roll-caption-hinder'}`}>
+      <p class="roll-caption-needs">{props.math.resolutionPointsToNext} needed for one more wound</p>
+      <span class="roll-caption-title">{woundLabel(a.wounds)}</span>
+      {a.wounds > 0 && (
+        <span class="roll-caption-sub">
+          (−{a.wounds} {poolLabel(props.pool)})
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * An attack's two numbers to beat, where a challenge has its one difficulty: the hit against the
+ * enemy's defence (spent Evasion reads as 0, and says so) and the damage against the other one.
+ * The GM's circumstance ± moves both.
+ */
+function AttackTargets(props: { ch: Challenge; math: ChallengeMath; controls?: Child }) {
+  const a = props.ch.attack!
+  const m = props.math.attack!
+  const circ = props.math.circumstance
+  const hitName = a.hitVs === 'evasion' && a.evasionSpent ? 'Evasion (spent)' : defence(a.hitVs).label
+  return (
+    <div class="difficulty-panel attack-targets">
+      <div class="attack-target">
+        <span class="difficulty-label">Hit vs {hitName}</span>
+        <span class="difficulty-target">{m.hitTarget}</span>
+      </div>
+      <div class="attack-target">
+        <span class="difficulty-label">Damage vs {defence(a.damageVs).label}</span>
+        <span class="difficulty-target">{m.damageTarget}</span>
+      </div>
+      {circ !== 0 && (
+        <p class="difficulty-calc">
+          <span class={circ > 0 ? 'calc-part hinder' : 'calc-part help'}>
+            {circ > 0 ? '+' : '−'} {Math.abs(circ)} circumstance on both
+          </span>
+        </p>
+      )}
+      {props.controls}
+    </div>
+  )
+}
+
 /** Full board for the current (last-started) challenge. Interactive parts only for role "player". */
 function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' | 'player' | 'table'; viewerCharId?: string }) {
   const { session, ch, role, viewerCharId } = props
@@ -804,6 +878,23 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   const resolutionField = ability(ch.resolutionAbility)
   const math = session.challengeMath(ch)
   const rolled = session.challengePhase(ch) !== 'setup'
+  // A player's attack on an enemy: framing is the hit, resolution the damage (see Attack).
+  const attack = ch.attack
+  const am = math.attack
+  // The glancing blow's discarded die is struck through on the damage dice (worked out live, so
+  // it is marked here rather than stored on the roll).
+  const damageSide =
+    ch.resolution && am?.dropped != null
+      ? { ...ch.resolution, discarded: ch.resolution.dice.map((_, i) => i === am.dropped || !!ch.resolution!.discarded?.[i]) }
+      : ch.resolution
+  const hitExtras = am ? [{ value: am.accuracy, label: 'Accuracy', tone: 'custom' }] : undefined
+  const damageExtras = am
+    ? [
+        { value: am.weapon, label: 'Weapon', tone: 'custom' },
+        { value: am.tier?.damageBonus ?? 0, label: am.tier?.label ?? 'Hit', tone: 'help' },
+        { value: am.critValue ?? 0, label: 'Critical die', tone: 'help' },
+      ]
+    : undefined
   // Challenges store the number; name the tier the GM's own difficulty came from when one matches.
   const tier = session.rules.challenges.difficulties.find((d) => d.value === ch.difficulty)?.label ?? null
   // "Someone" before a player is assigned — the same fallback the rest of the app uses (app.tsx).
@@ -827,6 +918,10 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
           : undefined
       : undefined
   const approach = session.approachState(ch)
+  // An attack alters one roll at a time: the hit, then (once rolled) only the damage.
+  const open = session.rollsInPlay(ch)
+  const editFor = (roll: 'framing' | 'resolution') => (open.includes(roll) ? editUrl : undefined)
+  const step = session.attackStep(ch)
   // Once the player has chosen "Reroll a die" for a point of exertion, every die in play on both
   // rolls is a reroll button — added dice included — until one is picked or they cancel.
   const rerollAction = (roll: 'framing' | 'resolution') => {
@@ -840,7 +935,8 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
   // A pending approach effect owns the dice of both rolls while it lasts — it is the step the
   // board is waiting on, so it takes them over from the reroll buttons.
   const pendingKind = acting && approach?.pending ? approach.effect?.kind : undefined
-  const dieAction = (roll: 'framing' | 'resolution') => {
+  const dieAction = (roll: 'framing' | 'resolution') => (open.includes(roll) ? openDieAction(roll) : undefined)
+  const openDieAction = (roll: 'framing' | 'resolution') => {
     // Multi-die effects never take the same die twice, so dice already used drop out.
     const picked = (index: number) => ch.approachPicked.includes(`${roll}:${index}`)
     const tap = (kind: DieAction['kind'], effect: string, title: string) => (index: number) =>
@@ -887,30 +983,57 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
       <div class="challenge-title-row">
         <div class="challenge-title-main">
           <h3 class="challenge-description">
-            <b>{rollerName}</b> attempts to {ch.description || 'the challenge'}
+            {attack ? (
+              <>
+                <b>{rollerName}</b> attacks <b>{attack.enemyName}</b>
+                {ch.description && ` — ${ch.description}`}
+              </>
+            ) : (
+              <>
+                <b>{rollerName}</b> attempts to {ch.description || 'the challenge'}
+              </>
+            )}
           </h3>
           <div class="challenge-head">
-            <span class={`stakes stakes-${ch.stakes}`}>{stakesLabel(ch.stakes)} stakes</span>
-            {math.success !== null && (
-              <span class={math.success ? 'result success' : 'result failure'}>
-                {math.success ? 'Success' : 'Failure'}
-              </span>
+            {attack ? (
+              am?.tier && (
+                <span class={!ch.resolution && !am.tier.miss ? 'result' : am.wounds > 0 ? 'result success' : 'result failure'}>
+                  {am.tier.miss ? 'Miss' : ch.resolution ? `${am.tier.label} · ${woundLabel(am.wounds)}` : am.tier.label}
+                </span>
+              )
+            ) : (
+              <>
+                <span class={`stakes stakes-${ch.stakes}`}>{stakesLabel(ch.stakes)} stakes</span>
+                {math.success !== null && (
+                  <span class={math.success ? 'result success' : 'result failure'}>
+                    {math.success ? 'Success' : 'Failure'}
+                  </span>
+                )}
+              </>
             )}
             {degreeText(math.degrees) && <span class="challenge-degree">{degreeText(math.degrees)}</span>}
             {ch.closed && <span class="badge closed">Done</span>}
           </div>
         </div>
-        <DifficultyPanel
-          math={math}
-          tier={tier}
-          controls={role === 'gm' && !ch.closed ? <CircumstanceControls value={ch.circumstance} /> : undefined}
-        />
+        {attack ? (
+          <AttackTargets
+            ch={ch}
+            math={math}
+            controls={role === 'gm' && !ch.closed ? <CircumstanceControls value={ch.circumstance} /> : undefined}
+          />
+        ) : (
+          <DifficultyPanel
+            math={math}
+            tier={tier}
+            controls={role === 'gm' && !ch.closed ? <CircumstanceControls value={ch.circumstance} /> : undefined}
+          />
+        )}
       </div>
       {/* One box when the GM skipped framing, two when they didn't. */}
       <div class={framingField ? 'challenge-numbers' : 'challenge-numbers solo'}>
         {framingField && (
           <RollBox
-            kind="Framing"
+            kind={attack ? 'Hit' : 'Framing'}
             field={framingField}
             label={framingField.label}
             side={ch.framing}
@@ -924,30 +1047,39 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
             custom={ch.customFraming}
             supports={supportsOn('framing')}
             roll="framing"
-            editUrl={editUrl}
+            editUrl={editFor('framing')}
             attemptLabel={role !== 'player'}
-            caption={<FramingCaption math={math} />}
+            caption={attack ? <HitCaption math={math} /> : <FramingCaption math={math} />}
+            extras={hitExtras}
           />
         )}
         <RollBox
-          kind="Resolution"
+          kind={attack ? 'Damage' : 'Resolution'}
           field={resolutionField}
           label={resolutionField?.label ?? ch.resolutionAbility}
-          side={ch.resolution}
+          side={damageSide}
           outcome={math.resolution}
           faces={session.rules.challenges.faces}
           skillBonus={math.skillBonus}
           skillLabel={math.skillLabel}
           skillIcon={math.skillIcon}
           exertion={ch.exertionResolution}
-          framingBonus={math.rungBonus}
+          framingBonus={attack ? undefined : math.rungBonus}
+          extras={damageExtras}
+          note={
+            attack && am?.tier?.miss ? (
+              <p class="attack-miss-note">Missed — no damage</p>
+            ) : attack && !ch.resolution ? (
+              <p class="attack-miss-note">{ch.framing ? 'Rolled once the hit is settled' : 'Rolled after the hit'}</p>
+            ) : undefined
+          }
           dieAction={dieAction('resolution')}
           custom={ch.customResolution}
           supports={supportsOn('resolution')}
           roll="resolution"
-          editUrl={editUrl}
+          editUrl={editFor('resolution')}
           attemptLabel={role !== 'player'}
-          caption={<ResolutionCaption math={math} />}
+          caption={attack ? <WoundCaption math={math} pool={attack.pool} /> : <ResolutionCaption math={math} />}
         />
       </div>
       <ApproachDie
@@ -960,10 +1092,25 @@ function CurrentChallenge(props: { session: Session; ch: Challenge; role: 'gm' |
       {role !== 'player' && <ChallengeAbilities session={session} ch={ch} />}
       {isViewerTurn && !rolled && <ChallengeSetupControls session={session} ch={ch} charId={viewerCharId!} />}
       {acting && <ExertionControls session={session} ch={ch} charId={viewerCharId!} />}
+      {acting && step === 'hit' && !am?.tier?.miss && (
+        <div class="attack-next">
+          <button
+            type="button"
+            class="primary"
+            hx-post={`/c/${viewerCharId}/challenge/roll-damage`}
+            hx-swap="none"
+            disabled={ch.approachPicksLeft > 0 || undefined}
+            title={ch.approachPicksLeft > 0 ? 'Finish the approach effect first' : undefined}
+          >
+            Done with the hit — roll damage
+          </button>
+          <p class="muted">The hit is locked once the damage is rolled.</p>
+        </div>
+      )}
       <SupportPanel session={session} ch={ch} role={role} viewerCharId={viewerCharId} />
-      {role === 'gm' && rolled && !ch.closed && (
+      {role === 'gm' && rolled && !ch.closed && (!attack || step === 'damage' || am?.tier?.miss) && (
         <button type="button" class="primary" hx-post="/gm/challenge/done" hx-swap="none">
-          Challenge done
+          {attack ? `Attack done${am && am.wounds > 0 ? ` — take ${am.wounds} ${poolLabel(attack.pool)} off ${attack.enemyName}` : ''}` : 'Challenge done'}
         </button>
       )}
     </div>
@@ -1068,14 +1215,16 @@ function SupportRoll(props: { session: Session; ch: Challenge; charId: string; r
         ))}
       </select>
       <div class="support-buttons">
-        {ch.framing && (
+        {session.rollsInPlay(ch).includes('framing') && (
           <button type="submit" name="roll" value="framing" class="small">
-            Roll support for framing
+            Roll support for {ch.attack ? 'the hit' : 'framing'}
           </button>
         )}
-        <button type="submit" name="roll" value="resolution" class="primary">
-          Roll support for resolution
-        </button>
+        {session.rollsInPlay(ch).includes('resolution') && (
+          <button type="submit" name="roll" value="resolution" class="primary">
+            Roll support for {ch.attack ? 'the damage' : 'resolution'}
+          </button>
+        )}
       </div>
     </form>
   )
@@ -1171,12 +1320,13 @@ function GroupMember(props: { session: Session; g: GroupTask; ch: Challenge; rol
  * The group-task section (user-designed): the GM's "Start group task" button, then the current
  * task — its difficulty once, every participant's part in turn, and at the very bottom the
  * **total**: everyone's resolution margins added up. Its own swap target on all three screens; a
- * player sees it only when they take part (they see everyone's rolls in it).
+ * player sees it only when they take part (they see everyone's rolls in it), until it is completed.
  */
 export function GroupTaskBoard(props: { session: Session; role: 'gm' | 'player' | 'table'; viewerCharId?: string; oob?: boolean }) {
   const { session, role, viewerCharId } = props
   const current = session.currentGroupTask()
-  const involved = !!current && current.members.some((m) => m.charId === viewerCharId)
+  // Once the GM completes it, it leaves the players' screens (they see only what is still going on).
+  const involved = !!current && !current.closed && current.members.some((m) => m.charId === viewerCharId)
   const g = role === 'player' && !involved ? null : current
   const tier = g ? session.rules.challenges.difficulties.find((d) => d.value === g.difficulty)?.label ?? null : null
   const total = g ? session.groupTotal(g) : null
@@ -1211,7 +1361,7 @@ export function GroupTaskBoard(props: { session: Session; role: 'gm' | 'player' 
           </div>
           {role === 'gm' && !g.closed && (
             <button type="button" class="primary" hx-post="/gm/group/done" hx-swap="none">
-              Group task done
+              Complete group challenge
             </button>
           )}
         </div>
@@ -1329,6 +1479,7 @@ type LogEntry =
   | { kind: 'solo'; solo: SoloRoll }
   | { kind: 'opposition'; opp: Opposition }
   | { kind: 'group'; g: GroupTask }
+  | { kind: 'enemyAttack'; attack: EnemyAttack }
 
 /** " and succeeds with +4" / " and fails with -2" — how every history line ends. */
 const verdict = (success: boolean, margin: number) =>
@@ -1358,6 +1509,8 @@ function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
     <ul class="challenge-log">
       {entries.map((entry) => {
         if (entry.kind === 'solo') return <SoloLogLine session={session} solo={entry.solo} />
+        if (entry.kind === 'enemyAttack') return <EnemyAttackLogLine attack={entry.attack} />
+        if (entry.kind === 'challenge' && entry.ch.attack) return <AttackLogLine session={session} ch={entry.ch} />
         if (entry.kind === 'group') {
           // "Group task: haul the cart (challenging) 7 — Mara +3, Jorik -2 · total +1"
           const { g } = entry
@@ -1895,7 +2048,8 @@ function oppActing(v: OppViewer, side: OppositionSide) {
   const one = v.opp[side]
   const phase = v.session.oppositionPhase(v.opp)
   const mine = !!one.charId && one.charId === v.viewerCharId
-  const forSide = mine || v.role === 'gm' // the GM can act for any side (an NPC has nobody else)
+  // The GM can act for any side (an NPC has nobody else); nobody acts once it is completed.
+  const forSide = !v.opp.closed && (mine || v.role === 'gm')
   return { mine, phase, commits: phase === 'committing' && !one.ready && forSide, forSide }
 }
 
@@ -2133,6 +2287,7 @@ function SkillPick(props: { session: Session; opp: Opposition; one: Contestant }
 /** What the contest is waiting on, in a line everyone can read. */
 function oppositionStatus(session: Session, opp: Opposition) {
   const phase = session.oppositionPhase(opp)
+  if (opp.closed && phase !== 'done') return 'Completed by the GM before both sides rolled'
   if (phase === 'committing') {
     const waiting = [opp.a, opp.b].filter((o) => !o.ready).map((o) => o.name)
     return `Committing — waiting on ${waiting.join(' and ')}`
@@ -2164,7 +2319,9 @@ export function OppositionBoard(props: {
   const { session, role, viewerCharId } = props
   const current = session.currentOpposition()
   // A player sees the current contest only when their character is one of its two sides.
-  const involved = !!current && [current.a, current.b].some((o) => o.charId !== null && o.charId === viewerCharId)
+  // Once the GM completes it, it leaves the players' screens (they see only what is still going on).
+  const involved =
+    !!current && !current.closed && [current.a, current.b].some((o) => o.charId !== null && o.charId === viewerCharId)
   const opp = role === 'player' && !involved ? null : current
   const outcome = opp && session.oppositionOutcome(opp)
   return (
@@ -2179,6 +2336,7 @@ export function OppositionBoard(props: {
           <div class="opp-head">
             <h3 class="opp-description">{opp.description}</h3>
             <span class="stakes stakes-high">High stakes</span>
+            {opp.closed && <span class="badge closed">Done</span>}
           </div>
           <p class="opp-status">{oppositionStatus(session, opp)}</p>
           {role === 'player' ? (
@@ -2192,6 +2350,11 @@ export function OppositionBoard(props: {
             />
           ) : (
             <OppGrid session={session} opp={opp} role={role} viewerCharId={viewerCharId} />
+          )}
+          {role === 'gm' && !opp.closed && (
+            <button type="button" class="primary" hx-post="/gm/opposition/done" hx-swap="none">
+              Complete opposition challenge
+            </button>
           )}
         </div>
       )}
@@ -2427,8 +2590,11 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
   // the GM and the table see every one. The section stays mounted either way, so a live update
   // still has somewhere to land when a challenge is handed to this player.
   // A supporter is part of it too, so they see it (to roll their support die).
+  // A closed one ("Challenge done") leaves their screen: players see only what is still going on.
   const involved =
-    !!current && (current.charId === viewerCharId || current.supporters.some((sp) => sp.charId === viewerCharId))
+    !!current &&
+    !current.closed &&
+    (current.charId === viewerCharId || current.supporters.some((sp) => sp.charId === viewerCharId))
   const ch = role === 'player' && !involved ? null : current
   // Past challenges (the current one is on the board above), every solo roll the GM has shown
   // the table, and finished earlier opposition rolls — newest first. Hiding a solo roll again
@@ -2442,6 +2608,8 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
       .slice(0, -1)
       .filter((o) => session.oppositionPhase(o) === 'done')
       .map((o) => ({ kind: 'opposition' as const, opp: o, seq: o.seq })),
+    // Enemies' attacks on players (a player's own attack is a challenge, above).
+    ...session.enemyAttacks.map((a) => ({ kind: 'enemyAttack' as const, attack: a, seq: a.seq })),
     // Group tasks once the GM has closed them (or a newer one has taken the board).
     ...session.groupTasks
       .filter((g, i) => g.closed || i < session.groupTasks.length - 1)

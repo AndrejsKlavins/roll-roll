@@ -4,6 +4,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import type { Child } from 'hono/jsx'
 import { ExprError } from './engine/expr'
 import { characterToCsv, csvToSnapshot } from './backup'
+import { bestiaryRoutes, pushEncounter } from './bestiary-routes'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
 import { ChallengeBoard, ChallengePlayerPicker, GroupTaskBoard, OppositionBoard, SoloRollBoard } from './views/challenge'
@@ -132,6 +133,8 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   app.get('/gm', (c) => c.html(<GmPage session={session} playerUrls={opts.playerUrls} qrSvg={opts.qrSvg} />))
 
   app.get('/table', (c) => c.html(<TablePage session={session} />))
+
+  bestiaryRoutes(app, session, actorName, { challenge: () => pushChallenge(), stat: (char) => pushStatChange(char) })
 
   // ---- character actions --------------------------------------------------
   app.post('/c/:id/set', async (c) => {
@@ -334,12 +337,16 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
 
   // ---- challenges (public table screen) ------------------------------------
   // Every action re-renders the whole board, per role, to gm + player + table clients.
-  const pushChallenge = () =>
+  const pushChallenge = () => {
     hub.send(
       () => true,
       (client) =>
         html(<ChallengeBoard session={session} role={client.role} viewerCharId={client.charId ?? undefined} oob />),
     )
+    // While the current challenge is an attack, rolling it spends the enemy's Evasion and
+    // finishing it wounds the enemy — the encounter screens follow.
+    if (session.currentChallenge()?.attack) pushEncounter(session)
+  }
 
   // The solo board is its own swap target, so a solo roll never disturbs the challenge board.
   // Players and the table are sent it too — SoloRollBoard renders an empty section for them while
@@ -385,6 +392,13 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
 
   // Ready and Roll are posted per side; the GM may act for either (an NPC has nobody else, and
   // the app has no permission system), so these are not tied to the acting character.
+  app.post('/gm/opposition/done', (c) => {
+    const opp = session.currentOpposition()
+    if (!opp) return c.notFound()
+    if (session.closeOpposition(opp.id, actorName(c))) pushOpposition()
+    return noContent(c)
+  })
+
   app.post('/gm/opposition/ready', (c) => {
     const opp = session.currentOpposition()
     if (!opp) return c.notFound()
@@ -488,6 +502,15 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     const ch = session.currentChallenge()
     if (!char || !ch || ch.charId !== char.id) return c.notFound()
     if (session.rollChallenge(ch.id, actorName(c))) pushChallenge()
+    return noContent(c)
+  })
+
+  // An attack's second step: the player is done with the hit and rolls the damage.
+  app.post('/c/:id/challenge/roll-damage', (c) => {
+    const char = session.characters.get(c.req.param('id'))
+    const ch = session.currentChallenge()
+    if (!char || !ch || ch.charId !== char.id) return c.notFound()
+    if (session.rollDamage(ch.id, char.id, actorName(c))) pushChallenge()
     return noContent(c)
   })
 
@@ -897,10 +920,11 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   app.get(
     '/ws',
     upgradeWebSocket((c) => {
+      const bestiary = c.req.query('bestiary')
       const role = c.req.query('gm') === '1' ? 'gm' : c.req.query('table') === '1' ? 'table' : 'player'
       const charId = c.req.query('char') ?? null
       return {
-        onOpen: (_event, ws) => hub.add({ ws, role, charId }),
+        onOpen: (_event, ws) => (bestiary ? hub.addBestiary({ ws, clientId: bestiary }) : hub.add({ ws, role, charId })),
         onClose: (_event, ws) => hub.remove(ws),
       }
     }),

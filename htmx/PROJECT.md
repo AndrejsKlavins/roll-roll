@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-23 (Challenge: optional framing, both checks rolled together, skill as a result bonus)
+Last updated: 2026-09-25 (Complete group / opposition challenge buttons; players see only open rolls)
 
 ---
 
@@ -130,6 +130,9 @@ htmx/
     rules.test.ts       bun tests for field icon/colour parsing and validation
     hub.ts              connected WebSocket clients, send helper, heartbeat
     backup.ts           character ⇄ CSV (export, and checked import); CSV parser
+    enemies.ts          enemy templates + encounter instances (Bestiary state, validation, events)
+    combat.ts           hit tiers, wounds, glancing drop, defences (pure combat arithmetic)
+    bestiary-routes.tsx the GM's Bestiary screen routes (/gm/bestiary, /gm/enemy/:id/…)
     network.ts          LAN IPv4 detection (prefers Wi-Fi, skips virtual adapters)
     engine/
       expr.ts           tokenizer + recursive-descent evaluator for formulas and dice
@@ -140,6 +143,8 @@ htmx/
       sheet.tsx         Sheet, SheetHead, FieldView, DerivedView (generated from rules), GM Manage section
       feed.tsx          RollEntry (per-viewer visibility), Feed, SessionMarker, ChangeLog
       pages.tsx         JoinPage, PlayerPage, GmPage, SessionLabel, WhoLink, CharacterRemoved
+      bestiary.tsx      BestiaryPage: encounter cards + template table and dialogs, attack forms
+      combat.tsx        EncounterBoard (table), attack log lines, enemy attack breakdown
 ```
 
 Dependencies: `hono`, `htmx.org@2`, `htmx-ext-ws@2`, `alpinejs@3`, `qrcode`; dev: `typescript@7`, `@types/bun`, `@types/qrcode`.
@@ -622,6 +627,12 @@ counts.
 | `rolling` | both sides have pressed **Ready**, which reveals the commitments and opens **Roll**; each side rolls its own two checks. |
 | `done` | both rolled. **Nothing can be changed** (user decision): no rerolls, no late exertion, no circumstance — every control disappears and the session refuses the routes. |
 
+**"Complete opposition challenge"** (GM button, `/gm/opposition/done` → `closeOpposition` →
+`opposition_closed`, sets `Opposition.closed`): ends the contest at any phase. A closed contest is
+frozen (Ready, skill, exertion and Roll are refused), shows a "Done" badge to the GM and the table,
+and **disappears from the players' screens**. Closed before both rolled, its status reads
+"Completed by the GM before both sides rolled".
+
 **Commitments are hidden until both sides are ready** (user decision) — that is what makes Ready
 worth pressing. `oppositionCommitVisible(opp, side, role, viewerCharId)` decides it per viewer: a
 player always sees their own, the GM sees everything (refereeing, not competing), and the other
@@ -636,7 +647,7 @@ permission system anyway.
 
 State lives in `oppositions` (`Opposition` with an `a` and a `b` `Contestant`); events are
 `opposition_started`, `opposition_exerted`, `opposition_skill_set`, `opposition_skill_points_set`,
-`opposition_ready_set` and `opposition_rolled`. `OppositionBoard` (`#opposition-board`) is its own
+`opposition_ready_set`, `opposition_rolled` and `opposition_closed`. `OppositionBoard` (`#opposition-board`) is its own
 swap target mounted on all three screens, so a contest never disturbs the challenge board or the
 solo board. Not undoable, like the rest.
 
@@ -652,8 +663,10 @@ by a hair", accent border), ordered by its `seq` like everything else there.
 **Who sees which roll** (user decision): the **GM** sees every current roll (but **not the history
 log** — they read it on `/table`). **`/table`** sees every public
 roll — the current challenge and the challenge history log, the current opposition, and a solo roll
-once it is `public`. A **player** sees only rolls they are part of, and only the current one: the
-current challenge when `ch.charId` is theirs **or they are one of its supporters**, the current opposition when their character is one of
+once it is `public`. A **player** sees only rolls they are part of, and only the current one **while it is still
+open** (user decision: once the GM completes a challenge, group task or opposition it leaves their
+screen): the current challenge when `ch.charId` is theirs **or they are one of its supporters**, the
+current group task when they take part, the current opposition when their character is one of
 its sides, and **never** a solo roll (no player is in one) nor the challenge history. The filtering
 is in the three boards themselves (`ChallengeBoard`, `OppositionBoard`, `SoloRollBoard`), which is
 safe because every push renders per client (`hub.send` with the client's role and `charId`); each
@@ -742,8 +755,8 @@ challenge — but **no approach die and no supporters** (`setChallengePlayer`, `
 every other challenge method). `GroupTaskBoard` (`#group-board`, all three screens; a player sees it
 only when they take part, and then sees everyone's rolls) shows the difficulty once, each
 participant's name + result and their framing/resolution boxes, and **at the very bottom the total**:
-everyone's resolution margins added up (`groupTotal`, "2 of 3 rolled"). **"Group task done"**
-(`group_task_closed`) closes every part at once. Routes: `/gm/group/start|done`,
+everyone's resolution margins added up (`groupTotal`, "2 of 3 rolled"). **"Complete group
+challenge"** (`group_task_closed`) closes every part at once and takes it off the players' screens. Routes: `/gm/group/start|done`,
 `/c/:id/group/setup|roll|exert|spend-exertion|reroll-mode|reroll` (the participant's own part;
 `ExertionControls` takes a `base` URL). **History log** (table): "Group task: Haul the cart
 (challenging) 7 — Mara +3, Jorik -2 · total +1", green/red by the total's sign, once closed or
@@ -825,6 +838,102 @@ control and shows a "Done" badge. None of these are undoable.
   keeps its place in time. Unlike challenges, the current solo roll is listed too (its card sits in
   its own board, not above the log).
 
+
+### 6.6d Bestiary & encounter (`enemies.ts`, `views/bestiary.tsx`, `bestiary-routes.tsx`)
+
+First step of the combat system (user-designed; the attack roll itself comes later). The GM's
+**Bestiary** is its own screen, **`/gm/bestiary`** (user decision: the GM screen is crowded enough),
+opened from the GM screen's "Bestiary & encounter ↗" link.
+
+**An enemy** has Health and Mind (pools; **down once Health is below 0**, "broken" once Mind is),
+a **to-hit roll** and a **damage roll** — each `dice` d6 at a `rank` (every rank above/below 3
+shifts each die by 1, exactly like a character's ability dice; written `2d6(3)`) plus a flat
+bonus — Evasion, Physical and Mental resistance, Speed, and a free-text **description** for special
+abilities (read by the GM, applied by nothing).
+
+**Templates** start from `rules.yaml`'s top-level `enemies:` list (parsed by `parseEnemyTemplates`;
+rat, combat midge and wolf are the user's own numbers, the rest are suggestions — the file's
+comment gives the average human for comparison). On the screen the GM can **edit** any template,
+make **new** ones (`custom_…` ids, starting from the average human) and **delete** any; an edited
+built-in shows "edited" and can be **reset to the rules file**. These are events
+(`enemy_template_saved` / `enemy_template_deleted`) layered over the file's list in
+`Bestiary.templates()`, so they survive restarts and log export/import.
+
+**Instances**: **Spawn ×N** copies a template into the encounter (`enemies_spawned` carries the
+stats as they were), named "Wolf 1", "Wolf 2"… continuing after the highest number still there.
+**Every copy has its own stats** — each number on its card is an input saved on change
+(`enemy_updated` with a one-field patch), so one wolf can be tweaked without touching the template
+or the others, and editing a template later never reaches enemies already spawned (the card says
+"tweaked" when it differs from its template, "Template deleted" when that is gone). Health and
+Mind have −/+ and a typed current value, **capped at the max**, floor −99; lowering a max pulls the
+current value down, raising it doesn't heal. Cards are listed **fastest first** (Speed, then spawn
+order). **Remove** one (✕), **Remove defeated** (Health below 0), **Clear encounter**
+(`enemies_removed`). Not undoable, like the other GM tools; nothing appears in the change log or
+on any other screen yet.
+
+**Wiring**: `Bestiary` (in `enemies.ts`) holds the state and **plans** each action (validates and
+returns the event, or null when nothing would change); `Session` owns it (`session.bestiary`,
+reset in `rebuild()`, fed in `apply()`'s `default:` via `isEnemyEvent`) and logs the planned event
+(`saveEnemyTemplate`, `spawnEnemies`, `updateEnemy`, `adjustEnemyPool`, `removeEnemies`, …).
+**The screen** is one swap target, `<main id="bestiary">` (`hx-target="this"` inherited by all its
+controls, requests queued with `hx-sync`): every route answers with the whole screen, and
+pushes the same out of band to the **other** open Bestiary tabs. Those tabs are their own kind of
+socket client (`/ws?bestiary=<tab id>`, `hub.addBestiary` / `hub.sendBestiary`, never reached by
+the boards' `hub.send`); the tab id also goes out as the `X-Client` header, so the sending tab
+isn't swapped twice — an out-of-band swap would drop the focus from the box being typed in, while
+the normal swap restores it by the input's id (`en-<enemy>-<field>`).
+
+### 6.6e Combat: attacks both ways (`combat.ts`, `session.ts`, `views/combat.tsx`)
+
+The GM decides **what attacks what** from each enemy's card on the Bestiary (user decision).
+
+**Rules** (user-designed, in `combat.ts`): hit margin → tier — ≤−3 **miss** (no damage),
+−2/−1 **glancing** (the highest damage die *rolled with the roll* is discarded — never one added
+later), 0–2 **normal**, +3 **good** (+1 damage), +6 **great** (+2), +9 **critical** (one extra
+damage die, not cumulative). Damage margin → wounds: below 0 none, then `1 + floor(m / 3)`
+(light, normal, heavy, …, uncapped). **Spent Evasion**: once something is attacked in a round,
+every later attack on it that round rolls against Evasion **0** (it can still miss or glance).
+`Bestiary.round` / `attacked` track it; **Next round** (`combat_round_started`) refreshes
+everyone, and emptying the encounter starts over at round 1. Speed-tie order is the GM's to run.
+
+**A player attacks an enemy** = a **challenge** with `attack` set (`startAttack`, from the card's
+"A player attacks …" form): framing is the **hit** (default Agility) against the enemy's Evasion
+(or 0 when spent — the form's checkbox defaults to the current state), resolution the **damage**
+(default Strength) against its Physical resistance. The GM may point either roll at another
+defence and the wounds at Mind (user decision: "can be altered to be against different stats").
+It is handed straight to the player, who picks skill/approach and rolls like any challenge —
+exertion, approach dice, supporters, custom ± and Set die all work unchanged. `challengeMath`
+branches to `attackMath`: item **Attack accuracy** adds to the hit, **Attack damage** to the
+damage, the tier's effect is applied live (so exertion on the hit can lift a glancing blow and
+the discarded die counts again); the critical die (`critDie`) is rolled with the dice and only
+counts on a critical. **Sequential** (user decision): **Roll to hit** rolls the hit alone (and
+the approach die); the player alters it (exertion +1 / reroll, custom ±, Set die, support, approach
+taps), then presses **"Done with the hit — roll damage"** (`rollDamage` → `attack_damage_rolled`,
+with the critical die), which **locks the hit** — from then on only the damage can be altered.
+`rollsInPlay(ch)` is the one rule for that (an attack has one open roll at a time; `dieInPlay`,
+exertion, custom, support and extra dice all check it); `attackStep(ch)` says `hit` / `damage`.
+The **approach die** lands with the hit and can be activated in **either** step, acting on
+whichever roll is open (so held until the damage, it can only touch the damage). Damage can't be
+rolled while an approach effect waits for taps, nor on a miss — the GM finishes a miss straight
+away. Unbreakable's "failing at the roll" is judged at each roll (hit, then damage = no wound).
+The enemy's defence numbers are snapshotted at the start. **"Attack done"** (`challenge_closed` with
+`wounds`) takes the wounds off the enemy. Board: "Mara attacks Wolf 1", two targets instead of
+one difficulty (`AttackTargets`), Hit / Damage boxes, tier and wound captions.
+
+**An enemy attacks a player** (`enemyAttack`, from "… attacks…"): **no active defence yet**, so
+it simply happens (user decision): the enemy's dice (`rollDiceSide`, any count, rank-shifted)
++ bonus against the player's current Evasion (sheet value, items included; 0 when spent), damage
+against their Physical resistance (or other defences the GM picks), and the wounds come straight
+off Health/Mind (`enemy_attacked`, with `adj` like exertion's; a sheet pool stops at 0, so
+`from`/`to` record what actually happened). The event keeps every number (`enemyAttackMath`).
+
+**Screens**: `/table` gets `EncounterBoard` (`#encounter-board`): round, every enemy by **name
+and condition only** (Unhurt / Wounded / Badly wounded / Down, "attacked" while its Evasion is
+spent) — the numbers stay on the GM's Bestiary (user decision). Both kinds of attack go into the
+table's history log (`AttackLogLine`, `EnemyAttackLogLine`). The Bestiary shows **Recent attacks**
+(enemy attacks with their full dice). Pushes: Bestiary routes push the encounter to the table and
+other Bestiary tabs (`pushEncounter`); an enemy attack also pushes the challenge board (log) and
+the player's sheet; `pushChallenge` pushes the encounter while the current challenge is an attack.
 
 ### 6.7 Client script (`public/app.js`)
 
