@@ -362,6 +362,7 @@ button.link { background: none; border: none; min-height: 0; padding: 0 0 0 0.4r
 .clock-time { font-size: 2.6rem; font-weight: 700; line-height: 1; color: var(--muted); }
 .clock-time small { font-size: 0.45em; font-weight: 600; margin-left: 0.15em; }
 .game-clock.running .clock-time { color: var(--accent); }
+.clock-period { font-size: 0.95rem; color: var(--muted); font-style: italic; }
 .clock-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .clock-shifts { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .clock-shifts button { min-width: 3.2rem; font-variant-numeric: tabular-nums; }

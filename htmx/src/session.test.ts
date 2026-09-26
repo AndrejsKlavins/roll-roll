@@ -2627,4 +2627,12 @@ describe('in-game clock', () => {
     expect(s.clock.running).toBe(false)
     expect(s.clockMs()).toBe(0) // the toggle was the log's last event
   })
+
+  test('names the part of the day like a Latvian summer (short night)', async () => {
+    const { dayPeriod, clockParts } = await import('./views/clock')
+    expect([0, 3, 4, 11, 12, 17, 18, 22, 23].map(dayPeriod)).toEqual([
+      'night', 'night', 'morning', 'morning', 'afternoon', 'afternoon', 'evening', 'evening', 'night',
+    ])
+    expect(clockParts((24 + 22) * 3_600_000 + 30 * 60_000 + 5_000)).toEqual({ day: 2, hm: '22:30', ss: '05', period: 'evening' })
+  })
 })

@@ -984,7 +984,8 @@ the player's sheet; `pushChallenge` pushes the encounter while the current chall
 ### 6.6h In-game clock (`views/clock.tsx`)
 
 Top of `/table` (`GameClock`, `#game-clock`): **Day N** (starts at 1) and **HH:MM** with small
-seconds, 24-hour. The only controls on the table screen (user decision): Pause/Resume and
+seconds, 24-hour, plus a small *night / morning / afternoon / evening* (`dayPeriod`, Latvian
+summer: night 23–04, morning 04–12, afternoon 12–18, evening 18–23). The only controls on the table screen (user decision): Pause/Resume and
 ±1m / ±10m / ±1h / ±12h. State is one event, `clock_set { ms, running }` — game ms since Day 1
 00:00 — and the event's `ts` anchors a running clock (`Session.clockMs()`); not in the change log,
 not undoable. It never goes before Day 1 00:00; the day is simply `floor(ms / 24h) + 1`, so

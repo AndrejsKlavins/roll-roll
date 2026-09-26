@@ -95,16 +95,25 @@ document.addEventListener('DOMContentLoaded', () => {
 // Same formatting as clockParts in src/views/clock.tsx.
 const DAY_MS = 24 * 60 * 60 * 1000
 const pad = (n) => String(n).padStart(2, '0')
+// Same boundaries as dayPeriod in src/views/clock.tsx (Latvian summer).
+function dayPeriod(hour) {
+  if (hour < 4 || hour >= 23) return 'night'
+  if (hour < 12) return 'morning'
+  if (hour < 18) return 'afternoon'
+  return 'evening'
+}
 function tickClock() {
   const el = document.getElementById('game-clock')
   if (!el) return
   el.startedAt ??= performance.now()
   const ms = Number(el.dataset.ms) + (el.dataset.running === '1' ? performance.now() - el.startedAt : 0)
   const s = Math.floor(ms / 1000)
+  const hour = Math.floor(s / 3600) % 24
   const parts = {
     day: String(Math.floor(ms / DAY_MS) + 1),
-    hm: `${pad(Math.floor(s / 3600) % 24)}:${pad(Math.floor(s / 60) % 60)}`,
+    hm: `${pad(hour)}:${pad(Math.floor(s / 60) % 60)}`,
     ss: pad(s % 60),
+    period: dayPeriod(hour),
   }
   for (const [key, text] of Object.entries(parts)) {
     const part = el.querySelector(`[data-clock="${key}"]`)

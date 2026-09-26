@@ -5,12 +5,25 @@ import type { Session } from '../session'
 const DAY_MS = 24 * 60 * 60 * 1000
 const pad = (n: number) => String(n).padStart(2, '0')
 
+/**
+ * Part of the day for an hour (0–23), as in a Latvian summer (user decision): sunrise ≈ 04:30 and
+ * sunset ≈ 22:20 around midsummer, light until nearly 23:30 — so the night is short.
+ */
+export function dayPeriod(hour: number) {
+  if (hour < 4 || hour >= 23) return 'night'
+  if (hour < 12) return 'morning'
+  if (hour < 18) return 'afternoon'
+  return 'evening'
+}
+
 export function clockParts(ms: number) {
   const s = Math.floor(ms / 1000)
+  const hour = Math.floor(s / 3600) % 24
   return {
     day: Math.floor(ms / DAY_MS) + 1,
-    hm: `${pad(Math.floor(s / 3600) % 24)}:${pad(Math.floor(s / 60) % 60)}`,
+    hm: `${pad(hour)}:${pad(Math.floor(s / 60) % 60)}`,
     ss: pad(s % 60),
+    period: dayPeriod(hour),
   }
 }
 
@@ -29,7 +42,7 @@ const SHIFTS: [label: string, minutes: number][] = [
 export function GameClock(props: { session: Session; oob?: boolean }) {
   const { running } = props.session.clock
   const ms = props.session.clockMs()
-  const { day, hm, ss } = clockParts(ms)
+  const { day, hm, ss, period } = clockParts(ms)
   return (
     <section
       id="game-clock"
@@ -45,6 +58,9 @@ export function GameClock(props: { session: Session; oob?: boolean }) {
         <span class="clock-time">
           <span data-clock="hm">{hm}</span>
           <small data-clock="ss">{ss}</small>
+        </span>
+        <span class="clock-period" data-clock="period">
+          {period}
         </span>
       </div>
       <div class="clock-controls">
