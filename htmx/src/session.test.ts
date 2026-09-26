@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { framingRung, loadRules, type NumberField } from './rules'
-import { MAX_CIRCUMSTANCE, outcomeFor, pointsToImprove, rollChallengeSide, Session, sideSum, type Challenge } from './session'
+import { ALIVE_GRACE_MS, MAX_CIRCUMSTANCE, outcomeFor, pointsToImprove, rollChallengeSide, Session, sideSum, type Challenge } from './session'
 
 const RULES = `
 name: Test
@@ -2554,5 +2554,77 @@ describe('unbreakable-style approach effects', () => {
     expect(replayed.approachPicksLeft).toBe(1)
     expect(replayed.approachPicked).toEqual(['resolution:0'])
     expect(replayed.resolution!.sum).toBe(sideSum(replayed.resolution!))
+  })
+})
+
+describe('in-game clock', () => {
+  test('starts paused at Day 1 00:00; shifts clamp at zero and survive a restart', async () => {
+    const { open } = await setup()
+    const session = open()
+    expect(session.clock.running).toBe(false)
+    expect(session.clockMs()).toBe(0)
+    session.shiftClock(-10)
+    expect(session.clockMs()).toBe(0)
+    session.shiftClock(23 * 60 + 50)
+    session.shiftClock(720)
+    expect(session.clockMs()).toBe((35 * 60 + 50) * 60_000) // Day 2, 11:50
+    expect(open().clockMs()).toBe((35 * 60 + 50) * 60_000)
+  })
+
+  test('counts on in real time while running, and stops when paused', async () => {
+    const session = (await setup()).open()
+    session.toggleClock()
+    expect(session.clock.running).toBe(true)
+    const at = session.clock.at
+    expect(session.clockMs(at + 5_000)).toBe(5_000)
+    session.shiftClock(1)
+    expect(session.clock.running).toBe(true)
+    session.toggleClock()
+    const stopped = session.clockMs()
+    expect(session.clockMs(Date.now() + 60_000)).toBe(stopped)
+  })
+
+  test('a restart long after the last sign of life pauses the clock there', async () => {
+    const { open } = await setup()
+    const s1 = open()
+    s1.toggleClock()
+    s1.shiftClock(60) // Day 1 01:00, still running
+    // The last heartbeat was long ago (as if the server had been off since): it stops right
+    // where it was set, not counting the downtime.
+    s1.markAlive(Date.now() - 2 * ALIVE_GRACE_MS)
+    s1.close()
+    const s2 = open()
+    expect(s2.clock.running).toBe(false)
+    expect(s2.clockMs()).toBe(60 * 60_000)
+  })
+
+  test('a quick restart (hot reload) keeps the clock running', async () => {
+    const { open } = await setup()
+    const s1 = open()
+    s1.toggleClock()
+    s1.markAlive()
+    s1.close()
+    expect(open().clock.running).toBe(true)
+  })
+
+  test('a gap between heartbeats (laptop slept) pauses the clock where it went quiet', async () => {
+    const s = (await setup()).open()
+    s.toggleClock()
+    const t = s.clock.at
+    expect(s.markAlive(t + 5_000)).toBe(false)
+    expect(s.markAlive(t + 10_000)).toBe(false)
+    expect(s.markAlive(t + 10_000 + ALIVE_GRACE_MS + 1)).toBe(true)
+    expect(s.clock.running).toBe(false)
+    expect(s.clockMs()).toBe(10_000)
+  })
+
+  test('importing a log with a running clock stops it at the last event', async () => {
+    const { open } = await setup()
+    const s = open()
+    s.toggleClock()
+    const log = s.exportLog()
+    expect(s.importLog(log).ok).toBe(true)
+    expect(s.clock.running).toBe(false)
+    expect(s.clockMs()).toBe(0) // the toggle was the log's last event
   })
 })

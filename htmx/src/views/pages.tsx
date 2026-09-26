@@ -11,6 +11,7 @@ import {
   SoloRollBoard,
   SoloRollDialog,
 } from './challenge'
+import { GameClock } from './clock'
 import { EncounterBoard } from './combat'
 import { ConsequenceButtons, ConsequenceDialog } from './consequence'
 import { ChangeLog, Feed } from './feed'
@@ -83,12 +84,13 @@ export function PlayerPage(props: { session: Session; charId: string }) {
   )
 }
 
-/** The shared screen — no character, no interaction. Meant to sit on a TV/monitor at the table. */
+/** The shared screen — no character; the only controls are the in-game clock's. Meant to sit on a TV/monitor at the table. */
 export function TablePage(props: { session: Session }) {
   const { session } = props
   return (
     <Layout title="Table" system={session.rules.name} wsUrl="/ws?table=1">
       <main class="table-screen">
+        <GameClock session={session} />
         <EncounterBoard session={session} />
         <ChallengeBoard session={session} role="table" />
         <OppositionBoard session={session} role="table" />

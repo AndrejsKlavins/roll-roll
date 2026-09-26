@@ -89,6 +89,30 @@ document.addEventListener('DOMContentLoaded', () => {
   }).observe(feed, { childList: true })
 })
 
+// ---- In-game clock (table screen) ------------------------------------------
+// The server renders #game-clock with game time as of that moment (data-ms); while it runs,
+// count on from when this element arrived. Each change replaces the element, restarting the count.
+// Same formatting as clockParts in src/views/clock.tsx.
+const DAY_MS = 24 * 60 * 60 * 1000
+const pad = (n) => String(n).padStart(2, '0')
+function tickClock() {
+  const el = document.getElementById('game-clock')
+  if (!el) return
+  el.startedAt ??= performance.now()
+  const ms = Number(el.dataset.ms) + (el.dataset.running === '1' ? performance.now() - el.startedAt : 0)
+  const s = Math.floor(ms / 1000)
+  const parts = {
+    day: String(Math.floor(ms / DAY_MS) + 1),
+    hm: `${pad(Math.floor(s / 3600) % 24)}:${pad(Math.floor(s / 60) % 60)}`,
+    ss: pad(s % 60),
+  }
+  for (const [key, text] of Object.entries(parts)) {
+    const part = el.querySelector(`[data-clock="${key}"]`)
+    if (part && part.textContent !== text) part.textContent = text
+  }
+}
+setInterval(tickClock, 250)
+
 // ---- Connection ------------------------------------------------------------
 // Reloading while the laptop is unreachable would leave the browser's own
 // "can't connect" page, where no script runs to recover. So wait for the

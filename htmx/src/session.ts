@@ -636,6 +636,9 @@ export type EventData =
       by: string
     }
   | { type: 'power_level_set'; value: number; from: number; by: string }
+  // The in-game clock after a change: game time (ms since Day 1 00:00) and whether it is running.
+  // The event's own ts is the real moment it was set, so a running clock counts on from there.
+  | { type: 'clock_set'; ms: number; running: boolean }
   // Equipment: a player (or the GM, for them) defines an item, discards it, or turns it off/on.
   // The name rides on every event so the change log can say which item.
   | { type: 'item_added'; charId: string; itemId: string; name: string; modifiers: ItemModifier[]; by: string }
@@ -962,6 +965,11 @@ export const PLAY_MAX = 99
 /** Traits a character may pick (during creation or, if the GM allows it, later). */
 export const MAX_TRAITS = 8
 
+/** How often the running server records that it is alive, and how stale that may get before a
+ *  start-up counts as "the server was off" (longer than a `bun --hot` reload takes). */
+export const ALIVE_EVERY_MS = 5_000
+export const ALIVE_GRACE_MS = 30_000
+
 export const cleanName = (name: string) => name.trim().replace(/\s+/g, ' ').slice(0, 40)
 
 type DraftData = {
@@ -991,6 +999,10 @@ export class Session {
   readonly enemyAttacks: EnemyAttack[] = []
   /** The GM's own lines in the table's history log, in order; `seq` places them in time. */
   readonly logNotes: { id: string; seq: number; text: string }[] = []
+  /** In-game clock (table screen): game ms since Day 1 00:00 as of real time `at`. */
+  clock = { ms: 0, running: false, at: 0 }
+  /** When markAlive last ran (0 = not yet in this process). */
+  private lastAlive = 0
   private readonly undone = new Set<number>()
   /** Latest draft values per character in creation (mirrors the `drafts` table). */
   private readonly drafts = new Map<string, DraftData>()
@@ -1030,7 +1042,14 @@ export class Session {
         : { values: parsed, traits: [], skillPoints: {}, pointsGranted: 0, statBonus: {} }
       this.drafts.set(row.char_id, data)
     }
+    this.db.run('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     this.rebuild()
+    // The server was off (or asleep) with the clock running: stop it at the last sign of life,
+    // so the downtime doesn't count. A `bun --hot` reload is newer than the grace, so it runs on.
+    const alive = Number(
+      (this.db.query("SELECT value FROM meta WHERE key = 'alive'").get() as { value: string } | null)?.value ?? 0,
+    )
+    if (alive && Date.now() - alive > ALIVE_GRACE_MS) this.pauseClockAt(alive)
   }
 
   close() {
@@ -1081,6 +1100,7 @@ export class Session {
     this.logNotes.length = 0
     // Replayed from the log like everything else (power_level_set), so start from the default.
     this.powerLevel = this.rules.powerLevel
+    this.clock = { ms: 0, running: false, at: 0 }
     for (const e of this.events) if (e.type === 'undo') this.undone.add(e.target)
     for (const e of this.events) this.apply(e)
     // Draft edits aren't events; layer the saved draft on top.
@@ -1188,6 +1208,9 @@ export class Session {
       }
       case 'power_level_set':
         this.powerLevel = e.value
+        break
+      case 'clock_set':
+        this.clock = { ms: e.ms, running: e.running, at: e.ts }
         break
       case 'stat_set': {
         const c = this.characters.get(e.charId)
@@ -1984,6 +2007,42 @@ export class Session {
     return true
   }
 
+  // ---- in-game clock -----------------------------------------------------
+  /** Game time now, in ms since Day 1 00:00. */
+  clockMs(now = Date.now()) {
+    return this.clock.ms + (this.clock.running ? now - this.clock.at : 0)
+  }
+
+  /**
+   * Records that the server is running now; call every ALIVE_EVERY_MS (see index.ts). A long gap
+   * since the last call means the laptop slept: a running clock is paused where it went quiet
+   * (returns true then).
+   */
+  markAlive(now = Date.now()) {
+    const slept = this.lastAlive > 0 && now - this.lastAlive > ALIVE_GRACE_MS && this.clock.running
+    if (slept) this.pauseClockAt(this.lastAlive)
+    this.lastAlive = now
+    this.db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('alive', ?)").run(String(now))
+    return slept
+  }
+
+  /** Pauses a running clock as it stood at real time `at` (shutdown / last sign of life). */
+  pauseClockAt(at = Date.now()) {
+    if (!this.clock.running) return
+    this.append({ type: 'clock_set', ms: this.clockMs(Math.max(at, this.clock.at)), running: false })
+  }
+
+  /** Pause a running clock, or resume a paused one. */
+  toggleClock() {
+    this.append({ type: 'clock_set', ms: this.clockMs(), running: !this.clock.running })
+  }
+
+  /** Move the clock by whole minutes (either way); it never goes before Day 1 00:00. */
+  shiftClock(minutes: number) {
+    const ms = Math.max(0, this.clockMs() + Math.round(minutes) * 60_000)
+    this.append({ type: 'clock_set', ms, running: this.clock.running })
+  }
+
   // ---- backups ------------------------------------------------------------
   /** A finished character's whole state, for export (see backup.ts). */
   snapshotOf(c: Character): CharacterSnapshot {
@@ -2065,6 +2124,8 @@ export class Session {
     this.events.length = 0
     this.events.push(...events)
     this.rebuild()
+    // The log was saved some time ago; its clock stops at its last event, not at "now".
+    this.pauseClockAt(events.at(-1)!.ts)
     return { ok: true, events: events.length, backup }
   }
 

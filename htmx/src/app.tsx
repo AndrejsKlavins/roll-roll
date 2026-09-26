@@ -8,6 +8,7 @@ import { bestiaryRoutes, pushEncounter } from './bestiary-routes'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
 import { ChallengeBoard, ChallengePlayerPicker, GroupTaskBoard, OppositionBoard, SoloRollBoard } from './views/challenge'
+import { GameClock } from './views/clock'
 import { ConsequenceResult } from './views/consequence'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
 import { CharacterRemoved, GmPage, JoinPage, PlayerPage, SessionLabel, TablePage, WhoLink } from './views/pages'
@@ -134,6 +135,23 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   app.get('/gm', (c) => c.html(<GmPage session={session} playerUrls={opts.playerUrls} qrSvg={opts.qrSvg} />))
 
   app.get('/table', (c) => c.html(<TablePage session={session} />))
+
+  // ---- in-game clock (table screen) ---------------------------------------
+  const pushClock = () => hub.send((client) => client.role === 'table', () => html(<GameClock session={session} oob />))
+
+  app.post('/table/clock/toggle', (c) => {
+    session.toggleClock()
+    pushClock()
+    return noContent(c)
+  })
+
+  app.post('/table/clock/shift', (c) => {
+    const minutes = Number(c.req.query('min'))
+    if (!Number.isFinite(minutes) || minutes === 0) return c.body('Bad shift', 400)
+    session.shiftClock(minutes)
+    pushClock()
+    return noContent(c)
+  })
 
   bestiaryRoutes(app, session, actorName, { challenge: () => pushChallenge(), stat: (char) => pushStatChange(char) })
 

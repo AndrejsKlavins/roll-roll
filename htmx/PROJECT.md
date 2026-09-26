@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-25 (Complete group / opposition challenge buttons; players see only open rolls)
+Last updated: 2026-09-26 (In-game clock on the table screen)
 
 ---
 
@@ -981,10 +981,31 @@ table's history log (`AttackLogLine`, `EnemyAttackLogLine`). The Bestiary shows 
 other Bestiary tabs (`pushEncounter`); an enemy attack also pushes the challenge board (log) and
 the player's sheet; `pushChallenge` pushes the encounter while the current challenge is an attack.
 
+### 6.6h In-game clock (`views/clock.tsx`)
+
+Top of `/table` (`GameClock`, `#game-clock`): **Day N** (starts at 1) and **HH:MM** with small
+seconds, 24-hour. The only controls on the table screen (user decision): Pause/Resume and
+±1m / ±10m / ±1h / ±12h. State is one event, `clock_set { ms, running }` — game ms since Day 1
+00:00 — and the event's `ts` anchors a running clock (`Session.clockMs()`); not in the change log,
+not undoable. It never goes before Day 1 00:00; the day is simply `floor(ms / 24h) + 1`, so
+crossing midnight either way changes it. Routes `POST /table/clock/toggle|shift?min=N` push the
+fragment to table clients; `public/app.js` counts on from the element's `data-ms` while it runs
+(relative to arrival, so device clocks don't matter).
+
+**Auto-pause** (user decision: the GM will forget): downtime never counts as game time.
+- Ctrl+C / SIGTERM / SIGHUP → `pauseClockAt(now)` before exiting (`index.ts`).
+- Anything else (closed window, crash, power loss): `markAlive()` writes a timestamp to the `meta`
+  table every 5 s; a start-up finding it older than 30 s (`ALIVE_GRACE_MS`) pauses the clock at it.
+  A `bun --hot` reload is quicker than that, so it keeps running in dev.
+- Laptop sleep (process survives): `markAlive` sees the gap between its own calls, pauses at the
+  last one and `hub.closeAll()` makes the screens reload.
+- `importLog` pauses a running clock at the imported log's last event.
+
 ### 6.7 Client script (`public/app.js`)
 
 - **Sound**: Web Audio synthesis (`roll` = clicks like tumbling dice, `secret` = low tone). Audio unlocks on first `pointerdown` (iOS requirement). A `MutationObserver` on `#feed` plays `data-sound` of newly added entries. Mute stored per device in `localStorage` (wrapped in try/catch), exposed as Alpine store `$store.sound`.
 - **Feed** is trimmed to 60 entries client-side.
+- **In-game clock** ticks `#game-clock` every 250 ms (see 6.6h).
 - **Connection handling** (so sleeping phones never show stale data):
   - Every reload goes through `reloadWhenServerUp()`: polls `GET /health` every 3 s and only reloads once it answers, so a phone never reloads into the browser's "can't connect" page (where no script could recover). While waiting, `body.offline` shows a "Reconnecting to the GM laptop…" banner.
   - `htmx:wsClose` → mark disconnected + show banner; the htmx ws extension retries (codes 1006/1011/1012/1013); next `htmx:wsOpen` → reload.
