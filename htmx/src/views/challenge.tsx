@@ -1646,7 +1646,7 @@ function SoloLogLine(props: { session: Session; solo: SoloRoll }) {
   )
 }
 
-/** A spinner check's line: "Mara attempts to climb the wall (hard) 10 by spinner and succeeds with +2". */
+/** A spinner check's line: "Mara attempts to climb the wall (hard) −3 by spinner and succeeds with +2". */
 function SpinnerLogLine(props: { session: Session; check: SpinnerCheck }) {
   const { session, check } = props
   const math = spinnerMath(check)
@@ -1654,8 +1654,8 @@ function SpinnerLogLine(props: { session: Session; check: SpinnerCheck }) {
   return (
     <li class={math.success === null ? undefined : math.success ? 'success' : 'failure'}>
       <b>{name}</b> attempts to {check.description || 'the challenge'}
-      {check.tier && ` (${check.tier.toLowerCase()})`} {check.difficulty} by spinner
-      {math.resolution && verdict(math.resolution.margin >= 0, math.resolution.margin)}
+      {check.tier && ` (${check.tier.toLowerCase()})`} {signed(check.difficulty)} by spinner
+      {math.resolution && verdict(math.resolution.total >= 0, math.resolution.total)}
     </li>
   )
 }
@@ -1820,14 +1820,22 @@ export function AbilityPicker(props: {
  * nudges it afterwards with the board's circumstance stepper rather than here, so there is one
  * place a number moves and everyone sees why.
  */
-export function DifficultyPicker(props: { difficulties: { id: string; label: string; value: number }[] }) {
+export function DifficultyPicker(props: {
+  difficulties: { id: string; label: string; value: number }[]
+  hint?: string
+  /** Show values with their sign (the spinner's difficulties are modifiers added to the roll). */
+  signed?: boolean
+}) {
+  const shown = (v: number) => (props.signed ? signed(v) : String(v))
   return (
     <section class="side-pick">
       <h4>Difficulty</h4>
-      <p class="side-hint">One number for the whole challenge — both rolls go against it.</p>
+      <p class="side-hint">{props.hint ?? 'One number for the whole challenge — both rolls go against it.'}</p>
       <div class="big-indicator">
         <span class="bi-value">
-          <span x-text="diffValue === '' ? '–' : diffValue">–</span>
+          <span x-text={props.signed ? "diffValue === '' ? '–' : (diffValue > 0 ? '+' : '') + diffValue" : "diffValue === '' ? '–' : diffValue"}>
+            –
+          </span>
           <span
             class="bi-tier"
             x-cloak
@@ -1845,7 +1853,7 @@ export function DifficultyPicker(props: { difficulties: { id: string; label: str
             x-on:click={`diff = '${d.id}'; diffValue = ${d.value}`}
           >
             <span class="label">{d.label}</span>
-            <span class="diff-value">{d.value}</span>
+            <span class="diff-value">{shown(d.value)}</span>
           </button>
         ))}
       </div>

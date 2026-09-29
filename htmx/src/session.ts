@@ -3402,8 +3402,8 @@ export class Session {
   // ---- spinner challenge check ---------------------------------------------
 
   /**
-   * The GM starts a spinner check for one finished character: a difficulty, a framing and a
-   * resolution ability. The player picks a skill and spins the framing.
+   * The GM starts a spinner check for one finished character: a difficulty (a modifier added to
+   * each roll, off rules.yaml `spinner.difficulties`), a framing and a resolution ability. The player picks a skill and spins the framing.
    */
   startSpinnerCheck(
     opts: { description?: string; difficulty: number; framingAbility?: string | null; resolutionAbility: string; charId: string },
@@ -3413,13 +3413,13 @@ export class Session {
     if (!this.rules.spinner || !Number.isFinite(opts.difficulty)) return null
     if ((framingAbility !== null && !this.isAbilityField(framingAbility)) || !this.isAbilityField(opts.resolutionAbility)) return null
     if (this.characters.get(opts.charId)?.status !== 'active') return null
-    const difficulty = Math.round(opts.difficulty)
-    const tier = this.rules.challenges.difficulties.find((d) => d.value === difficulty)
+    const modifier = Math.round(opts.difficulty)
+    const tier = this.rules.spinner.difficulties.find((d) => d.value === modifier)
     return this.append({
       type: 'spinner_started',
       checkId: crypto.randomUUID().slice(0, 8),
       description: (opts.description ?? '').trim().slice(0, 200),
-      difficulty,
+      modifier,
       tier: tier?.label ?? null,
       framingAbility,
       resolutionAbility: opts.resolutionAbility,
@@ -3475,7 +3475,7 @@ export class Session {
     const config = this.rules.spinner
     const framing = check ? spinnerMath(check).framing : null
     if (!check || !config || !framing || spinnerOpenStep(check) !== 'framing') return null
-    const advantage = spinnerAdvantage(config, framing.margin)
+    const advantage = spinnerAdvantage(config, framing.total)
     const rank = this.spinnerRank(check.charId, check.resolutionAbility)
     const resolution = spin(config, rank, Math.abs(advantage) + 1, advantage < 0 ? 'worst' : 'best')
     return this.append({ type: 'spinner_resolution_spun', checkId, advantage, resolution, by })

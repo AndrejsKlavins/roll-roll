@@ -881,17 +881,32 @@ button.gm-action:hover { border-color: var(--accent); color: var(--accent); }
 .spin-exertion p { margin: 0; }
 .spin-exertion b { color: var(--secret); }
 .spin-equation { margin-top: 0.5rem; }
-.spin-total { display: flex; align-items: baseline; gap: 0.4rem; }
-.spin-total b { font-size: 1.4rem; }
-.spin-margin { font-size: 1rem; }
 /* The terms of a spin's sum, drawn like dice (value on a tile, name below). */
 .spin-tile.skill { --face-color: var(--accent); }
 .spin-tile.help { --face-color: #5cc27a; }
 .spin-tile.hinder { --face-color: var(--danger); }
 .spin-tile.exertion { --face-color: var(--secret); }
+/* The difficulty is always the last term and stands apart: a wider tile after a gap, filled with
+   the spinner's colour for that value (--face-color / --face-ink), ringed so pale ones still show. */
+.spin-tile.difficulty { margin-left: 0.35rem; }
+.spin-tile.difficulty .die-face { width: auto; min-width: 2.6rem; padding: 0 0.35rem; background: var(--face-color, var(--text)); color: var(--face-ink, var(--bg)); border: 2px solid var(--text); box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--text); }
+.spin-tile.difficulty .die-name { color: var(--text); }
 .spin-box-controls { display: flex; justify-content: center; }
-.spin-total.success .spin-margin { color: #5cc27a; }
-.spin-total.failure .spin-margin { color: var(--danger); }
+/* The outcome under a roll's sum: the total in big type, its rank groups stacked in a column
+   (three pips each; a full group is a rank, green up, red down), then the outcome in words. */
+.spin-outcome { --rank-color: #5cc27a; display: grid; justify-items: center; gap: 0.35rem; margin-top: 0.6rem; }
+.spin-outcome.bad { --rank-color: var(--danger); }
+.spin-outcome-total { font-size: 3rem; font-weight: 800; line-height: 1; color: var(--rank-color); }
+.rank-column { display: grid; gap: 0.25rem; }
+.rank-group { display: grid; grid-template-columns: 1rem auto 1rem; align-items: center; gap: 0.35rem; }
+.rank-num { font-size: 0.7rem; font-weight: 800; text-align: right; color: var(--muted); }
+.rank-group.full .rank-num { color: var(--rank-color); }
+.rank-dots { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; }
+.rank-group.full .rank-dots { border-color: var(--rank-color); box-shadow: 0 0 0 1px color-mix(in srgb, var(--rank-color) 35%, transparent); }
+.rank-pip { width: 0.85rem; height: 0.85rem; border-radius: 3px; border: 1.5px solid color-mix(in srgb, var(--rank-color) 55%, var(--line)); }
+.rank-pip.on { background: var(--rank-color); border-color: var(--rank-color); }
+.rank-over { font-weight: 800; color: var(--rank-color); }
+.spin-outcome-text { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--rank-color); }
 .spin-caption { margin: 0.2rem 0 0; text-align: center; font-size: 0.85rem; color: var(--muted); }
 .spin-controls { display: grid; gap: 0.5rem; }
 .table-screen .spin-wheels { --wheel: 200px; }

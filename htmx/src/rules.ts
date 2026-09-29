@@ -293,16 +293,21 @@ export function framingRung(ladder: FramingLadder, margin: number): FramingRung 
 export type SpinnerSegment = { value: number }
 /** The colour an outcome value (after the ability shift) reads in, and the ink on it. */
 export type SpinnerColor = { value: number; color: string; ink: string }
-/** A framing margin of `from` or better (short of the next rung) gives this much advantage. */
-export type AdvantageRung = { from: number; advantage: number }
 /**
  * The spinner challenge check (top-level `spinner`): segments worst to best, how far each ability
- * rank away from 3 shifts every value, and the framing margin → advantage ladder.
+ * rank away from 3 shifts every value, and how much framing total buys one step of advantage.
  */
 export type SpinnerConfig = {
+  /**
+   * The spinner's own difficulty ladder. Unlike the dice challenge's, each value is a modifier
+   * **added to the roll's sum** (mostly negative), so the total alone is the outcome: 0 or more
+   * succeeds.
+   */
+  difficulties: Difficulty[]
   segments: SpinnerSegment[]
   shiftPerRank: number
-  advantage: AdvantageRung[]
+  /** Every full this-many of the framing total is one step of advantage (or disadvantage), uncapped. */
+  advantageStep: number
   /** Sorted by value. */
   colors: SpinnerColor[]
   /** Which pool pays for exertion on a spin, by the roll's ability; `abilities: null` = all the rest. */
@@ -321,14 +326,13 @@ export function spinnerColor(config: SpinnerConfig, value: number): SpinnerColor
   const { colors } = config
   return colors.find((c) => c.value === value) ?? (value < colors[0]!.value ? colors[0]! : colors.at(-1)!)
 }
-/** Most spinners one resolution may spin (advantage/disadvantage is held to this − 1). */
-export const MAX_SPINNERS = 6
-
-/** The advantage a framing margin earns: the last rung it reaches, or the bottom rung below them all. */
-export function spinnerAdvantage(config: SpinnerConfig, margin: number) {
-  const { advantage: rungs } = config
-  if (!rungs.length) return 0
-  return (rungs.findLast((r) => margin >= r.from) ?? rungs[0]!).advantage
+/**
+ * The advantage a framing total earns (user decision: no cap): one step per full `advantageStep`,
+ * a minus below 0 — +12 → 4 (5 spinners, the best counts), −2 → 0, −3 → −1.
+ */
+export function spinnerAdvantage(config: SpinnerConfig, total: number) {
+  const steps = Math.floor(Math.abs(total) / config.advantageStep)
+  return total < 0 && steps > 0 ? -steps : steps
 }
 
 /** What a rolled die face is called, and the colour it reads in (red → green). */
@@ -669,16 +673,27 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
 
   // challenges: { difficulties: [{id, label, value}], approaches: [{id, label, when}] }
   const rawChallenges = raw?.challenges ?? {}
-  const difficulties: Difficulty[] = ((rawChallenges.difficulties ?? []) as any[]).flatMap((d: any, i: number) => {
-    const where = `challenges.difficulties[${i}]`
-    if (!checkId(d?.id, where)) return []
-    const value = Number(d?.value)
-    if (!Number.isFinite(value)) {
-      fail(`${where} "${d.id}": value must be a number`)
-      return []
-    }
-    return [{ id: d.id, label: String(d.label ?? d.id), value }]
-  })
+  // The spinner's ladder reuses the challenge ladder's ids (easy, hard, …), so its ids need only be
+  // unique within the ladder itself — nothing else refers to them.
+  const parseDifficulties = (list: unknown, path: string, ownIds?: Set<string>): Difficulty[] =>
+    ((list ?? []) as any[]).flatMap((d: any, i: number) => {
+      const where = `${path}[${i}]`
+      if (ownIds) {
+        if (typeof d?.id !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(d.id)) {
+          fail(`${where}: id must be letters/digits/underscore, got ${JSON.stringify(d?.id)}`)
+          return []
+        }
+        if (ownIds.has(d.id)) fail(`${where}: duplicate id "${d.id}"`)
+        ownIds.add(d.id)
+      } else if (!checkId(d?.id, where)) return []
+      const value = Number(d?.value)
+      if (!Number.isFinite(value)) {
+        fail(`${where} "${d.id}": value must be a number`)
+        return []
+      }
+      return [{ id: d.id, label: String(d.label ?? d.id), value }]
+    })
+  const difficulties = parseDifficulties(rawChallenges.difficulties, 'challenges.difficulties')
   const approaches: Approach[] = ((rawChallenges.approaches ?? []) as any[]).flatMap((a: any, i: number) => {
     const where = `challenges.approaches[${i}]`
     if (!checkId(a?.id, where)) return []
@@ -816,10 +831,13 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
 
   const enemies = parseEnemyTemplates(raw?.enemies, fail)
 
-  // spinner: { values: [worst … best], colors: { value: "#hex" }, shift_per_rank, advantage: [{ from, advantage }] }
+  // spinner: { difficulties: [{id, label, value}], values: [worst … best], colors: { value: "#hex" },
+  //            shift_per_rank, advantage_step }
   let spinner: SpinnerConfig | undefined
   if (raw?.spinner) {
     const rawSpinner = raw.spinner
+    const spinnerDifficulties = parseDifficulties(rawSpinner.difficulties, 'spinner.difficulties', new Set())
+    if (!spinnerDifficulties.length) fail('spinner.difficulties: give at least one difficulty (a modifier added to the roll)')
     const values = ((rawSpinner.values ?? []) as unknown[]).map(Number)
     if (values.length < 2 || values.length > 24 || values.some((v) => !Number.isInteger(v))) {
       fail('spinner.values: list 2 to 24 whole numbers, worst to best')
@@ -840,20 +858,8 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     if (!colors.length) fail('spinner.colors: give at least one colour')
     const shiftPerRank = Number(rawSpinner.shift_per_rank ?? 2)
     if (!Number.isInteger(shiftPerRank)) fail('spinner.shift_per_rank must be a whole number')
-    const advantage = ((rawSpinner.advantage ?? []) as any[])
-      .flatMap((r: any, i: number) => {
-        const where = `spinner.advantage[${i}]`
-        const from = Number(r?.from)
-        const adv = Number(r?.advantage ?? 0)
-        if (!Number.isInteger(from)) fail(`${where}: from must be a whole number (the lowest margin this rung covers)`)
-        else if (!Number.isInteger(adv) || Math.abs(adv) >= MAX_SPINNERS) {
-          fail(`${where} (from ${from}): advantage must be a whole number from ${1 - MAX_SPINNERS} to ${MAX_SPINNERS - 1}`)
-        } else return [{ from, advantage: adv }]
-        return []
-      })
-      .sort((a, b) => a.from - b.from)
-    const duplicate = advantage.find((r, i) => i > 0 && r.from === advantage[i - 1]!.from)
-    if (duplicate) fail(`spinner.advantage: two rungs start at ${duplicate.from}`)
+    const advantageStep = Number(rawSpinner.advantage_step ?? 3)
+    if (!Number.isInteger(advantageStep) || advantageStep < 1) fail('spinner.advantage_step must be a whole number of 1 or more')
     // exertion: [{ stat: stamina, abilities: [strength, …] }, { stat: willpower }] — no list = the rest.
     const exertion = ((rawSpinner.exertion ?? []) as any[]).flatMap((p: any, i: number): SpinnerConfig['exertion'] => {
       const where = `spinner.exertion[${i}]`
@@ -868,7 +874,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
       return [{ stat: stat.id, abilities }]
     })
     if (exertion.filter((p) => p.abilities === null).length > 1) fail('spinner.exertion: only one pool may leave out "abilities"')
-    spinner = { segments, shiftPerRank, advantage, colors, exertion }
+    spinner = { difficulties: spinnerDifficulties, segments, shiftPerRank, advantageStep, colors, exertion }
   }
 
   sections.forEach((s, i) => {

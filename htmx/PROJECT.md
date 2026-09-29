@@ -1009,8 +1009,15 @@ fragment to table clients; `public/app.js` counts on from the element's `data-ms
 
 User-designed alternative to the dice challenge. The GM's **"Spinner challenge check"** (last of
 the roll starters; `SpinnerDialog`, `/gm/spinner/start`) picks an optional description, a
-difficulty off the ladder, an optional **framing** and a required **resolution** ability, and who
-spins. The GM ends it with **Spinner check done**. **Framing is optional** (user request, like the
+difficulty off the spinner's own ladder, an optional **framing** and a required **resolution** ability, and who
+spins.
+
+**The difficulty is a modifier added to the roll** (user decision, 2026-09-29; spinner only — the
+dice challenge keeps its number to reach): rules.yaml `spinner.difficulties` — Easy +3,
+Challenging 0, Hard −3, Very hard −6, Epic −9, Legendary −12 (ids only need to be unique within
+this ladder). It is summed in like any other term, so **the total is the outcome**: 0 or more
+succeeds, and there is no separate margin. `spinner_started` stores it as `modifier`; logs from
+before carry `difficulty` (a number to reach) and replay as `modifier = −difficulty`. The GM ends it with **Spinner check done**. **Framing is optional** (user request, like the
 dice challenge's "No framing — resolution only"): with it skipped (`framingAbility: null`) there is
 no framing box, and **Spin resolution** spins one resolution spinner straight away at advantage 0
 (one `spinner_spun` with `framing: null` + `advantage` + `resolution`); exertion and circumstance
@@ -1023,20 +1030,34 @@ then work on the resolution as usual.
   shifted by `(ability rank − 3) × 2` (user decision), shown on the wedges.
 - **Sequential, two steps** (user decision; the rolling player, or the GM for them):
   1. Pick a skill, **Spin framing**: one spinner (rank read now) + skill + circumstance + exertion
-     vs the difficulty. The skill bonus — **the value the sheet shows** (trained rank + items +
+     + difficulty. The skill bonus — **the value the sheet shows** (trained rank + items +
      a temporary ✎ change; user decision, unlike the dice challenge, which leaves ✎ out) — is read
      here and kept for both rolls (`skillBonus`). While the framing is open the player may exert on it and
      change its circumstance; the card shows "Accepting now: Advantage 1 — …".
-  2. **Accept framing — spin resolution** (`acceptSpinnerFraming`): the framing's margin as it
-     stands picks `spinner.advantage` (`from` ladder; user's table: ≤ −6 → −2, −5…−3 → −1,
-     −2…+2 → 0, +3…+5 → +1, ≥ +6 → +2). Advantage N = spin **N+1** resolution spinners, the **best**
+  2. **Accept framing — spin resolution** (`acceptSpinnerFraming`): the framing's total as it
+     stands gives one step of advantage per full `spinner.advantage_step` (3), **uncapped** (user
+     decision, 2026-09-29; it was a ladder capped at ±2): −2…+2 → 0, +3 → 1, +12 → 4 (5 spinners),
+     −13 → −4 (`spinnerAdvantage`). Advantage N = spin **N+1** resolution spinners, the **best**
      counts; disadvantage N = N+1, the **worst** counts. The framing is locked from here.
-  Resolution = counting spin + skill + circumstance + exertion vs the same difficulty → success and
-  margin. No stakes/degrees, approach die or support. `spinnerOpenStep(check)` names the roll that
+  Resolution = counting spin + skill + circumstance + exertion + the same difficulty → the total,
+  a success at 0 or more. No stakes/degrees, approach die or support. `spinnerOpenStep(check)` names the roll that
   is open (framing until accepted, then resolution; null before the spin and once closed).
 - **The sum is drawn as die-like tiles** (user request, `SpinEquation`): Spin (in its outcome
   colour) + the skill (value on the tile, skill name below, in the skill's colour) + Circumstance +
-  Exertion (each only when there), `=` total and margin. Before a roll is spun its Spin tile is "?".
+  Exertion (each only when there), then **always last, the difficulty** (user request): a filled,
+  wider, ringed tile set apart by a gap, filled with the **spinner's colour for that value**
+  (`spinnerColor`, so −6 reads the same red as a −6 wedge), named by its tier ("Hard") or "Difficulty". Before a roll
+  is spun its Spin tile is "?".
+- **Outcome block** (user-designed, `SpinOutcome` under each spun roll's equation), three rows:
+  1. the signed **total in big type**, green at 0 or more, red below;
+  2. its **rank groups stacked in a column**, three pips each, numbered 1, 2, 3 at the left. Every
+     full group is one **rank** (ringed); the next one fills on the way there and the rest stay
+     empty, so the column reads as a meter (`spinnerRanks(total, cap)`: +4 → [3, 1, 0] = rank 1,
+     −10 → [3, 3, 3] + "+" = rank 3). Resolution: 3 groups (`MAX_SPINNER_RANK`). Framing: at least
+     3, growing with the total since advantage is uncapped (+12 → 4 full groups);
+  3. the **outcome in words**: resolution "Success" / "Failure", plus " · Rank N upgrade /
+     complication" from rank 1 on (0…2 and −1…−2 earn no rank); framing the advantage it earns
+     ("Advantage 1", "No advantage").
 - **Circumstance** (user-designed): a − / + per roll for the rolling player or the GM, **a plus
   helps** (unlike the dice challenge's, which is on the difficulty), held to ±10. The framing's is
   fixed once the framing is accepted (it decided the advantage); the resolution's can change until
@@ -1060,7 +1081,7 @@ then work on the resolution as usual.
   (`session.spinners`, fed from `apply()`'s `default:` like the bestiary). Not undoable.
 - **Screens**: `#spinner-board` on all three (top of `/table`); a player sees it only while it is
   theirs and open. Earlier checks go into the table's history log ("Mara attempts to climb the
-  wall (hard) 10 by spinner and succeeds with +2").
+  wall (hard) −3 by spinner and succeeds with +2").
 - **Animation** (user-specified): a push right after a spin names what is new (`SpinnerAnimation`
   `{ step, from }`: the framing, the resolution's spinners, or one re-spin); those wheels carry
   `data-fresh`, their box and the board get `spinning`, so reloads and other pushes never re-spin.

@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadRules, spinnerAdvantage, spinnerColor, spinnerExertionPool, type SpinnerConfig } from './rules'
 import { Session } from './session'
-import { spin, spinnerMath } from './spinner'
+import { spin, SpinnerChecks, spinnerMath, spinnerRanks } from './spinner'
 
 const config: SpinnerConfig = {
+  difficulties: [{ id: 'hard', label: 'Hard', value: -3 }],
   segments: [1, 3, 5, 7].map((value) => ({ value })),
   colors: [
     { value: 0, color: '#800000', ink: '#ffffff' },
@@ -14,13 +15,7 @@ const config: SpinnerConfig = {
     { value: 9, color: '#1c6432', ink: '#ffffff' },
   ],
   shiftPerRank: 2,
-  advantage: [
-    { from: -6, advantage: -2 },
-    { from: -5, advantage: -1 },
-    { from: -2, advantage: 0 },
-    { from: 3, advantage: 1 },
-    { from: 6, advantage: 2 },
-  ],
+  advantageStep: 3,
   exertion: [
     { stat: 'stamina', abilities: ['strength', 'agility', 'endurance'] },
     { stat: 'willpower', abilities: null },
@@ -30,9 +25,10 @@ const config: SpinnerConfig = {
 const seq = (...picks: number[]) => () => picks.shift()!
 
 describe('spinner maths', () => {
-  test('advantage ladder: ±2 in the middle is nothing, every 3 beyond is one step, capped by the end rungs', () => {
+  test('advantage: ±2 in the middle is nothing, every full 3 beyond is one step, uncapped', () => {
     const at = (m: number) => spinnerAdvantage(config, m)
-    expect([-9, -6, -5, -3, -2, 0, 2, 3, 5, 6, 12].map(at)).toEqual([-2, -2, -1, -1, 0, 0, 0, 1, 1, 2, 2])
+    expect([-13, -9, -6, -5, -3, -2, 0, 2, 3, 5, 6, 12].map(at)).toEqual([-4, -3, -2, -1, -1, 0, 0, 0, 1, 1, 2, 4])
+    expect(Object.is(at(-2), 0)).toBe(true) // not −0
   })
 
   test('ability rank shifts every value by (rank − 3) × 2', () => {
@@ -55,6 +51,30 @@ describe('spinner maths', () => {
   test('exertion pools follow the ability: listed ones first, the pool with no list for the rest', () => {
     expect(spinnerExertionPool(config, 'agility')).toBe('stamina')
     expect(spinnerExertionPool(config, 'intuition')).toBe('willpower')
+  })
+
+  test('rank pips: every full 3 is a rank, the next group fills on the way, the rest are empty', () => {
+    expect(spinnerRanks(4, 3)).toEqual({ rank: 1, groups: [3, 1, 0], over: false })
+    expect(spinnerRanks(-10, 3)).toEqual({ rank: 3, groups: [3, 3, 3], over: true })
+    expect(spinnerRanks(-9, 3)).toEqual({ rank: 3, groups: [3, 3, 3], over: false })
+    expect(spinnerRanks(0, 3)).toEqual({ rank: 0, groups: [0, 0, 0], over: false })
+    expect(spinnerRanks(-2, 3)).toEqual({ rank: 0, groups: [2, 0, 0], over: false })
+    expect(spinnerRanks(7, 2)).toEqual({ rank: 2, groups: [3, 3], over: true }) // framing: advantage stops at 2
+  })
+
+  test('the difficulty is added to the sum; the total is the outcome (0 or more succeeds)', () => {
+    const checks = new SpinnerChecks()
+    const started = { type: 'spinner_started', description: '', tier: null, framingAbility: null, resolutionAbility: 'strength', charId: 'c', by: 'GM' } as const
+    checks.apply({ ...started, id: 1, checkId: 'a', modifier: -3 })
+    // Logs from before modifiers carried a number to reach: 3 then meant what −3 means now.
+    checks.apply({ ...started, id: 2, checkId: 'b', difficulty: 3 })
+    for (const checkId of ['a', 'b']) {
+      const check = checks.byId(checkId)!
+      expect(check.difficulty).toBe(-3)
+      checks.apply({ type: 'spinner_spun', id: 3, checkId, skill: null, skillBonus: 1, framing: null, advantage: 0, resolution: { rank: 3, spins: [{ segment: 0, value: 2 }], kept: 0 }, by: 'GM' })
+      expect(spinnerMath(check).resolution).toMatchObject({ value: 2, skill: 1, difficulty: -3, total: 0 })
+      expect(spinnerMath(check).success).toBe(true)
+    }
   })
 })
 
@@ -79,7 +99,7 @@ const setup = async () => {
     opened.push(again)
     return again
   }
-  return { rules, s, mara, reopen, tier: rules.challenges.difficulties[1]! }
+  return { rules, s, mara, reopen, tier: rules.spinner!.difficulties.find((d) => d.id === 'hard')! }
 }
 
 describe('spinner check in a session', () => {
@@ -91,6 +111,7 @@ describe('spinner check in a session', () => {
     s.startSpinnerCheck({ difficulty: tier.value, framingAbility: 'agility', resolutionAbility: 'intuition', charId: mara }, 'GM')
     const check = s.spinners.current()!
     expect(check.tier).toBe(tier.label)
+    expect(check.difficulty).toBe(tier.value)
     expect(s.setSpinnerSkill(check.id, 'agility', 'Mara')).toBe(false) // an ability, not a skill
     expect(s.setSpinnerSkill(check.id, 'athletics', 'Mara')).toBe(true)
     expect(s.spinSpinnerCheck(check.id, 'Mara')).not.toBeNull()
@@ -122,10 +143,10 @@ describe('spinner check in a session', () => {
     expect(check.framing!.spins[1]!.respin).toBe(true)
     const framing = spinnerMath(check).framing!
     expect(framing.value).toBe(check.framing!.spins[1]!.value)
-    expect(framing.total).toBe(framing.value + framing.skill + 1 + 1)
+    expect(framing.total).toBe(framing.value + framing.skill + 1 + 1 + tier.value)
 
     expect(s.acceptSpinnerFraming(check.id, 'Mara')).not.toBeNull()
-    expect(check.advantage).toBe(spinnerAdvantage(rules.spinner!, framing.margin))
+    expect(check.advantage).toBe(spinnerAdvantage(rules.spinner!, framing.total))
     expect(check.resolution!.spins.length).toBe(Math.abs(check.advantage!) + 1)
     // The framing is locked now.
     expect(s.exertSpinner(check.id, 'framing', 'bonus', 'Mara')).toBe(false)
@@ -139,8 +160,8 @@ describe('spinner check in a session', () => {
     expect(s.statOf(char, 'willpower')!.current).toBe(willpower - 2)
     const resolution = spinnerMath(check).resolution!
     expect(resolution.value).toBe(check.resolution!.spins[spinsBefore]!.value)
-    expect(resolution.total).toBe(resolution.value + resolution.skill - 1 + 1)
-    expect(spinnerMath(check).success).toBe(resolution.margin >= 0)
+    expect(resolution.total).toBe(resolution.value + resolution.skill - 1 + 1 + tier.value)
+    expect(spinnerMath(check).success).toBe(resolution.total >= 0)
 
     expect(s.closeSpinnerCheck(check.id, 'GM')).toBe(true)
     expect(s.exertSpinner(check.id, 'resolution', 'bonus', 'Mara')).toBe(false)

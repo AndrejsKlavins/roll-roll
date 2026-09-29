@@ -5,7 +5,10 @@ import { spinnerAdvantage, spinnerColor, type NumberField, type SpinnerConfig } 
 import { isBaseField, type Session } from '../session'
 import {
   MAX_SPINNER_CIRCUMSTANCE,
+  MAX_SPINNER_RANK,
+  SPINNER_RANK_STEP,
   spinnerMath,
+  spinnerRanks,
   spinnerOpenStep,
   spinnerShift,
   type SpinnerCheck,
@@ -88,21 +91,26 @@ function Wheel(props: {
   )
 }
 
+/** "Advantage 2" / "Disadvantage 1" / "No advantage". */
+const advantageLabel = (advantage: number) =>
+  advantage === 0 ? 'No advantage' : `${advantage > 0 ? 'Advantage' : 'Disadvantage'} ${Math.abs(advantage)}`
+
 /** Advantage in words. */
 function advantageText(advantage: number) {
   if (advantage === 0) return 'No advantage — one resolution spinner'
   const n = Math.abs(advantage)
   return advantage > 0
-    ? `Advantage ${n} — ${n + 1} resolution spinners, the best counts`
-    : `Disadvantage ${n} — ${n + 1} resolution spinners, the worst counts`
+    ? `Spin ${n} additional spinners, pick the best`
+    : `Spin ${n} additional spinners, pick the worst`
 }
 
 /** One term of a roll's sum, drawn like a die: the value on a square tile, its name below. */
-function Tile(props: { value: number | string; name: string; color?: string; tone?: string }) {
+function Tile(props: { value: number | string; name: string; color?: string; ink?: string; tone?: string }) {
+  const style = [props.color && `--face-color: ${props.color}`, props.ink && `--face-ink: ${props.ink}`].filter(Boolean)
   return (
     <span
       class={props.tone ? `die spin-tile ${props.tone}` : 'die spin-tile'}
-      style={props.color ? `--face-color: ${props.color}` : undefined}
+      style={style.length ? style.join('; ') : undefined}
     >
       <span class="die-face">{props.value}</span>
       <span class="die-name">{props.name}</span>
@@ -112,8 +120,9 @@ function Tile(props: { value: number | string; name: string; color?: string; ton
 
 /**
  * The roll's sum as tiles: the counting spin + the skill + circumstance + exertion (each only when
- * it is there), then the total and the margin. Before its spin the spin tile is a "?" and there is
- * no total yet, so the player can see what will be added.
+ * it is there), always ending on the difficulty (its own tile, set apart), then the total — the
+ * outcome itself: 0 or more succeeds. Before its spin the spin tile is a "?" and there is no total
+ * yet, so the player can see what will be added.
  */
 function SpinEquation(props: {
   session: Session
@@ -128,6 +137,8 @@ function SpinEquation(props: {
   const skill = side?.skill ?? (spun ? check.skillBonus : session.spinnerSkillBonus(check))
   const circumstance = side?.circumstance ?? check.circumstance[step]
   const exertion = side?.exertion ?? 0
+  // The difficulty's square takes the colour a spinner segment of that value would have.
+  const diffLook = spinnerColor(session.rules.spinner!, check.difficulty)
   const terms = [
     <Tile value={side ? side.value : '?'} name="Spin" color={props.spinColor} />,
     skillField && <Tile value={skill} name={skillField.label} color={skillField.color} tone="skill" />,
@@ -135,6 +146,13 @@ function SpinEquation(props: {
       <Tile value={signed(circumstance)} name="Circumstance" tone={circumstance > 0 ? 'help' : 'hinder'} />
     ),
     exertion > 0 && <Tile value={exertion} name="Exertion" tone="exertion" />,
+    <Tile
+      value={signed(check.difficulty)}
+      name={check.tier ?? 'Difficulty'}
+      color={diffLook.color}
+      ink={diffLook.ink}
+      tone="difficulty"
+    />,
   ].filter(Boolean)
   return (
     <div class={side ? 'equation spin-equation spin-reveal' : 'equation spin-equation'}>
@@ -145,15 +163,46 @@ function SpinEquation(props: {
             {t}
           </>
         ))}
-        {side && (
-          <span class="equation-final">
-            <span class="equation-op equation-eq">=</span>
-            <span class={`spin-total ${side.margin >= 0 ? 'success' : 'failure'}`}>
-              <b>{side.total}</b> <span class="spin-margin">{signed(side.margin)}</span>
-            </span>
-          </span>
-        )}
       </div>
+      {side && <SpinOutcome total={side.total} step={step} config={session.rules.spinner!} />}
+    </div>
+  )
+}
+
+/**
+ * The roll's outcome under its sum (user-designed), in three rows: the total in big type, green
+ * from 0 up and red below; its rank groups stacked in a column — three pips each, every full group
+ * one rank, the next one partly filled, the rest empty so the column reads as a meter; then the
+ * outcome in words. On the resolution a rank is an upgrade or a complication, capped at 3; on the
+ * framing it is the advantage it earns, which has no cap, so the column grows past 3 groups with it.
+ */
+function SpinOutcome(props: { total: number; step: SpinnerStep; config: SpinnerConfig }) {
+  const { total, step, config } = props
+  const cap =
+    step === 'framing' ? Math.max(MAX_SPINNER_RANK, Math.ceil(Math.abs(total) / SPINNER_RANK_STEP)) : MAX_SPINNER_RANK
+  const { rank, groups, over } = spinnerRanks(total, cap)
+  const good = total >= 0
+  const text =
+    step === 'framing'
+      ? advantageLabel(spinnerAdvantage(config, total))
+      : `${good ? 'Success' : 'Failure'}${rank > 0 ? ` · Rank ${rank} ${good ? 'upgrade' : 'complication'}` : ''}`
+  return (
+    <div class={`spin-outcome ${good ? 'good' : 'bad'}`} title={`Every ${SPINNER_RANK_STEP} is a rank`}>
+      <b class="spin-outcome-total">{signed(total)}</b>
+      <div class="rank-column">
+        {groups.map((filled, g) => (
+          <span class={filled === SPINNER_RANK_STEP ? 'rank-group full' : 'rank-group'}>
+            <span class="rank-num">{g + 1}</span>
+            <span class="rank-dots">
+              {Array.from({ length: SPINNER_RANK_STEP }, (_, i) => (
+                <span class={i < filled ? 'rank-pip on' : 'rank-pip'} />
+              ))}
+            </span>
+            <span class="rank-over">{over && g === groups.length - 1 ? '+' : ''}</span>
+          </span>
+        ))}
+      </div>
+      <span class="spin-outcome-text">{text}</span>
     </div>
   )
 }
@@ -316,7 +365,7 @@ function SpinnerCard(props: {
   })
   const skillLabel = check.skill ? session.rules.fields.get(check.skill)?.label : null
   // What accepting the framing as it stands would give, while it is still open.
-  const advantage = math.advantage ?? (math.framing ? spinnerAdvantage(config, math.framing.margin) : null)
+  const advantage = math.advantage ?? (math.framing ? spinnerAdvantage(config, math.framing.total) : null)
   const caption =
     advantage === null ? undefined : math.advantage === null ? `Accepting now: ${advantageText(advantage)}` : advantageText(advantage)
   return (
@@ -327,13 +376,13 @@ function SpinnerCard(props: {
         {check.closed && <span class="badge closed">Done</span>}
         {math.resolution && (
           <span class={`result spin-reveal ${math.success ? 'success' : 'failure'}`}>
-            {math.success ? 'Success' : 'Failure'} {signed(math.resolution.margin)}
+            {math.success ? 'Success' : 'Failure'} {signed(math.resolution.total)}
           </span>
         )}
       </div>
       {check.description && <p class="solo-description">{check.description}</p>}
       <p class="spin-difficulty">
-        Difficulty <b>{check.difficulty}</b>
+        Difficulty <b>{signed(check.difficulty)}</b>
         {check.tier && ` (${check.tier})`}
         {skillLabel && <span class="muted"> · {skillLabel}{check.framingAbility ? ' on both' : ''}</span>}
       </p>
@@ -437,7 +486,7 @@ export function SpinnerDialog(props: { session: Session }) {
   const { rules } = session
   if (!rules.spinner) return null
   const abilities = [...rules.fields.values()].filter((f): f is NumberField => isBaseField(f) && !f.trained)
-  const difficulties = rules.challenges.difficulties
+  const difficulties = rules.spinner.difficulties
   const state = {
     description: '',
     diff: '',
@@ -461,7 +510,11 @@ export function SpinnerDialog(props: { session: Session }) {
           <span>What is the challenge? (optional)</span>
           <input name="description" x-model="description" placeholder="e.g. Climb the cliff" maxlength={200} autocomplete="off" />
         </label>
-        <DifficultyPicker difficulties={difficulties} />
+        <DifficultyPicker
+          difficulties={difficulties}
+          hint="Added to both rolls — a total of 0 or more succeeds."
+          signed
+        />
         <AbilityPicker
           title="Framing ability (optional)"
           hint="Spun first; its margin gives advantage (or disadvantage) on the resolution spin. Skip it and the resolution is one spin."

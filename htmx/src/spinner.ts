@@ -1,8 +1,9 @@
 // Spinner challenge check (user-designed): an alternative to the dice challenge. One spinner,
 // its segments worst to best (rules.yaml `spinner`). It is rolled in two steps (user decision):
-// 1. Spin the framing: one spin + skill + circumstance (+ exertion) vs the difficulty. The player
-//    may exert on it (+1, or a re-spin that counts instead) until they accept it.
-// 2. Accepting spins the resolution: the framing's margin gives advantage N (spin N+1 spinners and
+// 1. Spin the framing: one spin + skill + circumstance (+ exertion) + difficulty. The difficulty is
+//    a modifier added to the sum (mostly negative), so the total is the outcome: 0 or more
+//    succeeds. The player may exert on it (+1, or a re-spin that counts instead) until they accept it.
+// 2. Accepting spins the resolution: the framing's total gives advantage N (spin N+1 spinners and
 //    keep the best) or disadvantage N (keep the worst). Exertion works on it the same way.
 // Each ability rank away from 3 shifts every segment's value by `shift_per_rank`.
 import { cryptoRng } from './engine/expr'
@@ -21,6 +22,10 @@ export type SpinnerCheck = {
   /** The id of the event that started it — places it in the table's history log. */
   seq: number
   description: string
+  /**
+   * Added to each roll's sum (rules.yaml `spinner.difficulties`: Easy +3 … Legendary −12), so a
+   * total of 0 or more succeeds.
+   */
   difficulty: number
   /** The difficulty tier's name while the number is still that tier's. */
   tier: string | null
@@ -54,7 +59,10 @@ export type SpinnerEventData =
       type: 'spinner_started'
       checkId: string
       description: string
-      difficulty: number
+      /** The modifier added to each roll. */
+      modifier?: number
+      /** Logs from before modifiers: a number to reach, so the modifier is its negative. */
+      difficulty?: number
       tier: string | null
       framingAbility: string | null
       resolutionAbility: string
@@ -131,8 +139,18 @@ export function spinnerOpenStep(check: SpinnerCheck): SpinnerStep | null {
   return check.resolution ? 'resolution' : check.framing ? 'framing' : null
 }
 
-/** One roll's sum: the kept spin, then each addition (0 when it adds nothing), the total and margin. */
-export type SpinnerSide = { value: number; skill: number; circumstance: number; exertion: number; total: number; margin: number }
+/**
+ * One roll's sum: the kept spin, then each addition (0 when it adds nothing), the difficulty last,
+ * and the total — the outcome itself: 0 or more succeeds.
+ */
+export type SpinnerSide = {
+  value: number
+  skill: number
+  circumstance: number
+  exertion: number
+  difficulty: number
+  total: number
+}
 
 export type SpinnerCheckMath = {
   framing: SpinnerSide | null
@@ -150,16 +168,33 @@ export function spinnerMath(check: SpinnerCheck): SpinnerCheckMath {
     const value = roll.spins[roll.kept]!.value
     const circumstance = check.circumstance[step]
     const exertion = check.exertion[step]
-    const total = value + check.skillBonus + circumstance + exertion
-    return { value, skill: check.skillBonus, circumstance, exertion, total, margin: total - check.difficulty }
+    const total = value + check.skillBonus + circumstance + exertion + check.difficulty
+    return { value, skill: check.skillBonus, circumstance, exertion, difficulty: check.difficulty, total }
   }
   const resolution = side(check.resolution, 'resolution')
   return {
     framing: side(check.framing, 'framing'),
     resolution,
     advantage: check.advantage,
-    success: resolution ? resolution.margin >= 0 : null,
+    success: resolution ? resolution.total >= 0 : null,
   }
+}
+
+/** Every full 3 of a total is one rank (an upgrade above 0, a complication below). */
+export const SPINNER_RANK_STEP = 3
+/** Most ranks a resolution earns. */
+export const MAX_SPINNER_RANK = 3
+
+/**
+ * A total as `cap` groups of three pips (user-designed): every full group is one rank, the next
+ * one is partly filled on the way to the next rank, the rest are empty. `groups` holds how many
+ * pips each group has filled; `over` = the total runs past the last group.
+ */
+export function spinnerRanks(total: number, cap: number) {
+  const size = Math.abs(total)
+  const rank = Math.min(Math.floor(size / SPINNER_RANK_STEP), cap)
+  const groups = Array.from({ length: cap }, (_, g) => Math.max(0, Math.min(SPINNER_RANK_STEP, size - g * SPINNER_RANK_STEP)))
+  return { rank, groups, over: size > cap * SPINNER_RANK_STEP }
 }
 
 /** Spinner checks ever started, in order; the last is the one on the board. Rebuilt from the log. */
@@ -180,9 +215,10 @@ export class SpinnerChecks {
 
   apply(e: SpinnerEventData & { id: number; ts?: number }) {
     if (e.type === 'spinner_started') {
-      const { type: _type, checkId, id, ts: _ts, ...rest } = e
+      const { type: _type, checkId, id, ts: _ts, modifier, difficulty, ...rest } = e
       this.list.push({
         ...rest,
+        difficulty: modifier ?? -(difficulty ?? 0),
         id: checkId,
         seq: id,
         skill: null,
