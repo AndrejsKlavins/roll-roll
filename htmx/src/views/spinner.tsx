@@ -83,7 +83,7 @@ function Wheel(props: {
       >
         {segment !== null ? outcome(segment) : '?'}
       </span>
-      {props.respin && <span class="spin-tag">Spin again</span>}
+      {props.respin && <span class="spin-tag">Exertion spin</span>}
     </div>
   )
 }
