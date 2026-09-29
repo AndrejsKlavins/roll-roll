@@ -839,3 +839,60 @@ button.gm-action:hover { border-color: var(--accent); color: var(--accent); }
 .log-note-form { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: center; }
 .log-note-form h3 { grid-column: 1 / -1; margin: 0; }
 .challenge-log li.log-note { border-left-color: var(--accent); font-style: italic; }
+
+/* ---- Spinner challenge check ------------------------------------------------ */
+.spinner-board { display: grid; gap: 0.6rem; margin-top: 1rem; }
+.spinner-board:empty { display: none; }
+.spinner-check { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: var(--radius); padding: 0.7rem 0.8rem; display: grid; gap: 0.6rem; }
+.spinner-board:not(.spinning) .spinner-check.success { border-left-color: #5cc27a; }
+.spinner-board:not(.spinning) .spinner-check.failure { border-left-color: var(--danger); }
+.spin-difficulty { margin: 0; }
+.spin-box { border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.6rem; }
+.spin-box .roll-box-head { margin-bottom: 0.3rem; }
+.spin-kind { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); width: 100%; }
+.spin-ability { color: var(--field-color, var(--text)); font-weight: 600; }
+.spin-wheels { --wheel: 130px; display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
+.spin-wheels:has(.spinner + .spinner) { --wheel: 92px; }
+.spinner { display: grid; justify-items: center; gap: 0.35rem; width: var(--wheel); transition: opacity 0.2s; }
+.spinner svg { width: var(--wheel); height: var(--wheel); display: block; }
+.spinner .seg { stroke: var(--bg); stroke-width: 1.5; }
+.spinner .seg-label { font-size: 17px; font-weight: 700; pointer-events: none; }
+.spinner-arrow polygon { fill: var(--text); stroke: var(--bg); stroke-width: 2; stroke-linejoin: round; }
+.spinner-hub { fill: var(--bg); stroke: var(--text); stroke-width: 3; }
+.spin-readout {
+  min-width: 2.4em; height: 2.4em; padding: 0 0.3em; border-radius: 8px;
+  display: grid; place-items: center; font-size: 1.3rem; font-weight: 800;
+  background: var(--panel-2); color: var(--text);
+}
+/* After a spin: the spinner that counts stays bright, the others fade; the landed wedge rings.
+   While new spinners turn, what they decide (.spin-reveal) is hidden: in their own box, and the
+   card-level bits (verdict, Accept button). New spinners pop in. */
+.spin-box:not(.spinning) .spinner.dropped { opacity: 0.4; }
+.spin-box:not(.spinning) .spinner:not(.dropped) .spin-readout { outline: 2px solid var(--text); outline-offset: 2px; }
+.spin-box:not(.spinning) .seg.hit { stroke: var(--text); stroke-width: 3; }
+.spin-box.spinning .spin-reveal,
+.spinner-board.spinning .solo-head .spin-reveal,
+.spinner-board.spinning .spinner-check > .spin-reveal { visibility: hidden; }
+.spin-box.spinning .spinner[data-fresh] { animation: spinner-pop 0.25s ease-out backwards; }
+.spin-box.spinning .spinner[data-fresh] + .spinner[data-fresh] { animation-delay: 0.08s; }
+@keyframes spinner-pop { from { transform: scale(0.6); opacity: 0; } }
+.spin-tag { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secret); }
+.spin-exertion { display: grid; justify-items: center; gap: 0.3rem; margin-top: 0.5rem; }
+.spin-exertion p { margin: 0; }
+.spin-exertion b { color: var(--secret); }
+.spin-equation { margin-top: 0.5rem; }
+.spin-total { display: flex; align-items: baseline; gap: 0.4rem; }
+.spin-total b { font-size: 1.4rem; }
+.spin-margin { font-size: 1rem; }
+/* The terms of a spin's sum, drawn like dice (value on a tile, name below). */
+.spin-tile.skill { --face-color: var(--accent); }
+.spin-tile.help { --face-color: #5cc27a; }
+.spin-tile.hinder { --face-color: var(--danger); }
+.spin-tile.exertion { --face-color: var(--secret); }
+.spin-box-controls { display: flex; justify-content: center; }
+.spin-total.success .spin-margin { color: #5cc27a; }
+.spin-total.failure .spin-margin { color: var(--danger); }
+.spin-caption { margin: 0.2rem 0 0; text-align: center; font-size: 0.85rem; color: var(--muted); }
+.spin-controls { display: grid; gap: 0.5rem; }
+.table-screen .spin-wheels { --wheel: 200px; }
+.table-screen .spin-wheels:has(.spinner + .spinner) { --wheel: 150px; }

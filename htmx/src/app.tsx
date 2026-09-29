@@ -8,6 +8,8 @@ import { bestiaryRoutes, pushEncounter } from './bestiary-routes'
 import { hub } from './hub'
 import type { Character, ChallengeStakes, RollEvent, Session, Visibility } from './session'
 import { ChallengeBoard, ChallengePlayerPicker, GroupTaskBoard, OppositionBoard, SoloRollBoard } from './views/challenge'
+import type { SpinnerStep } from './spinner'
+import { SpinnerBoard, type SpinnerAnimation } from './views/spinner'
 import { GameClock } from './views/clock'
 import { ConsequenceResult } from './views/consequence'
 import { ChangeLog, RollEntry, SessionMarker } from './views/feed'
@@ -79,7 +81,9 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
   const pushChallengePlayers = () =>
     hub.send(
       (client) => client.role === 'gm',
-      () => html(<ChallengePlayerPicker session={session} oob />),
+      () =>
+        html(<ChallengePlayerPicker session={session} oob />) +
+        html(<ChallengePlayerPicker session={session} id="spinner-players" oob />),
     )
 
   const pushChangeLogToGm = () =>
@@ -457,6 +461,89 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     if (session.setOppositionSkill(opp.id, char.id, (await form(c)).skill || null, actorName(c))) pushOpposition()
     return noContent(c)
   })
+
+  // The spinner check has its own swap target too. `animate` names the spins that are new in this
+  // push (a step's spins from index `from` on), so only those spin and a reload never re-spins.
+  const pushSpinner = (animate?: SpinnerAnimation) =>
+    hub.send(
+      () => true,
+      (client) =>
+        html(
+          <SpinnerBoard session={session} role={client.role} viewerCharId={client.charId ?? undefined} oob animate={animate} />,
+        ),
+    )
+
+  app.post('/gm/spinner/start', async (c) => {
+    const body = await form(c)
+    const started = session.startSpinnerCheck(
+      {
+        description: body.description ?? '',
+        difficulty: Number(body.difficulty),
+        framingAbility: body.framing_ability ?? '',
+        resolutionAbility: body.resolution_ability ?? '',
+        charId: body.char_id ?? '',
+      },
+      actorName(c),
+    )
+    if (started) {
+      pushSpinner()
+      pushChallenge() // the check it replaces moves into the table's history log
+    }
+    return noContent(c)
+  })
+
+  app.post('/gm/spinner/done', (c) => {
+    const check = session.spinners.current()
+    if (check && session.closeSpinnerCheck(check.id, actorName(c))) pushSpinner()
+    return noContent(c)
+  })
+
+  // The rolling player's own (/c/:id/…) or the GM's on their behalf (/gm/…).
+  const spinnerFor = (c: Context) => {
+    const check = session.spinners.current()
+    const charId = c.req.param('id')
+    return check && (charId === undefined || check.charId === charId) ? check : null
+  }
+  const spinnerStep = (c: Context): SpinnerStep => (c.req.query('roll') === 'framing' ? 'framing' : 'resolution')
+  for (const base of ['/gm/spinner', '/c/:id/spinner']) {
+    app.post(`${base}/skill`, async (c) => {
+      const check = spinnerFor(c)
+      if (!check) return c.notFound()
+      if (session.setSpinnerSkill(check.id, (await form(c)).skill || null, actorName(c))) pushSpinner()
+      return noContent(c)
+    })
+    app.post(`${base}/circumstance`, (c) => {
+      const check = spinnerFor(c)
+      if (!check) return c.notFound()
+      if (session.adjustSpinnerCircumstance(check.id, spinnerStep(c), Number(c.req.query('delta')), actorName(c))) pushSpinner()
+      return noContent(c)
+    })
+    // Exertion: +1 (`kind=bonus`) or a re-spin that counts (`kind=respin`), off the matching pool.
+    app.post(`${base}/exert`, (c) => {
+      const check = spinnerFor(c)
+      const char = check ? session.characters.get(check.charId) : undefined
+      if (!check || !char) return c.notFound()
+      const roll = spinnerStep(c)
+      const kind = c.req.query('kind') === 'respin' ? 'respin' : 'bonus'
+      if (session.exertSpinner(check.id, roll, kind, actorName(c))) {
+        pushSpinner(kind === 'respin' ? { step: roll, from: check[roll]!.spins.length - 1 } : undefined)
+        pushStatChange(char)
+      }
+      return noContent(c)
+    })
+    app.post(`${base}/spin`, (c) => {
+      const check = spinnerFor(c)
+      if (!check) return c.notFound()
+      if (session.spinSpinnerCheck(check.id, actorName(c))) pushSpinner({ step: 'framing', from: 0 })
+      return noContent(c)
+    })
+    app.post(`${base}/accept`, (c) => {
+      const check = spinnerFor(c)
+      if (!check) return c.notFound()
+      if (session.acceptSpinnerFraming(check.id, actorName(c))) pushSpinner({ step: 'resolution', from: 0 })
+      return noContent(c)
+    })
+  }
 
   app.post('/gm/solo/roll', async (c) => {
     const body = await form(c)

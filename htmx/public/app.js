@@ -46,6 +46,13 @@ const sounds = {
       t += 0.04 + Math.random() * 0.07 + i * 0.012
     }
   },
+  // The spinner's arrow passing a segment, and it stopping dead.
+  tick(ctx) {
+    click(ctx, ctx.currentTime, 3200, 0.25)
+  },
+  stop(ctx) {
+    click(ctx, ctx.currentTime, 900, 0.9)
+  },
   secret(ctx) {
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
@@ -121,6 +128,82 @@ function tickClock() {
   }
 }
 setInterval(tickClock, 250)
+
+// ---- Spinner check ---------------------------------------------------------
+// The server sends #spinner-board with `data-spin-anim` right after a spin, already showing where
+// every arrow landed; the spinners new in that push carry `data-fresh` (the framing, then the
+// resolution's 1..N once the framing is accepted, or one re-spin bought with exertion). Each
+// turns at full speed, the read-out under it showing whatever segment it is passing, and stops
+// dead on its segment (no slow-down, user decision): the start angle is picked so the arrow
+// reaches its landing angle exactly at its stop time. What they decide (.spin-reveal) stays
+// hidden until the last one stops.
+const SPIN_SPEED = 1.3 // degrees per ms
+const SPIN_DURATION = 1600 // ms until the first new spinner stops
+const SPIN_STAGGER = 400 // ms between the stops of several new spinners (advantage)
+
+function showSegment(readout, seg) {
+  if (readout.textContent === String(seg.v)) return
+  readout.textContent = String(seg.v)
+  readout.style.background = seg.c
+  readout.style.color = seg.i
+}
+
+let lastTick = 0
+
+function spinBoard(board) {
+  const wheels = [...board.querySelectorAll('.spinner[data-fresh][data-angle]')]
+  const finish = () => board.querySelectorAll('.spinning').forEach((el) => el.classList.remove('spinning'))
+  board.classList.remove('spinning')
+  if (!wheels.length) return finish()
+  board.classList.add('spinning')
+  let running = wheels.length
+  const start = performance.now()
+  wheels.forEach((wheel, n) => {
+    const arrow = wheel.querySelector('.spinner-arrow')
+    const readout = wheel.querySelector('.spin-readout')
+    const segs = JSON.parse(wheel.dataset.segments)
+    const landing = Number(wheel.dataset.angle)
+    const stopAt = SPIN_DURATION + n * SPIN_STAGGER
+    let done = false
+    const draw = (angle) => {
+      arrow.setAttribute('transform', `rotate(${angle})`)
+      showSegment(readout, segs[Math.floor((((angle % 360) + 360) % 360) / (360 / segs.length)) % segs.length])
+    }
+    const stop = () => {
+      if (done) return
+      done = true
+      draw(landing)
+      playSound('stop')
+      if (--running === 0) {
+        finish()
+        board.classList.remove('spinning')
+      }
+    }
+    const frame = (now) => {
+      if (done || !board.isConnected) return
+      const t = now - start
+      if (t >= stopAt) return stop()
+      const before = readout.textContent
+      draw(landing - SPIN_SPEED * (stopAt - t))
+      if (readout.textContent !== before && now - lastTick > 45) {
+        lastTick = now
+        playSound('tick')
+      }
+      requestAnimationFrame(frame)
+    }
+    draw(landing - SPIN_SPEED * stopAt)
+    requestAnimationFrame(frame)
+    // Frames stall in a hidden tab; the result must still show on time.
+    setTimeout(stop, stopAt + 100)
+  })
+}
+
+document.addEventListener('htmx:load', (e) => {
+  const board = e.target.closest?.('#spinner-board[data-spin-anim]') ?? e.target.querySelector?.('#spinner-board[data-spin-anim]')
+  if (!board || board.spun) return
+  board.spun = true
+  spinBoard(board)
+})
 
 // ---- Connection ------------------------------------------------------------
 // Reloading while the laptop is unreachable would leave the browser's own

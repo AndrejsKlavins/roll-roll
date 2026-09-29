@@ -26,6 +26,19 @@ import {
   type WoundPool,
 } from './combat'
 import { Bestiary, isEnemyEvent, type EnemyEventData } from './enemies'
+import {
+  isSpinnerEvent,
+  MAX_SPINNER_CIRCUMSTANCE,
+  spin,
+  SpinnerChecks,
+  spinnerMath,
+  spinnerOpenStep,
+  spinOnce,
+  type SpinnerCheck,
+  type SpinnerEventData,
+  type SpinnerExertKind,
+  type SpinnerStep,
+} from './spinner'
 import { cryptoRng, evaluate } from './engine/expr'
 import { computeScope, defaultValues, type Values } from './engine/sheet'
 import {
@@ -36,6 +49,8 @@ import {
   effectStep,
   framingRung,
   isBaseField,
+  spinnerAdvantage,
+  spinnerExertionPool,
   type Approach,
   type ApproachEffect,
   type Field,
@@ -866,6 +881,8 @@ export type EventData =
   | { type: 'log_note_added'; noteId: string; text: string; by: string }
   // The GM's bestiary and the current encounter (see enemies.ts).
   | EnemyEventData
+  // Spinner challenge checks (see spinner.ts).
+  | SpinnerEventData
 
 export type LoggedEvent = EventData & { id: number; ts: number }
 export type RollEvent = Extract<LoggedEvent, { type: 'roll' }>
@@ -995,6 +1012,8 @@ export class Session {
   readonly groupTasks: GroupTask[] = []
   /** Enemy templates and the current encounter (GM's Bestiary screen). */
   readonly bestiary: Bestiary
+  /** Spinner challenge checks, in order; the last one is on the board. */
+  readonly spinners = new SpinnerChecks()
   /** Every enemy attack on a player, in order (the table's history log shows them). */
   readonly enemyAttacks: EnemyAttack[] = []
   /** The GM's own lines in the table's history log, in order; `seq` places them in time. */
@@ -1096,6 +1115,7 @@ export class Session {
     this.oppositions.length = 0
     this.groupTasks.length = 0
     this.bestiary.reset()
+    this.spinners.reset()
     this.enemyAttacks.length = 0
     this.logNotes.length = 0
     // Replayed from the log like everything else (power_level_set), so start from the default.
@@ -1568,6 +1588,13 @@ export class Session {
       }
       default:
         if (isEnemyEvent(e)) this.bestiary.apply(e)
+        else if (isSpinnerEvent(e)) {
+          this.spinners.apply(e)
+          if (e.type === 'spinner_exerted' || e.type === 'spinner_respun') {
+            const c = this.characters.get(e.charId)
+            if (c?.status === 'active') c.statAdj[e.stat] = e.adj
+          }
+        }
     }
   }
 
@@ -3370,6 +3397,149 @@ export class Session {
    */
   soloOutcome(solo: SoloRoll): SideOutcome {
     return outcomeFor(solo.roll.sum, solo.difficulty, 'low')
+  }
+
+  // ---- spinner challenge check ---------------------------------------------
+
+  /**
+   * The GM starts a spinner check for one finished character: a difficulty, a framing and a
+   * resolution ability. The player picks a skill and spins the framing.
+   */
+  startSpinnerCheck(
+    opts: { description?: string; difficulty: number; framingAbility: string; resolutionAbility: string; charId: string },
+    by: string,
+  ) {
+    if (!this.rules.spinner || !Number.isFinite(opts.difficulty)) return null
+    if (!this.isAbilityField(opts.framingAbility) || !this.isAbilityField(opts.resolutionAbility)) return null
+    if (this.characters.get(opts.charId)?.status !== 'active') return null
+    const difficulty = Math.round(opts.difficulty)
+    const tier = this.rules.challenges.difficulties.find((d) => d.value === difficulty)
+    return this.append({
+      type: 'spinner_started',
+      checkId: crypto.randomUUID().slice(0, 8),
+      description: (opts.description ?? '').trim().slice(0, 200),
+      difficulty,
+      tier: tier?.label ?? null,
+      framingAbility: opts.framingAbility,
+      resolutionAbility: opts.resolutionAbility,
+      charId: opts.charId,
+      by,
+    })
+  }
+
+  /** The player's skill for a spinner check — only before the framing spin, and only a skill they may use. */
+  setSpinnerSkill(checkId: string, skill: string | null, by: string) {
+    const check = this.spinners.byId(checkId)
+    if (!check || check.closed || check.framing || check.skill === skill) return false
+    if (skill !== null && !this.spinnerSkillAllowed(check.charId, skill)) return false
+    this.append({ type: 'spinner_skill_set', checkId, skill, by })
+    return true
+  }
+
+  private spinnerSkillAllowed(charId: string, skill: string) {
+    const f = this.rules.fields.get(skill)
+    const char = this.characters.get(charId)
+    return !!f && f.type === 'number' && f.trained && !!char && this.fieldVisible(char, f.id)
+  }
+
+  /** The character's current rank in an ability (3 if it can't be read). */
+  private spinnerRank(charId: string, abilityId: string) {
+    const char = this.characters.get(charId)
+    const field = this.rules.fields.get(abilityId)
+    return char && field && field.type === 'number' ? Number(this.valueOf(char, field)) : 3
+  }
+
+  /** Step 1: spins the framing. The skill bonus is read now and kept for both rolls. */
+  spinSpinnerCheck(checkId: string, by: string) {
+    const check = this.spinners.byId(checkId)
+    const config = this.rules.spinner
+    if (!check || !config || check.closed || check.framing || !this.characters.has(check.charId)) return null
+    return this.append({
+      type: 'spinner_spun',
+      checkId,
+      skill: check.skill,
+      skillBonus: this.spinnerSkillBonus(check),
+      framing: spin(config, this.spinnerRank(check.charId, check.framingAbility), 1, 'best'),
+      by,
+    })
+  }
+
+  /**
+   * Step 2: the player accepts the framing as it stands (exertion and circumstance included). Its
+   * margin sets the advantage, and the resolution's |advantage| + 1 spinners are spun.
+   */
+  acceptSpinnerFraming(checkId: string, by: string) {
+    const check = this.spinners.byId(checkId)
+    const config = this.rules.spinner
+    const framing = check ? spinnerMath(check).framing : null
+    if (!check || !config || !framing || spinnerOpenStep(check) !== 'framing') return null
+    const advantage = spinnerAdvantage(config, framing.margin)
+    const rank = this.spinnerRank(check.charId, check.resolutionAbility)
+    const resolution = spin(config, rank, Math.abs(advantage) + 1, advantage < 0 ? 'worst' : 'best')
+    return this.append({ type: 'spinner_resolution_spun', checkId, advantage, resolution, by })
+  }
+
+  /** The declared skill's bonus as it stands now: trained rank plus equipment, as in a challenge (a temporary ✎ change stays out). */
+  spinnerSkillBonus(check: { charId: string; skill: string | null }) {
+    const char = this.characters.get(check.charId)
+    const field = check.skill ? this.rules.fields.get(check.skill) : undefined
+    if (!char || !field || field.type !== 'number') return 0
+    return Math.max(0, Math.round(Number(this.baseOf(char, field))) + this.itemBonus(char, field.id))
+  }
+
+  /**
+   * Nudges one roll's circumstance by `delta` (a plus helps). The framing's is fixed once the
+   * framing is accepted, since it decided the advantage; the resolution's may change until closed.
+   */
+  adjustSpinnerCircumstance(checkId: string, roll: SpinnerStep, delta: number, by: string) {
+    const check = this.spinners.byId(checkId)
+    if (!check || check.closed || (roll === 'framing' && check.resolution)) return false
+    const value = Math.max(-MAX_SPINNER_CIRCUMSTANCE, Math.min(MAX_SPINNER_CIRCUMSTANCE, check.circumstance[roll] + Math.sign(delta)))
+    if (value === check.circumstance[roll]) return false
+    this.append({ type: 'spinner_circumstance_set', checkId, roll, value, by })
+    return true
+  }
+
+  /**
+   * The pool that pays for exertion on one of the check's rolls — Stamina for Strength, Agility
+   * and Endurance, Willpower for the rest (rules.yaml `spinner.exertion`) — and what is left in it.
+   */
+  spinnerExertionPool(check: SpinnerCheck, roll: SpinnerStep) {
+    const config = this.rules.spinner
+    const char = this.characters.get(check.charId)
+    const statId = config ? spinnerExertionPool(config, roll === 'framing' ? check.framingAbility : check.resolutionAbility) : null
+    const stat = statId ? this.statOf(char!, statId) : null
+    return statId && char && stat ? { statId, left: stat.current, normal: stat.normal } : null
+  }
+
+  /**
+   * Burns a point of the roll's matching pool off the sheet, on the roll that is open (the
+   * framing until it is accepted, then the resolution) for +1, or for one more spin that counts
+   * instead of the one before (`respin`).
+   */
+  exertSpinner(checkId: string, roll: SpinnerStep, kind: SpinnerExertKind, by: string) {
+    const check = this.spinners.byId(checkId)
+    const config = this.rules.spinner
+    if (!check || !config || spinnerOpenStep(check) !== roll) return false
+    const pool = this.spinnerExertionPool(check, roll)
+    if (!pool || pool.left <= 0) return false
+    const to = pool.left - 1
+    const spend = { charId: check.charId, stat: pool.statId, adj: to - pool.normal, from: pool.left, to }
+    if (kind === 'respin') {
+      const rank = check[roll]!.rank
+      this.append({ type: 'spinner_respun', checkId, roll, spin: { ...spinOnce(config, rank), respin: true }, ...spend, by })
+    } else {
+      this.append({ type: 'spinner_exerted', checkId, roll, ...spend, by })
+    }
+    return true
+  }
+
+  /** GM: the check is done — it leaves the player's screen and becomes a history line. */
+  closeSpinnerCheck(checkId: string, by: string) {
+    const check = this.spinners.byId(checkId)
+    if (!check || check.closed) return false
+    this.append({ type: 'spinner_closed', checkId, by })
+    return true
   }
 
   // ---- bestiary & encounter ------------------------------------------------

@@ -12,6 +12,7 @@ import {
   SoloRollDialog,
 } from './challenge'
 import { GameClock } from './clock'
+import { SpinnerBoard, SpinnerDialog } from './spinner'
 import { EncounterBoard } from './combat'
 import { ConsequenceButtons, ConsequenceDialog } from './consequence'
 import { ChangeLog, Feed } from './feed'
@@ -76,6 +77,7 @@ export function PlayerPage(props: { session: Session; charId: string }) {
           <OppositionBoard session={session} role="player" viewerCharId={charId} />
           <GroupTaskBoard session={session} role="player" viewerCharId={charId} />
           <SoloRollBoard session={session} role="player" />
+          <SpinnerBoard session={session} role="player" viewerCharId={charId} />
           <h3>Rolls</h3>
           <Feed session={session} viewer="player" />
         </aside>
@@ -92,6 +94,7 @@ export function TablePage(props: { session: Session }) {
       <main class="table-screen">
         <GameClock session={session} />
         <EncounterBoard session={session} />
+        <SpinnerBoard session={session} role="table" />
         <ChallengeBoard session={session} role="table" />
         <OppositionBoard session={session} role="table" />
         <GroupTaskBoard session={session} role="table" />
@@ -157,7 +160,7 @@ function BackupCard() {
  * The GM's roll starters, all in one style (user decision): each opens its dialog. The boards
  * themselves (below) only show what is going on.
  */
-function GmActions() {
+function GmActions(props: { spinner: boolean }) {
   const open = (id: string, label: string) => (
     <button type="button" class="gm-action" onclick={`document.getElementById('${id}').showModal()`}>
       {label}
@@ -170,6 +173,7 @@ function GmActions() {
       {open('group-dialog', 'Start group task')}
       {open('solo-dialog', 'Start solo roll')}
       {open('magic-dialog', 'Start magic roll')}
+      {props.spinner && open('spinner-dialog', 'Spinner challenge check')}
     </div>
   )
 }
@@ -226,7 +230,7 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
             </a>
           </nav>
 
-          <GmActions />
+          <GmActions spinner={!!session.rules.spinner} />
 
           <form
             class="card gm-roll"
@@ -272,12 +276,14 @@ export function GmPage(props: { session: Session; playerUrls: string[]; qrSvg: s
           <OppositionBoard session={session} role="gm" />
           <GroupTaskBoard session={session} role="gm" />
           <SoloRollBoard session={session} role="gm" />
+          <SpinnerBoard session={session} role="gm" />
           <ChallengeSetupDialog session={session} />
           <SoloRollDialog session={session} />
           <ConsequenceDialog session={session} />
           <OppositionDialog session={session} />
           <GroupTaskDialog session={session} />
           <MagicDialog session={session} />
+          <SpinnerDialog session={session} />
 
           <h3>Rolls</h3>
           <Feed session={session} viewer="gm" />

@@ -4,7 +4,7 @@ Hand-off document for anyone (human or agent) continuing this project.
 It records **what is being built, why decisions were made, and what exists today**.
 Read this before changing architecture — most choices below were made deliberately with the user.
 
-Last updated: 2026-09-26 (In-game clock on the table screen)
+Last updated: 2026-09-29 (Spinner challenge check)
 
 ---
 
@@ -134,6 +134,8 @@ htmx/
     combat.ts           hit tiers, wounds, glancing drop, defences (pure combat arithmetic)
     bestiary-routes.tsx the GM's Bestiary screen routes (/gm/bestiary, /gm/enemy/:id/…)
     network.ts          LAN IPv4 detection (prefers Wi-Fi, skips virtual adapters)
+    spinner.ts          spinner challenge check: state, events, spin maths (see 6.6i)
+    spinner.test.ts     bun tests for the spinner maths and a check's life cycle
     engine/
       expr.ts           tokenizer + recursive-descent evaluator for formulas and dice
       expr.test.ts      bun tests for the evaluator
@@ -145,6 +147,7 @@ htmx/
       pages.tsx         JoinPage, PlayerPage, GmPage, SessionLabel, WhoLink, CharacterRemoved
       bestiary.tsx      BestiaryPage: encounter cards + template table and dialogs, attack forms
       combat.tsx        EncounterBoard (table), attack log lines, enemy attack breakdown
+    spinner.tsx       SpinnerDialog, SpinnerBoard (SVG spinners; animated by public/app.js)
 ```
 
 Dependencies: `hono`, `htmx.org@2`, `htmx-ext-ws@2`, `alpinejs@3`, `qrcode`; dev: `typescript@7`, `@types/bun`, `@types/qrcode`.
@@ -438,7 +441,7 @@ redesign are dropped on replay** (user decision: no migration); their `challenge
 - **GM column order** (user decision): Players join · Session · Backups · Power level · the two
   screen links (outlined: Public table screen, Bestiary & encounter) · **the roll starters, one
   style** (`GmActions` in pages.tsx: Start new challenge / opposition roll / group task / solo
-  roll / magic roll — each opens its dialog; the boards no longer carry their own start buttons) ·
+  roll / magic roll / Spinner challenge check — each opens its dialog; the boards no longer carry their own start buttons) ·
   GM roll · Roll boon / complication · **Add to the table log** (a line of the GM's own text:
   `addLogNote` → `log_note_added`, `session.logNotes`, shown italic in the table's history log
   in time order; not removable yet) · then the current boards, the feed and the change log.
@@ -1002,11 +1005,73 @@ fragment to table clients; `public/app.js` counts on from the element's `data-ms
   last one and `hub.closeAll()` makes the screens reload.
 - `importLog` pauses a running clock at the imported log's last event.
 
+### 6.6i Spinner challenge check (`spinner.ts`, `views/spinner.tsx`)
+
+User-designed alternative to the dice challenge. The GM's **"Spinner challenge check"** (last of
+the roll starters; `SpinnerDialog`, `/gm/spinner/start`) picks an optional description, a
+difficulty off the ladder, a **framing** and a **resolution** ability (both required) and who
+spins. The GM ends it with **Spinner check done**.
+
+- **The spinner** (rules.yaml top-level `spinner`): `values` = one segment each, **worst to best**
+  (clockwise from the top); `colors` = a colour per **outcome value** (user decision: after the ability
+  shift, so a wedge's colour follows the number printed on it and changes with rank); values past
+  either end of the list take that end's colour (`spinnerColor`). `shift_per_rank` (2): every value is
+  shifted by `(ability rank − 3) × 2` (user decision), shown on the wedges.
+- **Sequential, two steps** (user decision; the rolling player, or the GM for them):
+  1. Pick a skill, **Spin framing**: one spinner (rank read now) + skill + circumstance + exertion
+     vs the difficulty. The skill bonus (trained rank + items, like a challenge) is read here and
+     kept for both rolls (`skillBonus`). While the framing is open the player may exert on it and
+     change its circumstance; the card shows "Accepting now: Advantage 1 — …".
+  2. **Accept framing — spin resolution** (`acceptSpinnerFraming`): the framing's margin as it
+     stands picks `spinner.advantage` (`from` ladder; user's table: ≤ −6 → −2, −5…−3 → −1,
+     −2…+2 → 0, +3…+5 → +1, ≥ +6 → +2). Advantage N = spin **N+1** resolution spinners, the **best**
+     counts; disadvantage N = N+1, the **worst** counts. The framing is locked from here.
+  Resolution = counting spin + skill + circumstance + exertion vs the same difficulty → success and
+  margin. No stakes/degrees, approach die or support. `spinnerOpenStep(check)` names the roll that
+  is open (framing until accepted, then resolution; null before the spin and once closed).
+- **The sum is drawn as die-like tiles** (user request, `SpinEquation`): Spin (in its outcome
+  colour) + the skill (value on the tile, skill name below, in the skill's colour) + Circumstance +
+  Exertion (each only when there), `=` total and margin. Before a roll is spun its Spin tile is "?".
+- **Circumstance** (user-designed): a − / + per roll for the rolling player or the GM, **a plus
+  helps** (unlike the dice challenge's, which is on the difficulty), held to ±10. The framing's is
+  fixed once the framing is accepted (it decided the advantage); the resolution's can change until
+  closed. `spinner_circumstance_set` stores the whole new value.
+- **Exertion** (user-designed), on the **open** roll only, each costing one point off the sheet:
+  **+1** on that roll (`spinner_exerted`), or **Spin again** (`spinner_respun`): one more spinner at
+  that roll's rank, and **the new spin counts** instead of the one before, even if it is worse
+  (user decision; it is marked "Spin again", the others fade). Repeatable while the pool lasts.
+  **The pool matches the roll's ability** (rules.yaml `spinner.exertion`): Stamina for Strength,
+  Agility and Endurance, Willpower for everything else (the entry with no `abilities`);
+  `spinnerExertionPool`. Both events carry the pool's `adj`, applied to `statAdj` in the reducer.
+  (The dice challenge still uses `challenges.exertion_sources`.)
+- Events: `spinner_started`, `spinner_skill_set`, `spinner_spun` (skill, skillBonus, framing roll
+  `{ rank, spins: [{ segment, value, respin? }], kept }`), `spinner_resolution_spun` (advantage,
+  resolution roll), `spinner_circumstance_set`, `spinner_exerted` (`roll`), `spinner_respun`
+  (`roll`, `spin`), `spinner_closed`. Logs from the one-step version still load (`spinner_spun`
+  with advantage + resolution; `spinner_exerted` without `roll` = resolution). The reducer copies
+  rolls (`structuredClone`) since a re-spin appends to them. Routes under `/gm/spinner/…` and
+  `/c/:id/spinner/…`: `skill`, `spin`, `accept`, `circumstance?roll=&delta=`,
+  `exert?roll=&kind=bonus|respin` (+ GM `start`, `done`). State is `SpinnerChecks`
+  (`session.spinners`, fed from `apply()`'s `default:` like the bestiary). Not undoable.
+- **Screens**: `#spinner-board` on all three (top of `/table`); a player sees it only while it is
+  theirs and open. Earlier checks go into the table's history log ("Mara attempts to climb the
+  wall (hard) 10 by spinner and succeeds with +2").
+- **Animation** (user-specified): a push right after a spin names what is new (`SpinnerAnimation`
+  `{ step, from }`: the framing, the resolution's spinners, or one re-spin); those wheels carry
+  `data-fresh`, their box and the board get `spinning`, so reloads and other pushes never re-spin.
+  `app.js` `spinBoard` turns each new arrow at a constant `SPIN_SPEED` and **stops it dead** on its
+  segment (start angle chosen so it lands exactly at its stop time: `SPIN_DURATION`, then
+  `SPIN_STAGGER` apart); new wheels pop in; the square read-out under each shows the segment the
+  arrow is passing, in its colour; ticks/stop use synthesised clicks. The box's `.spin-reveal`
+  (total, advantage, controls) and the card's (verdict, Accept) stay hidden until the last one
+  stops. A timer finishes it if animation frames are stalled (hidden tab).
+
 ### 6.7 Client script (`public/app.js`)
 
 - **Sound**: Web Audio synthesis (`roll` = clicks like tumbling dice, `secret` = low tone). Audio unlocks on first `pointerdown` (iOS requirement). A `MutationObserver` on `#feed` plays `data-sound` of newly added entries. Mute stored per device in `localStorage` (wrapped in try/catch), exposed as Alpine store `$store.sound`.
 - **Feed** is trimmed to 60 entries client-side.
 - **In-game clock** ticks `#game-clock` every 250 ms (see 6.6h).
+- **Spinner check** animation on `htmx:load` of `#spinner-board[data-spin-anim]` (see 6.6i).
 - **Connection handling** (so sleeping phones never show stale data):
   - Every reload goes through `reloadWhenServerUp()`: polls `GET /health` every 3 s and only reloads once it answers, so a phone never reloads into the browser's "can't connect" page (where no script could recover). While waiting, `body.offline` shows a "Reconnecting to the GM laptop…" banner.
   - `htmx:wsClose` → mark disconnected + show banner; the htmx ws extension retries (codes 1006/1011/1012/1013); next `htmx:wsOpen` → reload.

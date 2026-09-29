@@ -289,6 +289,48 @@ export function framingRung(ladder: FramingLadder, margin: number): FramingRung 
   return rungs.findLast((r) => margin >= r.from) ?? rungs[0]!
 }
 
+/** One segment of the spinner: its value before the ability shift. */
+export type SpinnerSegment = { value: number }
+/** The colour an outcome value (after the ability shift) reads in, and the ink on it. */
+export type SpinnerColor = { value: number; color: string; ink: string }
+/** A framing margin of `from` or better (short of the next rung) gives this much advantage. */
+export type AdvantageRung = { from: number; advantage: number }
+/**
+ * The spinner challenge check (top-level `spinner`): segments worst to best, how far each ability
+ * rank away from 3 shifts every value, and the framing margin → advantage ladder.
+ */
+export type SpinnerConfig = {
+  segments: SpinnerSegment[]
+  shiftPerRank: number
+  advantage: AdvantageRung[]
+  /** Sorted by value. */
+  colors: SpinnerColor[]
+  /** Which pool pays for exertion on a spin, by the roll's ability; `abilities: null` = all the rest. */
+  exertion: { stat: string; abilities: string[] | null }[]
+}
+
+/** The pool that pays for exertion on a roll of this ability (null: exertion isn't possible). */
+export function spinnerExertionPool(config: SpinnerConfig, abilityId: string) {
+  return (
+    config.exertion.find((p) => p.abilities?.includes(abilityId)) ?? config.exertion.find((p) => p.abilities === null)
+  )?.stat ?? null
+}
+
+/** The colour of an outcome value; values past either end of the list take that end's colour. */
+export function spinnerColor(config: SpinnerConfig, value: number): SpinnerColor {
+  const { colors } = config
+  return colors.find((c) => c.value === value) ?? (value < colors[0]!.value ? colors[0]! : colors.at(-1)!)
+}
+/** Most spinners one resolution may spin (advantage/disadvantage is held to this − 1). */
+export const MAX_SPINNERS = 6
+
+/** The advantage a framing margin earns: the last rung it reaches, or the bottom rung below them all. */
+export function spinnerAdvantage(config: SpinnerConfig, margin: number) {
+  const { advantage: rungs } = config
+  if (!rungs.length) return 0
+  return (rungs.findLast((r) => margin >= r.from) ?? rungs[0]!).advantage
+}
+
 /** What a rolled die face is called, and the colour it reads in (red → green). */
 export type FaceName = { value: number; label: string; color: string; ink: string }
 
@@ -335,6 +377,8 @@ export type Rules = {
   consequences?: ConsequencesConfig
   /** Starter enemy templates for the GM's bestiary (top-level `enemies`); may be empty. */
   enemies: EnemyTemplate[]
+  /** The spinner challenge check, when the rules file has one. */
+  spinner?: SpinnerConfig
 }
 
 /**
@@ -772,6 +816,61 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
 
   const enemies = parseEnemyTemplates(raw?.enemies, fail)
 
+  // spinner: { values: [worst … best], colors: { value: "#hex" }, shift_per_rank, advantage: [{ from, advantage }] }
+  let spinner: SpinnerConfig | undefined
+  if (raw?.spinner) {
+    const rawSpinner = raw.spinner
+    const values = ((rawSpinner.values ?? []) as unknown[]).map(Number)
+    if (values.length < 2 || values.length > 24 || values.some((v) => !Number.isInteger(v))) {
+      fail('spinner.values: list 2 to 24 whole numbers, worst to best')
+    }
+    const segments = values.map((value) => ({ value }))
+    // Colours belong to outcome values (after the ability shift), not to segments.
+    const colors = Object.entries((rawSpinner.colors ?? {}) as Record<string, unknown>)
+      .flatMap(([key, color]) => {
+        const value = Number(key)
+        if (!Number.isInteger(value)) {
+          fail(`spinner.colors: "${key}" is not a whole number`)
+          return []
+        }
+        const look = parseLook({ color }, `spinner.colors ${value}`)
+        return look.color ? [{ value, color: look.color, ink: look.ink ?? '#ffffff' }] : []
+      })
+      .sort((a, b) => a.value - b.value)
+    if (!colors.length) fail('spinner.colors: give at least one colour')
+    const shiftPerRank = Number(rawSpinner.shift_per_rank ?? 2)
+    if (!Number.isInteger(shiftPerRank)) fail('spinner.shift_per_rank must be a whole number')
+    const advantage = ((rawSpinner.advantage ?? []) as any[])
+      .flatMap((r: any, i: number) => {
+        const where = `spinner.advantage[${i}]`
+        const from = Number(r?.from)
+        const adv = Number(r?.advantage ?? 0)
+        if (!Number.isInteger(from)) fail(`${where}: from must be a whole number (the lowest margin this rung covers)`)
+        else if (!Number.isInteger(adv) || Math.abs(adv) >= MAX_SPINNERS) {
+          fail(`${where} (from ${from}): advantage must be a whole number from ${1 - MAX_SPINNERS} to ${MAX_SPINNERS - 1}`)
+        } else return [{ from, advantage: adv }]
+        return []
+      })
+      .sort((a, b) => a.from - b.from)
+    const duplicate = advantage.find((r, i) => i > 0 && r.from === advantage[i - 1]!.from)
+    if (duplicate) fail(`spinner.advantage: two rungs start at ${duplicate.from}`)
+    // exertion: [{ stat: stamina, abilities: [strength, …] }, { stat: willpower }] — no list = the rest.
+    const exertion = ((rawSpinner.exertion ?? []) as any[]).flatMap((p: any, i: number): SpinnerConfig['exertion'] => {
+      const where = `spinner.exertion[${i}]`
+      const stat = derived.find((d) => d.id === String(p?.stat))
+      if (!stat?.pool) {
+        fail(`${where}: stat "${p?.stat}" must be a pool stat (pool: true)`)
+        return []
+      }
+      if (p?.abilities === undefined) return [{ stat: stat.id, abilities: null }]
+      const abilities = ((p.abilities ?? []) as unknown[]).map(String)
+      for (const a of abilities) if (!fields.has(a)) fail(`${where}: unknown ability "${a}"`)
+      return [{ stat: stat.id, abilities }]
+    })
+    if (exertion.filter((p) => p.abilities === null).length > 1) fail('spinner.exertion: only one pool may leave out "abilities"')
+    spinner = { segments, shiftPerRank, advantage, colors, exertion }
+  }
+
   sections.forEach((s, i) => {
     for (const t of s.requiresTraits) {
       if (!traits.some((x) => x.id === t)) fail(`sections[${i}] "${s.label}": requires_traits names an unknown trait "${t}"`)
@@ -803,6 +902,7 @@ export async function loadRules(path = RULES_PATH): Promise<Rules> {
     },
     consequences,
     enemies,
+    spinner,
   }
 }
 

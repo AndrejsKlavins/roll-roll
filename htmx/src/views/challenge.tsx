@@ -8,6 +8,7 @@ import type { ApproachEffect, ApproachWhen, FaceName, Icon, NumberField } from '
 import type { Child } from 'hono/jsx'
 import { defence, poolLabel, tierEffect, woundLabel } from '../combat'
 import { AttackLogLine, EnemyAttackLogLine } from './combat'
+import { spinnerMath, type SpinnerCheck } from '../spinner'
 import {
   APPROACH_DIE_SIDES,
   isBaseField,
@@ -1622,6 +1623,7 @@ type LogEntry =
   | { kind: 'group'; g: GroupTask }
   | { kind: 'enemyAttack'; attack: EnemyAttack }
   | { kind: 'note'; text: string }
+  | { kind: 'spinner'; check: SpinnerCheck }
 
 /** " and succeeds with +4" / " and fails with -2" — how every history line ends. */
 const verdict = (success: boolean, margin: number) =>
@@ -1644,6 +1646,20 @@ function SoloLogLine(props: { session: Session; solo: SoloRoll }) {
   )
 }
 
+/** A spinner check's line: "Mara attempts to climb the wall (hard) 10 by spinner and succeeds with +2". */
+function SpinnerLogLine(props: { session: Session; check: SpinnerCheck }) {
+  const { session, check } = props
+  const math = spinnerMath(check)
+  const name = session.characters.get(check.charId)?.name ?? 'Someone'
+  return (
+    <li class={math.success === null ? undefined : math.success ? 'success' : 'failure'}>
+      <b>{name}</b> attempts to {check.description || 'the challenge'}
+      {check.tier && ` (${check.tier.toLowerCase()})`} {check.difficulty} by spinner
+      {math.resolution && verdict(math.resolution.margin >= 0, math.resolution.margin)}
+    </li>
+  )
+}
+
 function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
   const { session, entries } = props
   if (entries.length === 0) return null
@@ -1653,6 +1669,7 @@ function ChallengeLog(props: { session: Session; entries: LogEntry[] }) {
         if (entry.kind === 'solo') return <SoloLogLine session={session} solo={entry.solo} />
         if (entry.kind === 'enemyAttack') return <EnemyAttackLogLine attack={entry.attack} />
         if (entry.kind === 'note') return <li class="log-note">{entry.text}</li>
+        if (entry.kind === 'spinner') return <SpinnerLogLine session={session} check={entry.check} />
         if (entry.kind === 'challenge' && entry.ch.attack) return <AttackLogLine session={session} ch={entry.ch} />
         if (entry.kind === 'challenge' && entry.ch.magic) return <MagicLogLine session={session} ch={entry.ch} />
         if (entry.kind === 'group') {
@@ -1725,7 +1742,7 @@ function MagicLogLine(props: { session: Session; ch: Challenge }) {
   )
 }
 
-function IconChip(props: { icon?: Icon }) {
+export function IconChip(props: { icon?: Icon }) {
   const { icon } = props
   if (!icon) return null
   return (
@@ -1739,7 +1756,7 @@ function IconChip(props: { icon?: Icon }) {
  * One ability column of the setup dialog: a big indicator of what is picked above a list of the
  * sheet's abilities. Picking is Alpine state on the form (the var named by `abilityVar`).
  */
-function AbilityPicker(props: {
+export function AbilityPicker(props: {
   title: string
   hint: string
   abilityVar: string
@@ -1803,7 +1820,7 @@ function AbilityPicker(props: {
  * nudges it afterwards with the board's circumstance stepper rather than here, so there is one
  * place a number moves and everyone sees why.
  */
-function DifficultyPicker(props: { difficulties: { id: string; label: string; value: number }[] }) {
+export function DifficultyPicker(props: { difficulties: { id: string; label: string; value: number }[] }) {
   return (
     <section class="side-pick">
       <h4>Difficulty</h4>
@@ -1846,10 +1863,10 @@ const AFTER_START = [
 ].join(' ')
 
 /** Characters the GM can put on a challenge. Swapped on its own when the cast changes. */
-export function ChallengePlayerPicker(props: { session: Session; oob?: boolean }) {
+export function ChallengePlayerPicker(props: { session: Session; oob?: boolean; id?: string }) {
   const characters = [...props.session.characters.values()].filter((c) => c.status === 'active')
   return (
-    <div id="challenge-players" class="pick-col" hx-swap-oob={oobAttr(props.oob)}>
+    <div id={props.id ?? 'challenge-players'} class="pick-col" hx-swap-oob={oobAttr(props.oob)}>
       {characters.length === 0 ? (
         <p class="muted">No finished characters yet.</p>
       ) : (
@@ -2849,6 +2866,8 @@ export function ChallengeBoard(props: { session: Session; role: 'gm' | 'player' 
       .map((o) => ({ kind: 'opposition' as const, opp: o, seq: o.seq })),
     // Enemies' attacks on players (a player's own attack is a challenge, above).
     ...session.enemyAttacks.map((a) => ({ kind: 'enemyAttack' as const, attack: a, seq: a.seq })),
+    // Spinner checks before the current one (which is on its own board).
+    ...session.spinners.list.slice(0, -1).map((c) => ({ kind: 'spinner' as const, check: c, seq: c.seq })),
     // The GM's own lines.
     ...session.logNotes.map((n) => ({ kind: 'note' as const, text: n.text, seq: n.seq })),
     // Group tasks once the GM has closed them (or a newer one has taken the board).
