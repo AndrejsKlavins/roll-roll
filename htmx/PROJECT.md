@@ -1009,8 +1009,12 @@ fragment to table clients; `public/app.js` counts on from the element's `data-ms
 
 User-designed alternative to the dice challenge. The GM's **"Spinner challenge check"** (last of
 the roll starters; `SpinnerDialog`, `/gm/spinner/start`) picks an optional description, a
-difficulty off the ladder, a **framing** and a **resolution** ability (both required) and who
-spins. The GM ends it with **Spinner check done**.
+difficulty off the ladder, an optional **framing** and a required **resolution** ability, and who
+spins. The GM ends it with **Spinner check done**. **Framing is optional** (user request, like the
+dice challenge's "No framing — resolution only"): with it skipped (`framingAbility: null`) there is
+no framing box, and **Spin resolution** spins one resolution spinner straight away at advantage 0
+(one `spinner_spun` with `framing: null` + `advantage` + `resolution`); exertion and circumstance
+then work on the resolution as usual.
 
 - **The spinner** (rules.yaml top-level `spinner`): `values` = one segment each, **worst to best**
   (clockwise from the top); `colors` = a colour per **outcome value** (user decision: after the ability
@@ -1019,8 +1023,9 @@ spins. The GM ends it with **Spinner check done**.
   shifted by `(ability rank − 3) × 2` (user decision), shown on the wedges.
 - **Sequential, two steps** (user decision; the rolling player, or the GM for them):
   1. Pick a skill, **Spin framing**: one spinner (rank read now) + skill + circumstance + exertion
-     vs the difficulty. The skill bonus (trained rank + items, like a challenge) is read here and
-     kept for both rolls (`skillBonus`). While the framing is open the player may exert on it and
+     vs the difficulty. The skill bonus — **the value the sheet shows** (trained rank + items +
+     a temporary ✎ change; user decision, unlike the dice challenge, which leaves ✎ out) — is read
+     here and kept for both rolls (`skillBonus`). While the framing is open the player may exert on it and
      change its circumstance; the card shows "Accepting now: Advantage 1 — …".
   2. **Accept framing — spin resolution** (`acceptSpinnerFraming`): the framing's margin as it
      stands picks `spinner.advantage` (`from` ladder; user's table: ≤ −6 → −2, −5…−3 → −1,

@@ -479,7 +479,7 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
       {
         description: body.description ?? '',
         difficulty: Number(body.difficulty),
-        framingAbility: body.framing_ability ?? '',
+        framingAbility: body.framing_ability || null,
         resolutionAbility: body.resolution_ability ?? '',
         charId: body.char_id ?? '',
       },
@@ -534,7 +534,9 @@ export function createApp(session: Session, opts: { playerUrls: string[]; qrSvg:
     app.post(`${base}/spin`, (c) => {
       const check = spinnerFor(c)
       if (!check) return c.notFound()
-      if (session.spinSpinnerCheck(check.id, actorName(c))) pushSpinner({ step: 'framing', from: 0 })
+      // With the framing skipped, the first Spin is the resolution's.
+      const step = check.framingAbility ? 'framing' : 'resolution'
+      if (session.spinSpinnerCheck(check.id, actorName(c))) pushSpinner({ step, from: 0 })
       return noContent(c)
     })
     app.post(`${base}/accept`, (c) => {

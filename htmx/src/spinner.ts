@@ -24,7 +24,8 @@ export type SpinnerCheck = {
   difficulty: number
   /** The difficulty tier's name while the number is still that tier's. */
   tier: string | null
-  framingAbility: string
+  /** Null when the GM skipped the framing: Spin goes straight to one resolution spinner. */
+  framingAbility: string | null
   resolutionAbility: string
   charId: string
   skill: string | null
@@ -55,19 +56,20 @@ export type SpinnerEventData =
       description: string
       difficulty: number
       tier: string | null
-      framingAbility: string
+      framingAbility: string | null
       resolutionAbility: string
       charId: string
       by: string
     }
   | { type: 'spinner_skill_set'; checkId: string; skill: string | null; by: string }
-  // The framing spin. (Logs from before the two steps also carry advantage + resolution.)
+  // The first Spin: the framing — or, with the framing skipped (framing null), the resolution
+  // straight away at advantage 0. (Logs from before the two steps carry both.)
   | {
       type: 'spinner_spun'
       checkId: string
       skill: string | null
       skillBonus: number
-      framing: SpinnerRoll
+      framing: SpinnerRoll | null
       advantage?: number
       resolution?: SpinnerRoll
       by: string
@@ -125,8 +127,8 @@ export function spin(
 
 /** The step that is open to changes (exertion, the framing's circumstance), or null. */
 export function spinnerOpenStep(check: SpinnerCheck): SpinnerStep | null {
-  if (check.closed || !check.framing) return null
-  return check.resolution ? 'resolution' : 'framing'
+  if (check.closed) return null
+  return check.resolution ? 'resolution' : check.framing ? 'framing' : null
 }
 
 /** One roll's sum: the kept spin, then each addition (0 when it adds nothing), the total and margin. */
@@ -204,7 +206,7 @@ export class SpinnerChecks {
         check.skill = e.skill
         check.skillBonus = e.skillBonus
         // Copies: a re-spin appends to the roll, and the logged event must stay as it was.
-        check.framing = structuredClone(e.framing)
+        check.framing = e.framing ? structuredClone(e.framing) : null
         if (e.resolution) {
           check.advantage = e.advantage ?? 0
           check.resolution = structuredClone(e.resolution)

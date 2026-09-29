@@ -3406,11 +3406,12 @@ export class Session {
    * resolution ability. The player picks a skill and spins the framing.
    */
   startSpinnerCheck(
-    opts: { description?: string; difficulty: number; framingAbility: string; resolutionAbility: string; charId: string },
+    opts: { description?: string; difficulty: number; framingAbility?: string | null; resolutionAbility: string; charId: string },
     by: string,
   ) {
+    const framingAbility = opts.framingAbility || null // optional: skipped = resolution only
     if (!this.rules.spinner || !Number.isFinite(opts.difficulty)) return null
-    if (!this.isAbilityField(opts.framingAbility) || !this.isAbilityField(opts.resolutionAbility)) return null
+    if ((framingAbility !== null && !this.isAbilityField(framingAbility)) || !this.isAbilityField(opts.resolutionAbility)) return null
     if (this.characters.get(opts.charId)?.status !== 'active') return null
     const difficulty = Math.round(opts.difficulty)
     const tier = this.rules.challenges.difficulties.find((d) => d.value === difficulty)
@@ -3420,7 +3421,7 @@ export class Session {
       description: (opts.description ?? '').trim().slice(0, 200),
       difficulty,
       tier: tier?.label ?? null,
-      framingAbility: opts.framingAbility,
+      framingAbility,
       resolutionAbility: opts.resolutionAbility,
       charId: opts.charId,
       by,
@@ -3430,7 +3431,7 @@ export class Session {
   /** The player's skill for a spinner check — only before the framing spin, and only a skill they may use. */
   setSpinnerSkill(checkId: string, skill: string | null, by: string) {
     const check = this.spinners.byId(checkId)
-    if (!check || check.closed || check.framing || check.skill === skill) return false
+    if (!check || check.closed || check.framing || check.resolution || check.skill === skill) return false
     if (skill !== null && !this.spinnerSkillAllowed(check.charId, skill)) return false
     this.append({ type: 'spinner_skill_set', checkId, skill, by })
     return true
@@ -3449,19 +3450,20 @@ export class Session {
     return char && field && field.type === 'number' ? Number(this.valueOf(char, field)) : 3
   }
 
-  /** Step 1: spins the framing. The skill bonus is read now and kept for both rolls. */
+  /**
+   * Step 1: spins the framing. The skill bonus is read now and kept for both rolls. With the
+   * framing skipped, this spins the resolution straight away: one spinner, no advantage.
+   */
   spinSpinnerCheck(checkId: string, by: string) {
     const check = this.spinners.byId(checkId)
     const config = this.rules.spinner
-    if (!check || !config || check.closed || check.framing || !this.characters.has(check.charId)) return null
-    return this.append({
-      type: 'spinner_spun',
-      checkId,
-      skill: check.skill,
-      skillBonus: this.spinnerSkillBonus(check),
-      framing: spin(config, this.spinnerRank(check.charId, check.framingAbility), 1, 'best'),
-      by,
-    })
+    if (!check || !config || check.closed || check.framing || check.resolution || !this.characters.has(check.charId)) return null
+    const base = { type: 'spinner_spun' as const, checkId, skill: check.skill, skillBonus: this.spinnerSkillBonus(check), by }
+    if (!check.framingAbility) {
+      const resolution = spin(config, this.spinnerRank(check.charId, check.resolutionAbility), 1, 'best')
+      return this.append({ ...base, framing: null, advantage: 0, resolution })
+    }
+    return this.append({ ...base, framing: spin(config, this.spinnerRank(check.charId, check.framingAbility), 1, 'best') })
   }
 
   /**
@@ -3479,12 +3481,15 @@ export class Session {
     return this.append({ type: 'spinner_resolution_spun', checkId, advantage, resolution, by })
   }
 
-  /** The declared skill's bonus as it stands now: trained rank plus equipment, as in a challenge (a temporary ✎ change stays out). */
+  /**
+   * The declared skill's bonus as it stands now: the value the sheet shows — trained rank,
+   * equipment and a temporary ✎ change (user decision; the dice challenge leaves ✎ out).
+   */
   spinnerSkillBonus(check: { charId: string; skill: string | null }) {
     const char = this.characters.get(check.charId)
     const field = check.skill ? this.rules.fields.get(check.skill) : undefined
     if (!char || !field || field.type !== 'number') return 0
-    return Math.max(0, Math.round(Number(this.baseOf(char, field))) + this.itemBonus(char, field.id))
+    return Math.max(0, Math.round(Number(this.valueOf(char, field))))
   }
 
   /**
@@ -3493,7 +3498,7 @@ export class Session {
    */
   adjustSpinnerCircumstance(checkId: string, roll: SpinnerStep, delta: number, by: string) {
     const check = this.spinners.byId(checkId)
-    if (!check || check.closed || (roll === 'framing' && check.resolution)) return false
+    if (!check || check.closed || (roll === 'framing' && (check.resolution || !check.framingAbility))) return false
     const value = Math.max(-MAX_SPINNER_CIRCUMSTANCE, Math.min(MAX_SPINNER_CIRCUMSTANCE, check.circumstance[roll] + Math.sign(delta)))
     if (value === check.circumstance[roll]) return false
     this.append({ type: 'spinner_circumstance_set', checkId, roll, value, by })
@@ -3507,7 +3512,8 @@ export class Session {
   spinnerExertionPool(check: SpinnerCheck, roll: SpinnerStep) {
     const config = this.rules.spinner
     const char = this.characters.get(check.charId)
-    const statId = config ? spinnerExertionPool(config, roll === 'framing' ? check.framingAbility : check.resolutionAbility) : null
+    const abilityId = roll === 'framing' ? check.framingAbility : check.resolutionAbility
+    const statId = config && abilityId ? spinnerExertionPool(config, abilityId) : null
     const stat = statId ? this.statOf(char!, statId) : null
     return statId && char && stat ? { statId, left: stat.current, normal: stat.normal } : null
   }

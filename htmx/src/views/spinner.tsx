@@ -124,7 +124,8 @@ function SpinEquation(props: {
 }) {
   const { session, check, step, side } = props
   const skillField = check.skill ? (session.rules.fields.get(check.skill) as NumberField | undefined) : undefined
-  const skill = side?.skill ?? (check.framing ? check.skillBonus : session.spinnerSkillBonus(check))
+  const spun = !!(check.framing || check.resolution)
+  const skill = side?.skill ?? (spun ? check.skillBonus : session.spinnerSkillBonus(check))
   const circumstance = side?.circumstance ?? check.circumstance[step]
   const exertion = side?.exertion ?? 0
   const terms = [
@@ -334,21 +335,23 @@ function SpinnerCard(props: {
       <p class="spin-difficulty">
         Difficulty <b>{check.difficulty}</b>
         {check.tier && ` (${check.tier})`}
-        {skillLabel && <span class="muted"> · {skillLabel} on both</span>}
+        {skillLabel && <span class="muted"> · {skillLabel}{check.framingAbility ? ' on both' : ''}</span>}
       </p>
-      <SpinBox
-        session={session}
-        check={check}
-        title="Framing"
-        step="framing"
-        abilityId={check.framingAbility}
-        roll={check.framing}
-        side={math.framing}
-        url={mayAct ? url : null}
-        caption={caption}
-        animate={props.animate}
-      />
-      {mayAct && !check.framing && (
+      {check.framingAbility && (
+        <SpinBox
+          session={session}
+          check={check}
+          title="Framing"
+          step="framing"
+          abilityId={check.framingAbility}
+          roll={check.framing}
+          side={math.framing}
+          url={mayAct ? url : null}
+          caption={caption}
+          animate={props.animate}
+        />
+      )}
+      {mayAct && !check.framing && !check.resolution && (
         <div class="spin-controls">
           <label class="skill-pick">
             Skill
@@ -362,7 +365,7 @@ function SpinnerCard(props: {
             </select>
           </label>
           <button type="button" class="primary" hx-post={`${url}/spin`} hx-swap="none">
-            {role === 'gm' ? `Spin framing for ${name}` : 'Spin framing'}
+            {(check.framingAbility ? 'Spin framing' : 'Spin resolution') + (role === 'gm' ? ` for ${name}` : '')}
           </button>
         </div>
       )}
@@ -460,10 +463,11 @@ export function SpinnerDialog(props: { session: Session }) {
         </label>
         <DifficultyPicker difficulties={difficulties} />
         <AbilityPicker
-          title="Framing ability"
-          hint="Spun first; its margin gives advantage (or disadvantage) on the resolution spin."
+          title="Framing ability (optional)"
+          hint="Spun first; its margin gives advantage (or disadvantage) on the resolution spin. Skip it and the resolution is one spin."
           abilityVar="framingAbility"
           abilities={abilities}
+          skippable
         />
         <AbilityPicker
           title="Resolution ability"
@@ -479,7 +483,7 @@ export function SpinnerDialog(props: { session: Session }) {
         <input type="hidden" name="framing_ability" x-model="framingAbility" />
         <input type="hidden" name="resolution_ability" x-model="resolutionAbility" />
         <input type="hidden" name="char_id" x-model="charId" />
-        <button type="submit" class="primary" x-bind:disabled="!(diff && framingAbility && resolutionAbility && charId)">
+        <button type="submit" class="primary" x-bind:disabled="!(diff && resolutionAbility && charId)">
           Start spinner check
         </button>
       </form>

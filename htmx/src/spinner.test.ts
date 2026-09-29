@@ -151,6 +151,36 @@ describe('spinner check in a session', () => {
     expect(again.statOf(again.characters.get(mara)!, 'willpower')!.current).toBe(willpower - 2)
   })
 
+  test('the skill bonus is the value the sheet shows, a temporary ✎ change included', async () => {
+    const { s, mara, tier } = await setup()
+    s.grantPoints(mara, 10, 'GM')
+    for (let i = 0; i < 4; i++) s.train(mara, 'melee_combat', 1, 'Mara') // rank 1
+    s.adjustField(mara, 'melee_combat', 1, 'Mara') // ✎ +1 → the sheet shows 2
+    s.startSpinnerCheck({ difficulty: tier.value, framingAbility: 'strength', resolutionAbility: 'strength', charId: mara }, 'GM')
+    const check = s.spinners.current()!
+    s.setSpinnerSkill(check.id, 'melee_combat', 'Mara')
+    s.spinSpinnerCheck(check.id, 'Mara')
+    expect(check.skillBonus).toBe(2)
+  })
+
+  test('framing skipped: Spin goes straight to one resolution spinner, no advantage', async () => {
+    const { s, mara, tier, reopen } = await setup()
+    expect(s.startSpinnerCheck({ difficulty: tier.value, framingAbility: null, resolutionAbility: 'strength', charId: mara }, 'GM')).not.toBeNull()
+    const check = s.spinners.current()!
+    expect(check.framingAbility).toBeNull()
+    expect(s.adjustSpinnerCircumstance(check.id, 'framing', 1, 'GM')).toBe(false)
+    expect(s.spinSpinnerCheck(check.id, 'Mara')).not.toBeNull()
+    expect(check.framing).toBeNull()
+    expect(check.advantage).toBe(0)
+    expect(check.resolution!.spins.length).toBe(1)
+    expect(s.acceptSpinnerFraming(check.id, 'Mara')).toBeNull() // nothing to accept
+    expect(s.spinSpinnerCheck(check.id, 'Mara')).toBeNull() // once
+    expect(s.exertSpinner(check.id, 'framing', 'bonus', 'Mara')).toBe(false)
+    expect(s.exertSpinner(check.id, 'resolution', 'respin', 'Mara')).toBe(true)
+    expect(spinnerMath(check).success).not.toBeNull()
+    expect(reopen().spinners.current()).toEqual(check)
+  })
+
   test('no exertion with an empty pool', async () => {
     const { s, mara, tier } = await setup()
     s.startSpinnerCheck({ difficulty: tier.value, framingAbility: 'strength', resolutionAbility: 'strength', charId: mara }, 'GM')
