@@ -39,7 +39,7 @@ function FieldName(props: { field: Field | Derived | LevelItem; children?: Child
  * dropped below 1): clamp to the lowest/highest defined step so it still reads as a word
  * ("abysmal", "epic") instead of falling back to a bare number.
  */
-function scaleWordAt(scale: Record<number, string>, value: number): string {
+export function scaleWordAt(scale: Record<number, string>, value: number): string {
   const keys = Object.keys(scale).map(Number)
   const clamped = Math.max(Math.min(...keys), Math.min(Math.max(...keys), value))
   return scale[clamped] ?? String(value)

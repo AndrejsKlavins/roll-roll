@@ -1042,19 +1042,22 @@ then work on the resolution as usual.
   Resolution = counting spin + skill + circumstance + exertion + the same difficulty → the total,
   a success at 0 or more. No stakes/degrees, approach die or support. `spinnerOpenStep(check)` names the roll that
   is open (framing until accepted, then resolution; null before the spin and once closed).
+- **Box head**: the roll's name, the ability's icon and name, then the rank as the ability's
+  **scale word** ("average", "epic"; `scaleWordAt` from sheet.tsx) — no "rank 4 (+2)" (user request).
 - **The sum is drawn as die-like tiles** (user request, `SpinEquation`): Spin (in its outcome
   colour) + the skill (value on the tile, skill name below, in the skill's colour) + Circumstance +
   Exertion (each only when there), then **always last, the difficulty** (user request): a filled,
   wider, ringed tile set apart by a gap, filled with the **spinner's colour for that value**
-  (`spinnerColor`, so −6 reads the same red as a −6 wedge), named by its tier ("Hard") or "Difficulty". Before a roll
+  (`spinnerColor`, so −6 reads the same red as a −6 wedge), named "<tier> difficulty" ("Epic difficulty") or just "Difficulty". Before a roll
   is spun its Spin tile is "?".
 - **Outcome block** (user-designed, `SpinOutcome` under each spun roll's equation), three rows:
   1. the signed **total in big type**, green at 0 or more, red below;
-  2. its **rank groups stacked in a column**, three pips each, numbered 1, 2, 3 at the left. Every
-     full group is one **rank** (ringed); the next one fills on the way there and the rest stay
-     empty, so the column reads as a meter (`spinnerRanks(total, cap)`: +4 → [3, 1, 0] = rank 1,
-     −10 → [3, 3, 3] + "+" = rank 3). Resolution: 3 groups (`MAX_SPINNER_RANK`). Framing: at least
-     3, growing with the total since advantage is uncapped (+12 → 4 full groups);
+  2. its **rank groups stacked in a column**, three pips each, numbered 1, 2, 3… at the left. Every
+     full group is one **rank** (ringed); the column **ends on the group that is filling** (user
+     request) — empty right after a rank — so the player sees what the next rank takes ("2 more for
+     an upgrade", "+1 to lose a complication"). `spinnerRanks(total)`: +4 → [3, 1], +6 →
+     [3, 3, 0]. **No cap either way** (user decision): −19 → 6 complications, +13 → 4 upgrades /
+     advantage 4;
   3. the **outcome in words**: resolution "Success" / "Failure", plus " · Rank N upgrade /
      complication" from rank 1 on (0…2 and −1…−2 earn no rank); framing the advantage it earns
      ("Advantage 1", "No advantage").

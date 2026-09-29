@@ -5,7 +5,6 @@ import { spinnerAdvantage, spinnerColor, type NumberField, type SpinnerConfig } 
 import { isBaseField, type Session } from '../session'
 import {
   MAX_SPINNER_CIRCUMSTANCE,
-  MAX_SPINNER_RANK,
   SPINNER_RANK_STEP,
   spinnerMath,
   spinnerRanks,
@@ -18,6 +17,7 @@ import {
   type SpinnerStep,
 } from '../spinner'
 import { AbilityPicker, ChallengePlayerPicker, DifficultyPicker, IconChip } from './challenge'
+import { scaleWordAt } from './sheet'
 
 const signed = (n: number) => (n > 0 ? `+${n}` : String(n))
 const R = 100
@@ -148,7 +148,7 @@ function SpinEquation(props: {
     exertion > 0 && <Tile value={exertion} name="Exertion" tone="exertion" />,
     <Tile
       value={signed(check.difficulty)}
-      name={check.tier ?? 'Difficulty'}
+      name={check.tier ? `${check.tier} difficulty` : 'Difficulty'}
       color={diffLook.color}
       ink={diffLook.ink}
       tone="difficulty"
@@ -178,9 +178,7 @@ function SpinEquation(props: {
  */
 function SpinOutcome(props: { total: number; step: SpinnerStep; config: SpinnerConfig }) {
   const { total, step, config } = props
-  const cap =
-    step === 'framing' ? Math.max(MAX_SPINNER_RANK, Math.ceil(Math.abs(total) / SPINNER_RANK_STEP)) : MAX_SPINNER_RANK
-  const { rank, groups, over } = spinnerRanks(total, cap)
+  const { rank, groups } = spinnerRanks(total)
   const good = total >= 0
   const text =
     step === 'framing'
@@ -198,7 +196,6 @@ function SpinOutcome(props: { total: number; step: SpinnerStep; config: SpinnerC
                 <span class={i < filled ? 'rank-pip on' : 'rank-pip'} />
               ))}
             </span>
-            <span class="rank-over">{over && g === groups.length - 1 ? '+' : ''}</span>
           </span>
         ))}
       </div>
@@ -307,9 +304,7 @@ function SpinBox(props: {
         <span class="spin-kind">{props.title}</span>
         <IconChip icon={field?.icon} />
         <span class="spin-ability">{field?.label ?? props.abilityId}</span>
-        <span class="muted">
-          rank {rank} ({signed(shift)})
-        </span>
+        <span class="muted">{field?.scale ? scaleWordAt(field.scale, rank) : `rank ${rank}`}</span>
       </div>
       <div class="spin-wheels">
         {roll ? (

@@ -53,13 +53,14 @@ describe('spinner maths', () => {
     expect(spinnerExertionPool(config, 'intuition')).toBe('willpower')
   })
 
-  test('rank pips: every full 3 is a rank, the next group fills on the way, the rest are empty', () => {
-    expect(spinnerRanks(4, 3)).toEqual({ rank: 1, groups: [3, 1, 0], over: false })
-    expect(spinnerRanks(-10, 3)).toEqual({ rank: 3, groups: [3, 3, 3], over: true })
-    expect(spinnerRanks(-9, 3)).toEqual({ rank: 3, groups: [3, 3, 3], over: false })
-    expect(spinnerRanks(0, 3)).toEqual({ rank: 0, groups: [0, 0, 0], over: false })
-    expect(spinnerRanks(-2, 3)).toEqual({ rank: 0, groups: [2, 0, 0], over: false })
-    expect(spinnerRanks(7, 2)).toEqual({ rank: 2, groups: [3, 3], over: true }) // framing: advantage stops at 2
+  test('rank pips: every full 3 is a rank, uncapped, and the column ends on the group that is filling', () => {
+    expect(spinnerRanks(4)).toEqual({ rank: 1, groups: [3, 1] }) // 2 more → rank 2
+    expect(spinnerRanks(-7)).toEqual({ rank: 2, groups: [3, 3, 1] })
+    expect(spinnerRanks(6)).toEqual({ rank: 2, groups: [3, 3, 0] }) // the next one, empty
+    expect(spinnerRanks(0)).toEqual({ rank: 0, groups: [0] })
+    expect(spinnerRanks(-2)).toEqual({ rank: 0, groups: [2] })
+    expect(spinnerRanks(-19)).toEqual({ rank: 6, groups: [3, 3, 3, 3, 3, 3, 1] }) // 6 complications
+    expect(spinnerRanks(13)).toEqual({ rank: 4, groups: [3, 3, 3, 3, 1] })
   })
 
   test('the difficulty is added to the sum; the total is the outcome (0 or more succeeds)', () => {

@@ -898,14 +898,13 @@ button.gm-action:hover { border-color: var(--accent); color: var(--accent); }
 .spin-outcome.bad { --rank-color: var(--danger); }
 .spin-outcome-total { font-size: 3rem; font-weight: 800; line-height: 1; color: var(--rank-color); }
 .rank-column { display: grid; gap: 0.25rem; }
-.rank-group { display: grid; grid-template-columns: 1rem auto 1rem; align-items: center; gap: 0.35rem; }
+.rank-group { display: grid; grid-template-columns: 1rem auto; align-items: center; gap: 0.35rem; }
 .rank-num { font-size: 0.7rem; font-weight: 800; text-align: right; color: var(--muted); }
 .rank-group.full .rank-num { color: var(--rank-color); }
 .rank-dots { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; }
 .rank-group.full .rank-dots { border-color: var(--rank-color); box-shadow: 0 0 0 1px color-mix(in srgb, var(--rank-color) 35%, transparent); }
 .rank-pip { width: 0.85rem; height: 0.85rem; border-radius: 3px; border: 1.5px solid color-mix(in srgb, var(--rank-color) 55%, var(--line)); }
 .rank-pip.on { background: var(--rank-color); border-color: var(--rank-color); }
-.rank-over { font-weight: 800; color: var(--rank-color); }
 .spin-outcome-text { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--rank-color); }
 .spin-caption { margin: 0.2rem 0 0; text-align: center; font-size: 0.85rem; color: var(--muted); }
 .spin-controls { display: grid; gap: 0.5rem; }

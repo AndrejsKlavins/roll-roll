@@ -180,21 +180,20 @@ export function spinnerMath(check: SpinnerCheck): SpinnerCheckMath {
   }
 }
 
-/** Every full 3 of a total is one rank (an upgrade above 0, a complication below). */
+/** Every full 3 of a total is one rank (an upgrade above 0, a complication below), uncapped. */
 export const SPINNER_RANK_STEP = 3
-/** Most ranks a resolution earns. */
-export const MAX_SPINNER_RANK = 3
 
 /**
- * A total as `cap` groups of three pips (user-designed): every full group is one rank, the next
- * one is partly filled on the way to the next rank, the rest are empty. `groups` holds how many
- * pips each group has filled; `over` = the total runs past the last group.
+ * A total as groups of three pips (user-designed): every full group is one rank — no cap, so
+ * −19 is 6 complications — and the column ends on the group that is filling (empty right after a
+ * rank), so the player sees how far the next rank is: "2 more for an upgrade".
  */
-export function spinnerRanks(total: number, cap: number) {
+export function spinnerRanks(total: number) {
   const size = Math.abs(total)
-  const rank = Math.min(Math.floor(size / SPINNER_RANK_STEP), cap)
-  const groups = Array.from({ length: cap }, (_, g) => Math.max(0, Math.min(SPINNER_RANK_STEP, size - g * SPINNER_RANK_STEP)))
-  return { rank, groups, over: size > cap * SPINNER_RANK_STEP }
+  const rank = Math.floor(size / SPINNER_RANK_STEP)
+  const groups: number[] = Array.from({ length: rank }, () => SPINNER_RANK_STEP)
+  groups.push(size % SPINNER_RANK_STEP)
+  return { rank, groups }
 }
 
 /** Spinner checks ever started, in order; the last is the one on the board. Rebuilt from the log. */
